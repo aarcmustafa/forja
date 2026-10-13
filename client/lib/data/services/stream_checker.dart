@@ -204,3 +204,31 @@ class StreamChecker {
     final results = await loadResults();
     return results.containsKey(channelId);
   }
+  
+  /// وقت آخر فحص
+  DateTime? getLastCheckTime() {
+    if (_box == null) return null;
+    final ts = _box!.get(_kTimestamp);
+    if (ts == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ts as int);
+  }
+
+  /// عدد القنوات المفحوصة
+  Future<int> getCheckedCount() async {
+    final results = await loadResults();
+    return results.length;
+  }
+
+  /// مسح النتائج
+  Future<void> clear() async {
+    if (_box == null) await init();
+    if (_box == null) return;
+    await _box!.delete(_kResults);
+    await _box!.delete(_kTimestamp);
+  }
+
+  void dispose() {
+    stop();
+    _dio.close();
+  }
+}
