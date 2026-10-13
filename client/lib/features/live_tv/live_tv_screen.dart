@@ -86,7 +86,6 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       child: Row(
         children: [
-          // الشعار والاسم
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
@@ -120,10 +119,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
               ),
             ],
           ),
-
           const SizedBox(width: 24),
-
-          // عدّاد القنوات
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
@@ -149,10 +145,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
               ],
             ),
           ),
-
           const Spacer(),
-
-          // حقل البحث (يظهر عند الضغط على أيقونة البحث)
           if (_showSearch)
             SizedBox(
               width: 300,
@@ -193,9 +186,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
               tooltip: 'بحث',
               onPressed: () => setState(() => _showSearch = true),
             ),
-
           const SizedBox(width: 12),
-
           _TopBarIconButton(
             icon: Icons.refresh,
             tooltip: 'تحديث',
@@ -247,22 +238,15 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
   //  جسم الشاشة: شبكة القنوات / تحميل / خطأ / فارغ
   // ==========================================================
   Widget _buildBody(PlaylistState state, PlaylistNotifier notifier) {
-    // 1) التحميل
     if (state.isLoading && state.allChannels.isEmpty) {
       return _buildLoading();
     }
-
-    // 2) الخطأ
     if (state.error != null && state.allChannels.isEmpty) {
       return _buildError(state.error!);
     }
-
-    // 3) فارغ
     if (state.filteredChannels.isEmpty) {
       return _buildEmpty();
     }
-
-    // 4) شبكة القنوات
     return _buildGrid(state);
   }
 
@@ -290,4 +274,168 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const
+          const Icon(
+            Icons.error_outline,
+            color: Color(0xFFFF5252),
+            size: 64,
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'حدث خطأ',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: Text(
+              error,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white54, fontSize: 13),
+            ),
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton.icon(
+            onPressed: () => ref
+                .read(playlistProvider.notifier)
+                .refresh(widget.playlistUrls),
+            icon: const Icon(Icons.refresh),
+            label: const Text('إعادة المحاولة'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00C8FF),
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmpty() {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.tv_off_rounded,
+            color: Colors.white24,
+            size: 80,
+          ),
+          SizedBox(height: 16),
+          Text(
+            'لا توجد قنوات',
+            style: TextStyle(color: Colors.white70, fontSize: 16),
+          ),
+          SizedBox(height: 6),
+          Text(
+            'جرّب تصنيفاً آخر أو ابحث بكلمة مختلفة',
+            style: TextStyle(color: Colors.white38, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGrid(PlaylistState state) {
+    return GridView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 200,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+        childAspectRatio: 0.95,
+      ),
+      itemCount: state.filteredChannels.length,
+      itemBuilder: (context, index) {
+        final channel = state.filteredChannels[index];
+        return ChannelCard(
+          channel: channel,
+          width: 200,
+          height: 200,
+          onTap: () {
+            widget.onChannelTap?.call(channel);
+          },
+        );
+      },
+    );
+  }
+}
+
+/// زر صغير في الشريط العلوي
+class _TopBarIconButton extends StatefulWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  const _TopBarIconButton({
+    required this.icon,
+    required this.tooltip,
+    this.onPressed,
+  });
+
+  @override
+  State<_TopBarIconButton> createState() => _TopBarIconButtonState();
+}
+
+class _TopBarIconButtonState extends State<_TopBarIconButton> {
+  bool _isFocused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.onPressed != null;
+
+    return Tooltip(
+      message: widget.tooltip,
+      child: Focus(
+        onFocusChange: (hasFocus) {
+          setState(() => _isFocused = hasFocus);
+        },
+        child: GestureDetector(
+          onTap: widget.onPressed,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: _isFocused
+                  ? const Color(0xFF00C8FF)
+                  : const Color(0xFF141A2E),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _isFocused
+                    ? Colors.white
+                    : const Color(0xFF2A3350),
+                width: _isFocused ? 2 : 1,
+              ),
+              boxShadow: _isFocused
+                  ? [
+                      BoxShadow(
+                        color: const Color(0xFF00C8FF).withOpacity(0.5),
+                        blurRadius: 12,
+                      ),
+                    ]
+                  : [],
+            ),
+            child: Icon(
+              widget.icon,
+              color: !enabled
+                  ? Colors.white24
+                  : _isFocused
+                      ? Colors.black
+                      : Colors.white70,
+              size: 22,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
