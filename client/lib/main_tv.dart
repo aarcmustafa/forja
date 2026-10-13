@@ -16,11 +16,12 @@ import 'data/providers/playlist_provider.dart';
 import 'data/providers/favorites_provider.dart';
 import 'data/providers/history_provider.dart';
 import 'data/local/secure_config.dart';
+import 'data/local/remote_config.dart';
 
 // ==========================================================
-//  ⚙️  روابط M3U (مشفّرة — تُفكّ في الذاكرة فقط)
+//  روابط M3U — مشفّرة + تُحدَّث عن بعد
 // ==========================================================
-final List<String> kPlaylistUrls = SecureConfig.urls;
+List<String> kPlaylistUrls = SecureConfig.urls;
 
 // ==========================================================
 //  نقطة انطلاق التطبيق
@@ -47,6 +48,7 @@ class EstetnFarjaTvApp extends StatelessWidget {
         useMaterial3: true,
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF0A0E1A),
+        fontFamily: 'Cairo',
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFF00C8FF),
           secondary: Color(0xFFFFB800),
@@ -108,19 +110,37 @@ class _MainShellState extends ConsumerState<MainShell> {
   }
 
   // ==========================================================
-  //  تحميل القنوات مع صيانة الكاش
+  //  تحميل القنوات مع تحديث الروابط عن بعد
   // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
-    // ✅ صيانة الكاش أولاً
+    // ✅ صيانة الكاش
     try {
       final repo = ref.read(m3uRepositoryProvider);
       await repo.maintainCache();
-
       final storage = ref.read(localStorageProvider);
       await storage.maintain();
+    } catch (_) {}
 
-      final checker = ref.read(streamCheckerProvider);
-      await checker.maintainCache();
+    // ✅ محاولة تحديث الروابط عن بعد
+    try {
+      final remote = RemoteConfig();
+
+      // 1) اقرأ من Cache فوراً
+      final cached = await remote.loadCached();
+      if (cached.isNotEmpty) {
+        kPlaylistUrls = cached;
+        // ignore: avoid_print
+        print('Using cached URLs: ${cached.length}');
+      }
+
+      // 2) جلب التحديث في الخلفية
+      remote.fetchRemote().then((remoteUrls) {
+        if (remoteUrls != null && remoteUrls.isNotEmpty) {
+          kPlaylistUrls = remoteUrls;
+          // ignore: avoid_print
+          print('Remote URLs updated: ${remoteUrls.length}');
+        }
+      });
     } catch (_) {}
 
     if (kPlaylistUrls.isEmpty) return;
@@ -172,12 +192,9 @@ class _MainShellState extends ConsumerState<MainShell> {
           const Divider(color: Color(0xFF2A3350)),
           const SizedBox(height: 12),
 
-          // 🔍 زر البحث الموحد
           _buildSearchButton(),
-
           const SizedBox(height: 8),
 
-          // القائمة الرئيسية
           for (int i = 0; i < _menuItems.length; i++)
             _buildMenuItem(i, badge: i == _idxFavorites ? favCount : 0),
 
@@ -253,14 +270,6 @@ class _MainShellState extends ConsumerState<MainShell> {
                         : const Color(0xFF2A3350),
                     width: hasFocus ? 2 : 1,
                   ),
-                  boxShadow: hasFocus
-                      ? [
-                          BoxShadow(
-                            color: const Color(0xFFFFB800).withOpacity(0.5),
-                            blurRadius: 14,
-                          ),
-                        ]
-                      : [],
                 ),
                 child: Row(
                   children: [
@@ -373,7 +382,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       ),
     );
   }
-
+  
   // ==========================================================
   //  المحتوى
   // ==========================================================
