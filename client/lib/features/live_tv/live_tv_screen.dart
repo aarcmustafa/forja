@@ -8,6 +8,7 @@ import '../../data/providers/history_provider.dart';
 import '../../core/animations/app_animations.dart';
 import 'widgets/category_tabs.dart';
 import 'widgets/sub_category_chips.dart';
+import 'widgets/channel_card.dart';
 import 'widgets/paginated_channel_grid.dart';
 import 'widgets/sports_matches_widget.dart';
 
@@ -430,7 +431,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
                   height: 24,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Color(0xFF00C8FF),
+                      color: Color(0xFF4CAF50),
                       borderRadius: BorderRadius.all(Radius.circular(3)),
                     ),
                   ),
