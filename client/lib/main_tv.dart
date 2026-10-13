@@ -3,12 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'features/live_tv/live_tv_screen.dart';
 import 'data/models/channel.dart';
+import 'data/providers/playlist_provider.dart';
 
 // ==========================================================
-//  ⚙️  روابط M3U — ضع روابطك هنا
+//  ⚙️  روابط M3U
 // ==========================================================
 const List<String> kPlaylistUrls = [
-  // ============ روابط مباشرة (قنوات) ============
+  // ============ قنوات مباشرة ============
   'https://m3uextgroup.kiki10kkii.workers.dev/f/gt2izrmxn1nr/Live_AR.m3u',
   'https://m3uextgroup.kiki10kkii.workers.dev/f/htw0iolrrihk/Live_SPORTS.m3u',
 
@@ -18,7 +19,7 @@ const List<String> kPlaylistUrls = [
   'https://m3uextractor.kiki10kkii.workers.dev/download/a3260edc-48d0-4696-aa1e-3fb6916b2d51/Live_AR%20_%20BEIN%20SPORTS%208K.m3u8',
   'https://m3uextractor.kiki10kkii.workers.dev/download/08cdf005-1a6f-48e4-8486-912afa4f918d/Live_BeIN%20SPORTS%20__%20BEE__%20.m3u8',
 
-  // ============ روابط Xtream (قنوات + VOD) ============
+  // ============ روابط Xtream (قنوات + أفلام + مسلسلات) ============
   'http://dksipi.com:80/get.php?username=kirham2025&password=M0BfTl2CtK&type=m3u_plus&output=m3u8',
   'http://xtreamutv.org:80/get.php?username=7rFgH6sFwy&password=HSzDvxrCy6&type=m3u_plus&output=m3u8',
   'http://prod.dragonkey.net:2082/get.php?username=00228866&password=2pd974kh95&type=m3u_plus&output=m3u8',
@@ -28,6 +29,7 @@ const List<String> kPlaylistUrls = [
 //  نقطة انطلاق التطبيق
 // ==========================================================
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(
     const ProviderScope(
       child: EstetnFarjaTvApp(),
@@ -59,17 +61,18 @@ class EstetnFarjaTvApp extends StatelessWidget {
 }
 
 // ==========================================================
-//  الشاشة الرئيسية (جانبية + محتوى)
+//  الشاشة الرئيسية — ConsumerStatefulWidget
 // ==========================================================
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
-  int _selectedIndex = 0;
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  // ← ابدأ على "البث المباشر" مباشرة
+  int _selectedIndex = 1;
 
   static const int _idxHome = 0;
   static const int _idxLive = 1;
@@ -95,6 +98,28 @@ class _HomeScreenState extends State<HomeScreen> {
     Icons.list_rounded,
     Icons.settings_rounded,
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    // 🚀 تحميل القنوات فور فتح التطبيق
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadPlaylistsIfNeeded();
+    });
+  }
+
+  /// تحميل القنوات (مرة واحدة فقط عند فتح التطبيق)
+  Future<void> _loadPlaylistsIfNeeded() async {
+    if (kPlaylistUrls.isEmpty) return;
+
+    final state = ref.read(playlistProvider);
+    // لا نعيد التحميل إذا كانت هناك قنوات أو التحميل جارٍ
+    if (state.allChannels.isNotEmpty || state.isLoading) return;
+
+    await ref
+        .read(playlistProvider.notifier)
+        .loadPlaylists(kPlaylistUrls);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -183,9 +208,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       _menuItems[index],
                       style: TextStyle(
                         fontSize: 16,
-                        fontWeight: active
-                            ? FontWeight.bold
-                            : FontWeight.normal,
+                        fontWeight:
+                            active ? FontWeight.bold : FontWeight.normal,
                         color: active ? Colors.black : Colors.white70,
                       ),
                     ),
@@ -200,7 +224,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ==========================================================
-  //  المحتوى (حسب الاختيار)
+  //  المحتوى
   // ==========================================================
   Widget _buildContent() {
     switch (_selectedIndex) {
@@ -224,7 +248,6 @@ class _HomeScreenState extends State<HomeScreen> {
   //  عند الضغط على قناة
   // ==========================================================
   void _onChannelTap(Channel channel) {
-    // TODO: فتح المشغل — المرحلة القادمة
     showDialog(
       context: context,
       builder: (_) => Directionality(
@@ -242,9 +265,9 @@ class _HomeScreenState extends State<HomeScreen> {
               'اللغة: ${channel.languageLabel}\n'
               'النوع: ${channel.contentType}\n'
               'الحالة: ${channel.isWorking ? "تعمل" : "متوقفة"}\n'
-              'الأولوية: ${channel.priority}\n'
               '\nالرابط:\n${channel.streamUrl}',
-              style: const TextStyle(color: Colors.white70, fontSize: 12),
+              style:
+                  const TextStyle(color: Colors.white70, fontSize: 12),
             ),
           ),
           actions: [
@@ -262,7 +285,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ==========================================================
-  //  شاشة مؤقتة للأقسام الأخرى
+  //  Placeholder
   // ==========================================================
   Widget _buildPlaceholder() {
     return Padding(
