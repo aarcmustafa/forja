@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/channel.dart';
@@ -6,7 +7,7 @@ import '../../data/providers/playlist_provider.dart';
 import '../../data/providers/history_provider.dart';
 import 'widgets/category_tabs.dart';
 import 'widgets/sub_category_chips.dart';
-import 'widgets/channel_card.dart';
+import 'widgets/paginated_channel_grid.dart';
 import 'widgets/sports_matches_widget.dart';
 
 /// الشاشة الرئيسية للبث المباشر
@@ -25,7 +26,6 @@ class LiveTvScreen extends ConsumerStatefulWidget {
 }
 
 class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
-  final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   bool _showSearch = false;
 
@@ -46,7 +46,6 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
 
   @override
   void dispose() {
-    _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -88,12 +87,12 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: const Color(0xFF00C8FF).withOpacity(0.15),
+              color: const Color(0xFF4CAF50).withOpacity(0.15),
               borderRadius: BorderRadius.circular(10),
             ),
             child: const Icon(
-              Icons.play_circle_fill,
-              color: Color(0xFF00C8FF),
+              Icons.sports_soccer_rounded,
+              color: Color(0xFF4CAF50),
               size: 32,
             ),
           ),
@@ -110,7 +109,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
                 ),
               ),
               Text(
-                'بث مباشر',
+                'الرياضية - بث مباشر',
                 style: TextStyle(color: Colors.white54, fontSize: 12),
               ),
             ],
@@ -150,7 +149,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
                 autofocus: true,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  hintText: 'ابحث عن قناة...',
+                  hintText: 'ابحث عن قناة رياضية...',
                   hintStyle: const TextStyle(color: Colors.white38),
                   prefixIcon: const Icon(
                     Icons.search,
@@ -243,7 +242,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
       return _buildEmpty();
     }
 
-    // 4) هل نعرض السجل؟
+    // 4) السجل (شوهد حديثاً)
     final recentIds = ref.watch(historyProvider).liveIds;
     final showRecent = state.selectedCategorySlug == null &&
         state.searchQuery.isEmpty &&
@@ -253,7 +252,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
       return _buildBodyWithRecent(state, recentIds);
     }
 
-    // 5) ✅ قسم الرياضة → صندوق المباريات
+    // 5) قسم الرياضة → صندوق المباريات
     if (state.selectedCategorySlug == 'sport' &&
         state.selectedSubCategorySlug == null &&
         state.searchQuery.isEmpty) {
@@ -262,22 +261,18 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
 
     return _buildGrid(state);
   }
-  
+
   // ==========================================================
-  //  ✅ جسم الرياضة — المباريات + الشبكة
+  //  جسم الرياضة
   // ==========================================================
   Widget _buildSportsBody(PlaylistState state) {
     return CustomScrollView(
-      controller: _scrollController,
       slivers: [
-        // صندوق المباريات
         SliverToBoxAdapter(
           child: SportsMatchesWidget(
             onChannelTap: (channel) => widget.onChannelTap?.call(channel),
           ),
         ),
-
-        // عنوان الشبكة
         const SliverToBoxAdapter(
           child: Padding(
             padding: EdgeInsets.symmetric(horizontal: 32),
@@ -288,7 +283,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
                   height: 24,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Color(0xFF00C8FF),
+                      color: Color(0xFF4CAF50),
                       borderRadius: BorderRadius.all(Radius.circular(3)),
                     ),
                   ),
@@ -307,8 +302,6 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
           ),
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
-        // الشبكة
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
           sliver: SliverGrid(
@@ -349,9 +342,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
     if (recent.isEmpty) return _buildGrid(state);
 
     return CustomScrollView(
-      controller: _scrollController,
       slivers: [
-        // قسم "شوهد حديثاً"
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.only(bottom: 24),
@@ -429,8 +420,6 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
             ),
           ),
         ),
-
-        // عنوان الشبكة
         const SliverToBoxAdapter(
           child: Padding(
             padding: EdgeInsets.symmetric(horizontal: 32),
@@ -460,7 +449,6 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
           ),
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 16)),
-
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
           sliver: SliverGrid(
@@ -487,7 +475,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
       ],
     );
   }
-
+  
   // ==========================================================
   //  الحالات
   // ==========================================================
@@ -499,7 +487,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
           CircularProgressIndicator(color: Color(0xFF00C8FF), strokeWidth: 3),
           SizedBox(height: 20),
           Text(
-            'جارٍ تحميل القنوات...',
+            'جارٍ تحميل القنوات الرياضية...',
             style: TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ],
@@ -560,7 +548,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
           Icon(Icons.tv_off_rounded, color: Colors.white24, size: 80),
           SizedBox(height: 16),
           Text(
-            'لا توجد قنوات',
+            'لا توجد قنوات رياضية',
             style: TextStyle(color: Colors.white70, fontSize: 16),
           ),
           SizedBox(height: 6),
@@ -574,28 +562,18 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
   }
 
   // ==========================================================
-  //  شبكة القنوات (بدون سجل)
+  //  شبكة القنوات — Pagination
   // ==========================================================
   Widget _buildGrid(PlaylistState state) {
-    return GridView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 200,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
-        childAspectRatio: 0.95,
-      ),
-      itemCount: state.filteredChannels.length,
-      itemBuilder: (context, index) {
-        final channel = state.filteredChannels[index];
-        return ChannelCard(
-          channel: channel,
-          width: 200,
-          height: 200,
-          onTap: () => widget.onChannelTap?.call(channel),
-        );
-      },
+    // مفتاح فريد يتغيّر عند تغيير الفلاتر → يعيد تعيين Pagination
+    final filterKey = '${state.selectedCategorySlug ?? "all"}_'
+        '${state.selectedSubCategorySlug ?? "all"}_'
+        '${state.searchQuery}';
+
+    return PaginatedChannelGrid(
+      key: ValueKey(filterKey),
+      channels: state.filteredChannels,
+      onChannelTap: (channel) => widget.onChannelTap?.call(channel),
     );
   }
 }
