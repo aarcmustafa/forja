@@ -119,3 +119,86 @@ class HistoryNotifier extends StateNotifier<HistoryState> {
     state = state.copyWith(lastSeriesId: id);
     await _save(_kSeriesId, id);
   }
+  
+  /// حفظ في Hive
+  Future<void> _save(String key, dynamic value) async {
+    if (!_initialized) {
+      try {
+        await Hive.initFlutter();
+        _box = await Hive.openBox(_boxName);
+        _initialized = true;
+      } catch (_) {
+        return;
+      }
+    }
+    try {
+      await _box.put(key, value);
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  /// مسح سجل القنوات المباشرة
+  Future<void> clearLive() async {
+    state = state.copyWith(liveIds: []);
+    if (_initialized) await _box.delete(_kLiveIds);
+  }
+
+  /// مسح كل السجل
+  Future<void> clearAll() async {
+    state = const HistoryState(isLoaded: true);
+    if (_initialized) await _box.clear();
+  }
+}
+
+// ==========================================================
+//  Provider الرئيسي
+// ==========================================================
+final historyProvider =
+    StateNotifierProvider<HistoryNotifier, HistoryState>((ref) {
+  return HistoryNotifier();
+});
+
+// ==========================================================
+//  قوائم السجل (كاملة)
+// ==========================================================
+final recentLiveProvider = Provider<List<Channel>>((ref) {
+  final ids = ref.watch(historyProvider).liveIds;
+  if (ids.isEmpty) return const [];
+
+  final all = ref.watch(playlistProvider).allChannels;
+  final map = {for (final c in all) c.id: c};
+
+  return ids
+      .map((id) => map[id])
+      .whereType<Channel>()
+      .toList();
+});
+
+final lastMovieProvider = Provider<Channel?>((ref) {
+  final id = ref.watch(historyProvider).lastMovieId;
+  if (id == null) return null;
+
+  final all = ref.watch(playlistProvider).allChannels;
+  for (final c in all) {
+    if (c.id == id && c.contentType == 'movie') return c;
+  }
+  return null;
+});
+
+final lastSeriesProvider = Provider<Channel?>((ref) {
+  final id = ref.watch(historyProvider).lastSeriesId;
+  if (id == null) return null;
+
+  final all = ref.watch(playlistProvider).allChannels;
+  for (final c in all) {
+    if (c.id == id && c.contentType == 'series') return c;
+  }
+  return null;
+});
+
+// ==========================================================
+//  استيراد playlistProvider (مؤخر) لتجنب circular imports
+// ==========================================================
+// ignore: implementation_imports
+import 'playlist_provider.dart' deferred as playlist;
