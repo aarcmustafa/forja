@@ -1,4 +1,4 @@
-name: Setup Project Structure
+name: Setup Project
 
 on:
   workflow_dispatch:
@@ -8,12 +8,11 @@ permissions:
 
 jobs:
   setup:
-    name: Generate Structure
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Create folders
+      - name: Create structure
         run: |
           mkdir -p client/lib/core/constants
           mkdir -p client/lib/core/theme
@@ -35,103 +34,75 @@ jobs:
 
       - name: Create pubspec.yaml
         run: |
-          cat > client/pubspec.yaml <<'EOF'
-          name: estitn_farja
-          description: Estetn Farja IPTV
-          publish_to: 'none'
-          version: 1.0.0+1
-          environment:
-            sdk: '>=3.0.0 <4.0.0'
-          dependencies:
-            flutter:
-              sdk: flutter
-          flutter:
-            uses-material-design: true
-          EOF
+          printf 'name: estitn_farja\n' > client/pubspec.yaml
+          printf 'description: Estetn Farja IPTV\n' >> client/pubspec.yaml
+          printf "publish_to: 'none'\n" >> client/pubspec.yaml
+          printf 'version: 1.0.0+1\n' >> client/pubspec.yaml
+          printf '\n' >> client/pubspec.yaml
+          printf 'environment:\n' >> client/pubspec.yaml
+          printf "  sdk: '>=3.0.0 <4.0.0'\n" >> client/pubspec.yaml
+          printf '\n' >> client/pubspec.yaml
+          printf 'dependencies:\n' >> client/pubspec.yaml
+          printf '  flutter:\n' >> client/pubspec.yaml
+          printf '    sdk: flutter\n' >> client/pubspec.yaml
+          printf '\n' >> client/pubspec.yaml
+          printf 'flutter:\n' >> client/pubspec.yaml
+          printf '  uses-material-design: true\n' >> client/pubspec.yaml
 
       - name: Create main_tv.dart
         run: |
-          cat > client/lib/main_tv.dart <<'EOF'
-          import 'package:flutter/material.dart';
-
-          void main() {
-            runApp(const EstetnFarjaTvApp());
-          }
-
-          class EstetnFarjaTvApp extends StatelessWidget {
-            const EstetnFarjaTvApp({super.key});
-
-            @override
-            Widget build(BuildContext context) {
-              return MaterialApp(
-                title: 'Estetn Farja TV',
-                debugShowCheckedModeBanner: false,
-                theme: ThemeData.dark(useMaterial3: true),
-                home: const Scaffold(
-                  body: Center(child: Text('Estetn Farja TV')),
-                ),
-              );
-            }
-          }
-          EOF
+          printf "import 'package:flutter/material.dart';\n" > client/lib/main_tv.dart
+          printf '\n' >> client/lib/main_tv.dart
+          printf 'void main() => runApp(const EstetnFarjaTvApp());\n' >> client/lib/main_tv.dart
+          printf '\n' >> client/lib/main_tv.dart
+          printf 'class EstetnFarjaTvApp extends StatelessWidget {\n' >> client/lib/main_tv.dart
+          printf '  const EstetnFarjaTvApp({super.key});\n' >> client/lib/main_tv.dart
+          printf '  @override\n' >> client/lib/main_tv.dart
+          printf '  Widget build(BuildContext context) {\n' >> client/lib/main_tv.dart
+          printf '    return MaterialApp(\n' >> client/lib/main_tv.dart
+          printf "      title: 'Estetn Farja TV',\n" >> client/lib/main_tv.dart
+          printf '      debugShowCheckedModeBanner: false,\n' >> client/lib/main_tv.dart
+          printf '      theme: ThemeData.dark(useMaterial3: true),\n' >> client/lib/main_tv.dart
+          printf '      home: const Scaffold(\n' >> client/lib/main_tv.dart
+          printf "        body: Center(child: Text('Estetn Farja TV')),\n" >> client/lib/main_tv.dart
+          printf '      ),\n' >> client/lib/main_tv.dart
+          printf '    );\n' >> client/lib/main_tv.dart
+          printf '  }\n' >> client/lib/main_tv.dart
+          printf '}\n' >> client/lib/main_tv.dart
 
       - name: Create main_mobile.dart
         run: |
-          cat > client/lib/main_mobile.dart <<'EOF'
-          import 'package:flutter/material.dart';
+          printf "import 'package:flutter/material.dart';\n" > client/lib/main_mobile.dart
+          printf '\n' >> client/lib/main_mobile.dart
+          printf 'void main() => runApp(const EstetnFarjaMobileApp());\n' >> client/lib/main_mobile.dart
+          printf '\n' >> client/lib/main_mobile.dart
+          printf 'class EstetnFarjaMobileApp extends StatelessWidget {\n' >> client/lib/main_mobile.dart
+          printf '  const EstetnFarjaMobileApp({super.key});\n' >> client/lib/main_mobile.dart
+          printf '  @override\n' >> client/lib/main_mobile.dart
+          printf '  Widget build(BuildContext context) {\n' >> client/lib/main_mobile.dart
+          printf '    return MaterialApp(\n' >> client/lib/main_mobile.dart
+          printf "      title: 'Estetn Farja',\n" >> client/lib/main_mobile.dart
+          printf '      debugShowCheckedModeBanner: false,\n' >> client/lib/main_mobile.dart
+          printf '      theme: ThemeData.dark(useMaterial3: true),\n' >> client/lib/main_mobile.dart
+          printf '      home: const Scaffold(\n' >> client/lib/main_mobile.dart
+          printf "        body: Center(child: Text('Estetn Farja Mobile')),\n" >> client/lib/main_mobile.dart
+          printf '      ),\n' >> client/lib/main_mobile.dart
+          printf '    );\n' >> client/lib/main_mobile.dart
+          printf '  }\n' >> client/lib/main_mobile.dart
+          printf '}\n' >> client/lib/main_mobile.dart
 
-          void main() {
-            runApp(const EstetnFarjaMobileApp());
-          }
-
-          class EstetnFarjaMobileApp extends StatelessWidget {
-            const EstetnFarjaMobileApp({super.key});
-
-            @override
-            Widget build(BuildContext context) {
-              return MaterialApp(
-                title: 'Estetn Farja',
-                debugShowCheckedModeBanner: false,
-                theme: ThemeData.dark(useMaterial3: true),
-                home: const Scaffold(
-                  body: Center(child: Text('Estetn Farja Mobile')),
-                ),
-              );
-            }
-          }
-          EOF
-
-      - name: Create server package.json
+      - name: Create README and gitignore
         run: |
-          cat > server/package.json <<'EOF'
-          {
-            "name": "estitn-farja-server",
-            "version": "1.0.0",
-            "main": "src/index.js",
-            "scripts": { "start": "node src/index.js" },
-            "dependencies": { "express": "^4.19.2" }
-          }
-          EOF
+          printf '# Estetn Farja IPTV\n' > README.md
+          printf '\n' >> README.md
+          printf 'IPTV app for Android TV and Mobile.\n' >> README.md
+          printf 'client/build/\n' > .gitignore
+          printf 'client/.dart_tool/\n' >> .gitignore
+          printf 'server/node_modules/\n' >> .gitignore
+          printf '__pycache__/\n' >> .gitignore
+          printf '.DS_Store\n' >> .gitignore
 
-      - name: Create README
-        run: |
-          cat > README.md <<'EOF'
-          # Estetn Farja IPTV
-
-          تطبيق IPTV يدعم Android TV و Google TV والهواتف.
-          EOF
-
-      - name: Create gitignore
-        run: |
-          cat > .gitignore <<'EOF'
-          client/build/
-          client/.dart_tool/
-          server/node_modules/
-          __pycache__/
-          .DS_Store
-          EOF
-
-      - name: Add .gitkeep files
+      - name: Add .gitkeep
         run: |
           touch client/lib/core/constants/.gitkeep
           touch client/lib/core/theme/.gitkeep
@@ -156,5 +127,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "chore: setup project structure" || echo "No changes"
+          git commit -m "chore: setup structure" || echo "no changes"
           git push
