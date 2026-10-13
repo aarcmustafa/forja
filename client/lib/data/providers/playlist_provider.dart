@@ -2,10 +2,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/channel.dart';
 import '../models/category.dart';
 import '../repositories/m3u_repository.dart';
+import '../local/local_storage.dart';
 import '../../features/settings/settings_screen.dart';
 
 // ==========================================================
-//  1) المستودع (Singleton)
+//  المستودع
 // ==========================================================
 final m3uRepositoryProvider = Provider<M3uRepository>((ref) {
   final repo = M3uRepository();
@@ -14,7 +15,14 @@ final m3uRepositoryProvider = Provider<M3uRepository>((ref) {
 });
 
 // ==========================================================
-//  2) حالة القنوات
+//  التخزين المحلي
+// ==========================================================
+final localStorageProvider = Provider<LocalStorage>((ref) {
+  return LocalStorage();
+});
+
+// ==========================================================
+//  حالة القنوات
 // ==========================================================
 class PlaylistState {
   final List<Channel> allChannels;
@@ -24,7 +32,9 @@ class PlaylistState {
   final String? selectedSubCategorySlug;
   final String searchQuery;
   final bool isLoading;
+  final bool isRefreshing;
   final String? error;
+  final DateTime? lastUpdate;
 
   const PlaylistState({
     this.allChannels = const [],
@@ -34,7 +44,9 @@ class PlaylistState {
     this.selectedSubCategorySlug,
     this.searchQuery = '',
     this.isLoading = false,
+    this.isRefreshing = false,
     this.error,
+    this.lastUpdate,
   });
 
   PlaylistState copyWith({
@@ -47,8 +59,10 @@ class PlaylistState {
     bool clearSelectedSubCategory = false,
     String? searchQuery,
     bool? isLoading,
+    bool? isRefreshing,
     String? error,
     bool clearError = false,
+    DateTime? lastUpdate,
   }) {
     return PlaylistState(
       allChannels: allChannels ?? this.allChannels,
@@ -62,19 +76,23 @@ class PlaylistState {
           : (selectedSubCategorySlug ?? this.selectedSubCategorySlug),
       searchQuery: searchQuery ?? this.searchQuery,
       isLoading: isLoading ?? this.isLoading,
+      isRefreshing: isRefreshing ?? this.isRefreshing,
       error: clearError ? null : (error ?? this.error),
+      lastUpdate: lastUpdate ?? this.lastUpdate,
     );
   }
 }
 
 // ==========================================================
-//  3) Notifier
+//  Notifier
 // ==========================================================
 class PlaylistNotifier extends StateNotifier<PlaylistState> {
   final M3uRepository _repository;
-  bool _filterAdult = true; // ← فلتر البالغين (افتراضياً مفعّل)
+  final LocalStorage _storage;
+  bool _filterAdult = true;
 
-  PlaylistNotifier(this._repository) : super(const PlaylistState());
+  PlaylistNotifier(this._repository, this._storage)
+      : super(const PlaylistState());
 
   /// تحديث فلتر البالغين
   void setAdultFilter(bool value) {
@@ -83,8 +101,10 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     _applyFilters();
   }
 
-  /// تحميل كل روابط M3U
-  Future<void> loadPlaylists(List<String> urls) async {
+  // ==========================================================
+  //  التحميل الذكي (من الذاكرة أولاً + تحديث في الخلفية)
+  // ==========================================================
+  Future<void> loadPlaylists(List<String> urls, {bool forceRefresh = false}) async {
     if (urls.isEmpty) {
       state = state.copyWith(
         isLoading: false,
@@ -93,41 +113,111 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       return;
     }
 
+    // 1) تهيئة التخزين
+    await _storage.init();
+
+    // 2) محاولة القراءة من الذاكرة (فقط إذا لم يكن refresh)
+    if (!forceRefresh) {
+      final cached = _storage.loadChannels();
+      if (cached != null && cached.isNotEmpty) {
+        // عرض فوري من الذاكرة
+        _setChannels(cached);
+        state = state.copyWith(
+          isLoading: false,
+          lastUpdate: _storage.getLastSaveTime(),
+        );
+
+        // تحديث في الخلفية (صامت)
+        _refreshInBackground(urls);
+        return;
+      }
+    }
+
+    // 3) لا يوجد cache → تحميل كامل
     state = state.copyWith(isLoading: true, clearError: true);
 
+    final channels = await _fetchAll(urls);
+
+    if (channels == null || channels.isEmpty) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'فشل تحميل القنوات',
+      );
+      return;
+    }
+
+    // حفظ + عرض
+    await _storage.saveChannels(channels);
+    _setChannels(channels);
+
+    state = state.copyWith(
+      isLoading: false,
+      lastUpdate: DateTime.now(),
+    );
+  }
+
+  /// تحديث في الخلفية بدون إظهار شاشة التحميل
+  Future<void> _refreshInBackground(List<String> urls) async {
+    state = state.copyWith(isRefreshing: true);
+
+    try {
+      final channels = await _fetchAll(urls, refreshCache: true);
+      if (channels != null && channels.isNotEmpty) {
+        await _storage.saveChannels(channels);
+        _setChannels(channels);
+        state = state.copyWith(
+          isRefreshing: false,
+          lastUpdate: DateTime.now(),
+        );
+      } else {
+        state = state.copyWith(isRefreshing: false);
+      }
+    } catch (_) {
+      state = state.copyWith(isRefreshing: false);
+    }
+  }
+
+  /// جلب كل الروابط
+  Future<List<Channel>?> _fetchAll(List<String> urls, {bool refreshCache = false}) async {
     try {
       final List<Channel> all = [];
 
       for (final url in urls) {
         try {
-          final channels = await _repository.loadFromUrl(url);
+          final channels = await _repository.loadFromUrl(
+            url,
+            forceRefresh: refreshCache,
+          );
           all.addAll(channels);
         } catch (e) {
           // ignore: avoid_print
-          print('فشل تحميل الرابط $url: $e');
+          print('فشل تحميل $url: $e');
         }
       }
 
-      final unique = _removeDuplicates(all);
-      final categories = _buildCategoriesFromChannels(unique);
+      if (all.isEmpty) return null;
 
-      state = state.copyWith(
-        allChannels: unique,
-        categories: categories,
-        isLoading: false,
-      );
-
-      // تطبيق الفلاتر (بما فيها فلتر البالغين)
-      _applyFilters();
+      return _removeDuplicates(all);
     } catch (e) {
-      state = state.copyWith(
-        isLoading: false,
-        error: 'فشل تحميل القنوات: $e',
-      );
+      // ignore: avoid_print
+      print('خطأ في الجلب: $e');
+      return null;
     }
   }
 
-  /// إزالة التكرار
+  /// تعيين القنوات + بناء التصنيفات + تطبيق الفلاتر
+  void _setChannels(List<Channel> channels) {
+    final categories = _buildCategoriesFromChannels(channels);
+    state = state.copyWith(
+      allChannels: channels,
+      categories: categories,
+    );
+    _applyFilters();
+  }
+  
+  // ==========================================================
+  //  إزالة التكرار
+  // ==========================================================
   List<Channel> _removeDuplicates(List<Channel> channels) {
     final Map<String, Channel> unique = {};
 
@@ -155,7 +245,9 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
         .trim();
   }
 
-  /// بناء التصنيفات
+  // ==========================================================
+  //  بناء التصنيفات
+  // ==========================================================
   List<Category> _buildCategoriesFromChannels(List<Channel> channels) {
     final defaultCats = DefaultCategories.list;
     final result = <Category>[];
@@ -170,7 +262,9 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
           final g = c.group.toLowerCase();
           final s = sub.slug.toLowerCase();
           final n = sub.name.toLowerCase();
-          return g.contains(s) || g.contains(n) || c.name.toLowerCase().contains(n);
+          return g.contains(s) ||
+              g.contains(n) ||
+              c.name.toLowerCase().contains(n);
         }).length;
 
         if (count > 0) {
@@ -188,7 +282,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 
     return result;
   }
-  
+
   // ==========================================================
   //  الفلاتر
   // ==========================================================
@@ -223,31 +317,24 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     _applyFilters();
   }
 
-  /// تطبيق كل الفلاتر
   void _applyFilters() {
     List<Channel> filtered = List.from(state.allChannels);
 
-    // ==========================================================
-    //  1) فلتر البالغين (الأولوية القصوى)
-    // ==========================================================
+    // 1) فلتر البالغين
     if (_filterAdult) {
       filtered = filtered
           .where((c) => !isAdultContent(c.name, c.group))
           .toList();
     }
 
-    // ==========================================================
-    //  2) فلتر التصنيف الرئيسي
-    // ==========================================================
+    // 2) التصنيف الرئيسي
     if (state.selectedCategorySlug != null) {
       filtered = filtered
           .where((c) => c.category == state.selectedCategorySlug)
           .toList();
     }
 
-    // ==========================================================
-    //  3) فلتر الباقة الفرعية
-    // ==========================================================
+    // 3) الباقة الفرعية
     if (state.selectedSubCategorySlug != null) {
       final slug = state.selectedSubCategorySlug!.toLowerCase();
 
@@ -273,9 +360,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }).toList();
     }
 
-    // ==========================================================
-    //  4) فلتر البحث
-    // ==========================================================
+    // 4) البحث
     if (state.searchQuery.trim().isNotEmpty) {
       final q = state.searchQuery.trim().toLowerCase();
       filtered = filtered
@@ -288,26 +373,43 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     state = state.copyWith(filteredChannels: filtered);
   }
 
-  /// إعادة تحميل
+  // ==========================================================
+  //  تحديث يدوي
+  // ==========================================================
   Future<void> refresh(List<String> urls) async {
     _repository.clearCache();
-    await loadPlaylists(urls);
+    await loadPlaylists(urls, forceRefresh: true);
   }
+
+  /// مسح كل البيانات
+  Future<void> clearAll(List<String> urls) async {
+    await _storage.clear();
+    _repository.clearCache();
+    state = const PlaylistState();
+    await loadPlaylists(urls, forceRefresh: true);
+  }
+
+  /// عدد القنوات المخزنة محلياً
+  int getCachedCount() => _storage.getSavedCount();
+
+  /// وقت آخر تحديث
+  DateTime? getLastUpdate() => state.lastUpdate;
 }
 
 // ==========================================================
-//  Provider الرئيسي — يستمع لتغييرات الإعدادات
+//  Provider الرئيسي
 // ==========================================================
 final playlistProvider =
     StateNotifierProvider<PlaylistNotifier, PlaylistState>((ref) {
   final repo = ref.watch(m3uRepositoryProvider);
-  final notifier = PlaylistNotifier(repo);
+  final storage = ref.watch(localStorageProvider);
+  final notifier = PlaylistNotifier(repo, storage);
 
-  // تطبيق القيمة الابتدائية
+  // تطبيق فلتر البالغين المبدئي
   final initialFilter = ref.read(settingsProvider).filterAdult;
   notifier.setAdultFilter(initialFilter);
 
-  // الاستماع لأي تغيير في الإعدادات
+  // الاستماع لتغييرات الإعدادات
   ref.listen<SettingsState>(settingsProvider, (prev, next) {
     if (prev == null || prev.filterAdult != next.filterAdult) {
       notifier.setAdultFilter(next.filterAdult);
@@ -332,6 +434,10 @@ final isLoadingProvider = Provider<bool>((ref) {
   return ref.watch(playlistProvider).isLoading;
 });
 
+final isRefreshingProvider = Provider<bool>((ref) {
+  return ref.watch(playlistProvider).isRefreshing;
+});
+
 final errorProvider = Provider<String?>((ref) {
   return ref.watch(playlistProvider).error;
 });
@@ -346,4 +452,8 @@ final selectedSubCategoryProvider = Provider<String?>((ref) {
 
 final searchQueryProvider = Provider<String>((ref) {
   return ref.watch(playlistProvider).searchQuery;
+});
+
+final lastUpdateProvider = Provider<DateTime?>((ref) {
+  return ref.watch(playlistProvider).lastUpdate;
 });
