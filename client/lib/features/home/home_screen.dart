@@ -74,22 +74,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       );
     }
 
-    // تجميع حسب النوع
-    final liveChannels =
-        all.where((c) => c.contentType == 'live').toList();
+    final liveChannels = all.where((c) => c.contentType == 'live').toList();
     final movies = all.where((c) => c.contentType == 'movie').toList();
     final series = all.where((c) => c.contentType == 'series').toList();
 
-    // تجميع القنوات حسب الباقة
-    final sportsChannels = liveChannels
-        .where((c) => c.category == 'sport')
-        .toList();
+    final sportsChannels =
+        liveChannels.where((c) => c.category == 'sport').toList();
     final newsChannels =
         liveChannels.where((c) => c.category == 'news').toList();
     final kidsChannels =
         liveChannels.where((c) => c.category == 'kids').toList();
 
-    // أفلام حسب اللغة (أول 20 لكل لغة)
     final arabicMovies =
         movies.where((m) => m.language == 'ara').take(20).toList();
     final turkishMovies =
@@ -97,13 +92,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final hindiMovies =
         movies.where((m) => m.language == 'hin').take(20).toList();
 
-    // مسلسلات حسب اللغة
     final arabicSeries =
         series.where((s) => s.language == 'ara').take(20).toList();
     final turkishSeries =
         series.where((s) => s.language == 'tur').take(20).toList();
 
-    // الصف المميز (الأعلى أولوية)
     final featured = [...liveChannels, ...movies]
         .where((c) => c.logo.isNotEmpty)
         .take(20)
@@ -112,13 +105,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     return CustomScrollView(
       controller: _scrollController,
       slivers: [
-        // Hero
         if (featured.isNotEmpty)
           SliverToBoxAdapter(child: _buildHero(featured)),
 
         const SliverToBoxAdapter(child: SizedBox(height: 24)),
 
-        // إحصائيات سريعة
         SliverToBoxAdapter(
           child: _buildStats(
             liveChannels.length,
@@ -129,7 +120,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
         const SliverToBoxAdapter(child: SizedBox(height: 32)),
 
-        // صفوف القنوات
         if (sportsChannels.isNotEmpty)
           SliverToBoxAdapter(
             child: _buildRow(
@@ -157,8 +147,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               color: const Color(0xFF9C27B0),
             ),
           ),
-
-        // صفوف الأفلام
         if (arabicMovies.isNotEmpty)
           SliverToBoxAdapter(
             child: _buildRow(
@@ -186,8 +174,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               color: const Color(0xFF4CAF50),
             ),
           ),
-
-        // صفوف المسلسلات
         if (arabicSeries.isNotEmpty)
           SliverToBoxAdapter(
             child: _buildRow(
@@ -233,7 +219,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       child: Stack(
         children: [
-          // خلفية متدرجة
           Positioned.fill(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(20),
@@ -251,13 +236,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
             ),
           ),
-
-          // المحتوى
           Padding(
             padding: const EdgeInsets.all(40),
             child: Row(
               children: [
-                // النص
                 Expanded(
                   flex: 2,
                   child: Column(
@@ -326,8 +308,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ],
                   ),
                 ),
-
-                // صور مصغرة
                 Expanded(
                   flex: 1,
                   child: SizedBox(
@@ -396,9 +376,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // ==========================================================
-  //  إحصائيات سريعة
-  // ==========================================================
   Widget _buildStats(int channels, int movies, int series) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -481,7 +458,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
     );
   }
-  
+}
+
   // ==========================================================
   //  صف أفقى
   // ==========================================================
