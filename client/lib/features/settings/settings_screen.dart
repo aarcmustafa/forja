@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // ==========================================================
 //  معلومات التطبيق
 // ==========================================================
-class AppInfo class AppInfo {
+class AppInfo {
   static const String appName = 'STTITEN FOOT';
   static const String appSubtitle = '';
   static const String version = '1.0.0';
