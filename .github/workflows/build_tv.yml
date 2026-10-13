@@ -38,58 +38,37 @@ jobs:
           flutter create --platforms=android --org com.estitn --project-name estitn_farja --no-pub temp_app
           rm -rf "$GITHUB_WORKSPACE/client/android"
           cp -r /tmp/temp_app/android "$GITHUB_WORKSPACE/client/android"
-          echo "Copied android folder"
 
       - name: Auto-fix Dart files
         run: |
-          echo "=== Fix 1: Add flutter/services import ==="
           find client/lib -name "*.dart" | while read f; do
             if grep -q "KeyDownEvent" "$f"; then
               if ! grep -q "package:flutter/services.dart" "$f"; then
                 sed -i "1i import 'package:flutter/services.dart';" "$f"
-                echo "Added import to: $f"
               fi
             fi
           done
-
-          echo ""
-          echo "=== Fix 2: media_kit controller.value ==="
           find client/lib -name "*.dart" | while read f; do
             if grep -q "controller.value.size" "$f"; then
               sed -i "s|controller.value.size.width|(player.state.width ?? 1920).toDouble()|g" "$f"
               sed -i "s|controller.value.size.height|(player.state.height ?? 1080).toDouble()|g" "$f"
-              echo "Fixed controller.value in: $f"
             fi
           done
-
-          echo ""
-          echo "=== Done ==="
 
       - name: Download real Cairo fonts
         working-directory: client
         run: |
           mkdir -p assets/fonts
           cd assets/fonts
-
-          echo "Downloading Cairo font from Google Fonts..."
-
-          curl -sL -o cairo-var.ttf \
-            "https://github.com/google/fonts/raw/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf"
-
+          curl -sL -o cairo-var.ttf "https://github.com/google/fonts/raw/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf"
           if [ -f cairo-var.ttf ] && [ -s cairo-var.ttf ]; then
-            SIZE=$(stat -c%s cairo-var.ttf)
-            echo "Downloaded Cairo font: $SIZE bytes"
-
             cp cairo-var.ttf main_font.ttf
             cp cairo-var.ttf main_font_bold.ttf
             cp cairo-var.ttf Cairo-SemiBold.ttf
             cp cairo-var.ttf Cairo-Black.ttf
           else
-            echo "Failed to download, using placeholders"
             touch main_font.ttf main_font_bold.ttf Cairo-SemiBold.ttf Cairo-Black.ttf
           fi
-
-          echo "=== Fonts ready ==="
           ls -lh *.ttf
 
       - name: Install unrar and 7zip
@@ -97,20 +76,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y unrar-free p7zip-full || true
 
-      - name: Check uploaded assets
-        run: |
-          ls -lh client/assets/android_res/ || true
-
       - name: Extract archive
         run: |
           BASE="client/assets/android_res"
           mkdir -p "$BASE/extracted"
           ARCHIVE=$(find "$BASE" -maxdepth 1 \( -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) 2>/dev/null | head -1)
-          if [ -z "$ARCHIVE" ]; then
-            echo "no archive found"
-            exit 0
-          fi
-          echo "Archive: $ARCHIVE"
+          if [ -z "$ARCHIVE" ]; then exit 0; fi
           if [ "${ARCHIVE##*.}" = "zip" ]; then
             unzip -o "$ARCHIVE" -d "$BASE/extracted"
           elif [ "${ARCHIVE##*.}" = "rar" ]; then
@@ -118,91 +89,40 @@ jobs:
           else
             7z x "$ARCHIVE" -o"$BASE/extracted" -y
           fi
-          find "$BASE/extracted" -type f | head -40 || true
 
       - name: Detect res folder
         id: locate_res
         run: |
           BASE="client/assets/android_res"
           RES_PATH=""
-          if [ -d "$BASE/extracted/res" ]; then
-            RES_PATH="$BASE/extracted/res"
-          elif [ -d "$BASE/extracted/mipmap-hdpi" ]; then
-            RES_PATH="$BASE/extracted"
-          elif [ -d "$BASE/res" ]; then
-            RES_PATH="$BASE/res"
-          elif [ -d "$BASE/mipmap-hdpi" ]; then
-            RES_PATH="$BASE"
+          if [ -d "$BASE/extracted/res" ]; then RES_PATH="$BASE/extracted/res"
+          elif [ -d "$BASE/extracted/mipmap-hdpi" ]; then RES_PATH="$BASE/extracted"
+          elif [ -d "$BASE/res" ]; then RES_PATH="$BASE/res"
+          elif [ -d "$BASE/mipmap-hdpi" ]; then RES_PATH="$BASE"
           fi
           echo "RES_PATH=$RES_PATH" >> $GITHUB_OUTPUT
-          echo "Detected: $RES_PATH"
 
       - name: Replace Android res folder
         run: |
           RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
           RES_DEST="client/android/app/src/main/res"
-          if [ -z "$RES_SRC" ]; then
-            echo "no custom res"
-            exit 0
-          fi
-          if [ ! -d "$RES_SRC" ]; then
-            echo "not a directory"
-            exit 0
-          fi
+          if [ -z "$RES_SRC" ]; then exit 0; fi
+          if [ ! -d "$RES_SRC" ]; then exit 0; fi
           rm -rf "$RES_DEST"
           mkdir -p "$RES_DEST"
           cp -r "$RES_SRC"/* "$RES_DEST/"
-          find "$RES_DEST" -type f | head -40 || true
 
-      - name: Create styles.xml (LaunchTheme + NormalTheme)
+      - name: Create styles.xml
         working-directory: client
         run: |
           mkdir -p android/app/src/main/res/values
-          cat > android/app/src/main/res/values/styles.xml <<'STYLESEOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
-                  <item name="android:windowBackground">@drawable/launch_background</item>
-              </style>
-              <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
-                  <item name="android:windowBackground">?android:colorBackground</item>
-              </style>
-          </resources>
-          STYLESEOF
-
-          echo "Created styles.xml"
-          cat android/app/src/main/res/values/styles.xml
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">\n        <item name="android:windowBackground">@drawable/launch_background</item>\n    </style>\n    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">\n        <item name="android:windowBackground">?android:colorBackground</item>\n    </style>\n</resources>\n' > android/app/src/main/res/values/styles.xml
 
       - name: Create launch_background.xml
         working-directory: client
         run: |
           mkdir -p android/app/src/main/res/drawable
-          cat > android/app/src/main/res/drawable/launch_background.xml <<'LBE'
-          <?xml version="1.0" encoding="utf-8"?>
-          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-              <item android:drawable="@android:color/white" />
-          </layer-list>
-          LBE
-
-          echo "Created launch_background.xml"
-
-      - name: Create values-night styles
-        working-directory: client
-        run: |
-          mkdir -p android/app/src/main/res/values-night
-          cat > android/app/src/main/res/values-night/styles.xml <<'STYLESNEOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
-                  <item name="android:windowBackground">@drawable/launch_background</item>
-              </style>
-              <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
-                  <item name="android:windowBackground">?android:colorBackground</item>
-              </style>
-          </resources>
-          STYLESNEOF
-
-          echo "Created values-night styles.xml"
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<layer-list xmlns:android="http://schemas.android.com/apk/res/android">\n    <item android:drawable="@android:color/white" />\n</layer-list>\n' > android/app/src/main/res/drawable/launch_background.xml
 
       - name: Generate encrypted config
         env:
@@ -210,61 +130,42 @@ jobs:
         run: |
           mkdir -p client/lib/data/local
           python3 client/scripts/gen_config.py > client/lib/data/local/secure_config.dart
-          echo "Generated secure_config.dart"
 
       - name: Verify URLs
         run: |
           count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo 0)
-          echo "URLs: $count"
-          if [ "$count" -lt 1 ]; then
-            echo "ERROR: no URLs"
-            exit 1
-          fi
-          echo "OK"
+          if [ "$count" -lt 1 ]; then exit 1; fi
 
       - name: Bump minSdkVersion to 23
         working-directory: client
         run: |
           if [ -f android/app/build.gradle ]; then
             sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
-            echo "updated build.gradle"
           fi
           if [ -f android/app/build.gradle.kts ]; then
             sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 23/' android/app/build.gradle.kts
-            echo "updated build.gradle.kts"
           fi
 
       - name: Fix NDK version
         working-directory: client
         run: |
           python3 - <<'PYEOF'
-          import os
-          import re
+          import os, re
           path = "android/app/build.gradle.kts"
           if not os.path.exists(path):
               path = "android/app/build.gradle"
-          if not os.path.exists(path):
-              print("no build.gradle found")
-              exit(0)
+          if not os.path.exists(path): exit(0)
           src = open(path, "r", encoding="utf-8").read()
           if "ndkVersion" in src:
               src = re.sub(r'ndkVersion\s*=?\s*[^\n]+', 'ndkVersion = "28.2.13676358"', src)
-              print("Replaced existing ndkVersion")
           else:
               marker = "android {"
               idx = src.find(marker)
               if idx != -1:
                   insert_at = idx + len(marker)
-                  if path.endswith(".kts"):
-                      block = '\n    ndkVersion = "28.2.13676358"\n'
-                  else:
-                      block = '\n    ndkVersion "28.2.13676358"\n'
-                  src = src[:insert_at] + block + src[insert_at:]
-                  print("Added ndkVersion")
+                  src = src[:insert_at] + '\n    ndkVersion = "28.2.13676358"\n' + src[insert_at:]
           open(path, "w", encoding="utf-8").write(src)
           PYEOF
-          echo "=== Verifying ==="
-          grep -n "ndkVersion" android/app/build.gradle.kts || echo "NOT FOUND"
 
       - name: Add core-splashscreen dependency
         working-directory: client
@@ -274,33 +175,18 @@ jobs:
           path = "android/app/build.gradle.kts"
           if not os.path.exists(path):
               path = "android/app/build.gradle"
-          if not os.path.exists(path):
-              print("no build.gradle found")
-              exit(0)
+          if not os.path.exists(path): exit(0)
           src = open(path, "r", encoding="utf-8").read()
-          if "core-splashscreen" in src:
-              print("core-splashscreen already added")
-              exit(0)
+          if "core-splashscreen" in src: exit(0)
           marker = "dependencies {"
           idx = src.find(marker)
           if idx == -1:
-              if path.endswith(".kts"):
-                  src += '\n\ndependencies {\n    implementation("androidx.core:core-splashscreen:1.0.1")\n}\n'
-              else:
-                  src += "\n\ndependencies {\n    implementation 'androidx.core:core-splashscreen:1.0.1'\n}\n"
-              print("Appended dependencies block")
+              src += '\n\ndependencies {\n    implementation("androidx.core:core-splashscreen:1.0.1")\n}\n'
           else:
               insert_at = idx + len(marker)
-              if path.endswith(".kts"):
-                  block = '\n    implementation("androidx.core:core-splashscreen:1.0.1")'
-              else:
-                  block = "\n    implementation 'androidx.core:core-splashscreen:1.0.1'"
-              src = src[:insert_at] + block + src[insert_at:]
-              print("Added to existing dependencies block")
+              src = src[:insert_at] + '\n    implementation("androidx.core:core-splashscreen:1.0.1")' + src[insert_at:]
           open(path, "w", encoding="utf-8").write(src)
           PYEOF
-          echo "=== Verifying ==="
-          grep -n "core-splashscreen" android/app/build.gradle.kts || echo "NOT FOUND"
 
       - name: Add packaging options
         working-directory: client
@@ -309,47 +195,19 @@ jobs:
           import os
           candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
           for path in candidates:
-              if not os.path.exists(path):
-                  continue
+              if not os.path.exists(path): continue
               src = open(path, "r", encoding="utf-8").read()
-              if "packagingOptions" in src or "packaging {" in src:
-                  print(f"already in {path}")
-                  continue
+              if "packagingOptions" in src or "packaging {" in src: continue
               marker = "android {"
               idx = src.find(marker)
-              if idx == -1:
-                  continue
+              if idx == -1: continue
               insert_at = idx + len(marker)
-              if path.endswith(".kts"):
-                  block = """
-
-              packaging {
-                  jniLibs {
-                      useLegacyPackaging = true
-                  }
-                  resources {
-                      excludes += setOf("META-INF/*.kotlin_module")
-                  }
-              }
-          """
-              else:
-                  block = """
-
-              packagingOptions {
-                  jniLibs {
-                      useLegacyPackaging = true
-                  }
-                  resources {
-                      excludes += ['META-INF/*.kotlin_module']
-                  }
-              }
-          """
+              block = '\n\n    packaging {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n        resources {\n            excludes += setOf("META-INF/*.kotlin_module")\n        }\n    }\n'
               src = src[:insert_at] + block + src[insert_at:]
               open(path, "w", encoding="utf-8").write(src)
-              print(f"updated {path}")
           PYEOF
 
-      - name: Override AndroidManifest
+      - name: Override AndroidManifest for TV
         working-directory: client
         run: |
           cat > android/app/src/main/AndroidManifest.xml <<'XMLEOF'
@@ -363,7 +221,7 @@ jobs:
               <uses-permission android:name="android.permission.WAKE_LOCK" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <application
-                  android:label="استيتن فرجة"
+                  android:label="STTITEN FOOT"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher"
                   android:roundIcon="@mipmap/ic_launcher_round"
@@ -406,13 +264,13 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p artifacts
-          cp client/build/app/outputs/flutter-apk/app-release.apk artifacts/estitn-farja-tv.apk || true
+          cp client/build/app/outputs/flutter-apk/app-release.apk artifacts/sttiten-foot-tv.apk || true
           ls -lh artifacts/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: estitn-farja-tv-apk
+          name: sttiten-foot-tv-apk
           path: artifacts/*.apk
           retention-days: 30
 
@@ -420,4 +278,3 @@ jobs:
         if: always()
         run: |
           rm -f "$GITHUB_WORKSPACE/client/lib/data/local/secure_config.dart" || true
-          echo "Cleanup done"
