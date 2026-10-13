@@ -3,11 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/channel.dart';
 import '../../data/providers/playlist_provider.dart';
+import '../../data/providers/history_provider.dart';
 import '../live_tv/widgets/channel_card.dart';
-import '../movies/movie_detail_screen.dart';
+import '../live_tv/widgets/sports_matches_widget.dart';
 import '../player/player_screen.dart';
 
-/// الشاشة الرئيسية - تجمع القنوات والأفلام والمسلسلات
+/// الشاشة الرئيسية الرياضية
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
@@ -46,10 +47,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(color: Color(0xFF00C8FF), strokeWidth: 3),
+            CircularProgressIndicator(
+                color: Color(0xFF00C8FF), strokeWidth: 3),
             SizedBox(height: 20),
             Text(
-              'جارٍ تحميل المحتوى...',
+              'جارٍ تحميل القنوات الرياضية...',
               style: TextStyle(color: Colors.white70, fontSize: 14),
             ),
           ],
@@ -62,394 +64,224 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.dashboard_rounded, color: Colors.white24, size: 80),
+            Icon(Icons.sports_soccer_rounded,
+                color: Colors.white24, size: 80),
             SizedBox(height: 16),
             Text(
-              'لا يوجد محتوى',
+              'لا توجد قنوات رياضية',
               style: TextStyle(color: Colors.white70, fontSize: 16),
+            ),
+            SizedBox(height: 6),
+            Text(
+              'تحقق من اتصالك بالإنترنت',
+              style: TextStyle(color: Colors.white38, fontSize: 12),
             ),
           ],
         ),
       );
     }
 
-    final liveChannels = all.where((c) => c.contentType == 'live').toList();
-    final movies = all.where((c) => c.contentType == 'movie').toList();
-    final series = all.where((c) => c.contentType == 'series').toList();
-
-    final sportsChannels =
-        liveChannels.where((c) => c.category == 'sport').toList();
-    final newsChannels =
-        liveChannels.where((c) => c.category == 'news').toList();
-    final kidsChannels =
-        liveChannels.where((c) => c.category == 'kids').toList();
-
-    final arabicMovies =
-        movies.where((m) => m.language == 'ara').take(20).toList();
-    final turkishMovies =
-        movies.where((m) => m.language == 'tur').take(20).toList();
-    final hindiMovies =
-        movies.where((m) => m.language == 'hin').take(20).toList();
-
-    final arabicSeries =
-        series.where((s) => s.language == 'ara').take(20).toList();
-    final turkishSeries =
-        series.where((s) => s.language == 'tur').take(20).toList();
-
-    final featured = [...liveChannels, ...movies]
-        .where((c) => c.logo.isNotEmpty)
-        .take(20)
+    // تجميع القنوات حسب الباقة
+    final beinChannels = _filterByKeyword(all, 'bein');
+    final sscChannels = _filterByKeyword(all, 'ssc');
+    final adChannels = _filterByKeyword(all, 'ad sport');
+    final alwanChannels = _filterByKeyword(all, 'alwan');
+    final alkassChannels = _filterByKeyword(all, 'alkass');
+    final others = all
+        .where((c) =>
+            !_matchesKeyword(c, 'bein') &&
+            !_matchesKeyword(c, 'ssc') &&
+            !_matchesKeyword(c, 'ad sport') &&
+            !_matchesKeyword(c, 'alwan') &&
+            !_matchesKeyword(c, 'alkass'))
         .toList();
 
     return CustomScrollView(
       controller: _scrollController,
       slivers: [
-        if (featured.isNotEmpty)
-          SliverToBoxAdapter(child: _buildHero(featured)),
-        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+        // Hero
+        const SliverToBoxAdapter(child: _HeroSection()),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 20)),
+
+        // صندوق المباريات
         SliverToBoxAdapter(
-          child: _buildStats(
-            liveChannels.length,
-            movies.length,
-            series.length,
+          child: SportsMatchesWidget(
+            onChannelTap: _openChannel,
           ),
         ),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 8)),
+
+        // الإحصائيات
+        SliverToBoxAdapter(
+          child: _buildStats(all.length),
+        ),
+
         const SliverToBoxAdapter(child: SizedBox(height: 32)),
-        if (sportsChannels.isNotEmpty)
+
+        // صفوف الباقات
+        if (beinChannels.isNotEmpty)
           SliverToBoxAdapter(
             child: _buildRow(
-              title: 'قنوات رياضية',
+              title: 'beIN Sports',
               icon: Icons.sports_soccer_rounded,
-              items: sportsChannels.take(20).toList(),
+              items: beinChannels.take(20).toList(),
               color: const Color(0xFF00C8FF),
             ),
           ),
-        if (newsChannels.isNotEmpty)
+        if (sscChannels.isNotEmpty)
           SliverToBoxAdapter(
             child: _buildRow(
-              title: 'قنوات إخبارية',
-              icon: Icons.newspaper_rounded,
-              items: newsChannels.take(20).toList(),
+              title: 'SSC Sports',
+              icon: Icons.sports_soccer_rounded,
+              items: sscChannels.take(20).toList(),
+              color: const Color(0xFF4CAF50),
+            ),
+          ),
+        if (adChannels.isNotEmpty)
+          SliverToBoxAdapter(
+            child: _buildRow(
+              title: 'AD Sports',
+              icon: Icons.sports_soccer_rounded,
+              items: adChannels.take(20).toList(),
               color: const Color(0xFFFFB800),
             ),
           ),
-        if (kidsChannels.isNotEmpty)
+        if (alwanChannels.isNotEmpty)
           SliverToBoxAdapter(
             child: _buildRow(
-              title: 'قنوات أطفال',
-              icon: Icons.child_care_rounded,
-              items: kidsChannels.take(20).toList(),
+              title: 'قنوات ألوان',
+              icon: Icons.sports_soccer_rounded,
+              items: alwanChannels.take(20).toList(),
+              color: const Color(0xFFE91E63),
+            ),
+          ),
+        if (alkassChannels.isNotEmpty)
+          SliverToBoxAdapter(
+            child: _buildRow(
+              title: 'Al Kass',
+              icon: Icons.sports_soccer_rounded,
+              items: alkassChannels.take(20).toList(),
               color: const Color(0xFF9C27B0),
             ),
           ),
-        if (arabicMovies.isNotEmpty)
+        if (others.isNotEmpty)
           SliverToBoxAdapter(
             child: _buildRow(
-              title: 'أفلام عربية',
-              icon: Icons.movie_rounded,
-              items: arabicMovies,
-              color: const Color(0xFF4CAF50),
+              title: 'قنوات رياضية أخرى',
+              icon: Icons.sports_rounded,
+              items: others.take(20).toList(),
+              color: const Color(0xFF00BCD4),
             ),
           ),
-        if (turkishMovies.isNotEmpty)
-          SliverToBoxAdapter(
-            child: _buildRow(
-              title: 'أفلام تركية',
-              icon: Icons.movie_rounded,
-              items: turkishMovies,
-              color: const Color(0xFF4CAF50),
-            ),
-          ),
-        if (hindiMovies.isNotEmpty)
-          SliverToBoxAdapter(
-            child: _buildRow(
-              title: 'أفلام هندية',
-              icon: Icons.movie_rounded,
-              items: hindiMovies,
-              color: const Color(0xFF4CAF50),
-            ),
-          ),
-        if (arabicSeries.isNotEmpty)
-          SliverToBoxAdapter(
-            child: _buildRow(
-              title: 'مسلسلات عربية',
-              icon: Icons.tv_rounded,
-              items: arabicSeries,
-              color: const Color(0xFFE91E63),
-            ),
-          ),
-        if (turkishSeries.isNotEmpty)
-          SliverToBoxAdapter(
-            child: _buildRow(
-              title: 'مسلسلات تركية',
-              icon: Icons.tv_rounded,
-              items: turkishSeries,
-              color: const Color(0xFFE91E63),
-            ),
-          ),
+
         const SliverToBoxAdapter(child: SizedBox(height: 40)),
       ],
     );
   }
 
-  Widget _buildHero(List<Channel> featured) {
-    return Container(
-      height: 320,
-      margin: const EdgeInsets.fromLTRB(32, 20, 32, 0),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: [
-            Color(0xFF1A2238),
-            Color(0xFF0F1A2E),
-          ],
+  // ==========================================================
+  //  فلترة القنوات بالكلمة المفتاحية
+  // ==========================================================
+  List<Channel> _filterByKeyword(List<Channel> all, String keyword) {
+    return all.where((c) => _matchesKeyword(c, keyword)).toList();
+  }
+
+  bool _matchesKeyword(Channel c, String keyword) {
+    final text = '${c.name.toLowerCase()} ${c.group.toLowerCase()}';
+    return text.contains(keyword.toLowerCase());
+  }
+
+  void _openChannel(Channel channel) {
+    ref.read(historyProvider.notifier).record(channel);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          streamUrl: channel.streamUrl,
+          channelName: channel.name,
+          channelLogo: channel.logo,
         ),
-        border: Border.all(color: const Color(0xFF2A3350), width: 1.5),
-      ),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.centerRight,
-                    end: Alignment.centerLeft,
-                    colors: [
-                      const Color(0xFF00C8FF).withOpacity(0.1),
-                      Colors.transparent,
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(40),
-            child: Row(
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFB800).withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: const Color(0xFFFFB800).withOpacity(0.5),
-                          ),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.star_rounded,
-                              color: Color(0xFFFFB800),
-                              size: 16,
-                            ),
-                            SizedBox(width: 6),
-                            Text(
-                              'مميز',
-                              style: TextStyle(
-                                color: Color(0xFFFFB800),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'مرحباً بك في',
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 18,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        'استيتن فرجة',
-                        style: TextStyle(
-                          color: Color(0xFF00C8FF),
-                          fontSize: 44,
-                          fontWeight: FontWeight.bold,
-                          height: 1.1,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'آلاف القنوات والأفلام والمسلسلات\nفي تطبيق واحد',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.6),
-                          fontSize: 15,
-                          height: 1.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  flex: 1,
-                  child: SizedBox(
-                    height: 240,
-                    child: Stack(
-                      children: [
-                        for (int i = 0; i < featured.take(3).length; i++)
-                          Positioned(
-                            right: i * 40.0,
-                            top: i * 15.0,
-                            child: Transform.rotate(
-                              angle: (i - 1) * 0.08,
-                              child: Container(
-                                width: 140,
-                                height: 220,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF1A2238),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: const Color(0xFF2A3350),
-                                    width: 2,
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.4),
-                                      blurRadius: 15,
-                                      offset: const Offset(0, 8),
-                                    ),
-                                  ],
-                                ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: featured[i].logo.isEmpty
-                                      ? const Center(
-                                          child: Icon(
-                                            Icons.movie_rounded,
-                                            color: Colors.white24,
-                                            size: 40,
-                                          ),
-                                        )
-                                      : Image.network(
-                                          featured[i].logo,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) =>
-                                              const Center(
-                                            child: Icon(
-                                              Icons.movie_rounded,
-                                              color: Colors.white24,
-                                              size: 40,
-                                            ),
-                                          ),
-                                        ),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
-
-  Widget _buildStats(int channels, int movies, int series) {
+  
+  // ==========================================================
+  //  الإحصائيات
+  // ==========================================================
+  Widget _buildStats(int total) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32),
-      child: Row(
-        children: [
-          _buildStatCard(
-            icon: Icons.live_tv_rounded,
-            label: 'قنوات مباشرة',
-            value: '$channels',
-            color: const Color(0xFF00C8FF),
-          ),
-          const SizedBox(width: 16),
-          _buildStatCard(
-            icon: Icons.movie_rounded,
-            label: 'أفلام',
-            value: '$movies',
-            color: const Color(0xFF4CAF50),
-          ),
-          const SizedBox(width: 16),
-          _buildStatCard(
-            icon: Icons.tv_rounded,
-            label: 'مسلسلات',
-            value: '$series',
-            color: const Color(0xFFE91E63),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color color,
-  }) {
-    return Expanded(
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: const Color(0xFF141A2E),
+          gradient: const LinearGradient(
+            begin: Alignment.topRight,
+            end: Alignment.bottomLeft,
+            colors: [
+              Color(0xFF1A2E1A),
+              Color(0xFF141A2E),
+            ],
+          ),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFF2A3350)),
+          border: Border.all(
+            color: const Color(0xFF4CAF50).withOpacity(0.4),
+            width: 1.5,
+          ),
         ),
         child: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
+                color: const Color(0xFF4CAF50).withOpacity(0.2),
+                borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: color, size: 28),
+              child: const Icon(
+                Icons.sports_soccer_rounded,
+                color: Color(0xFF4CAF50),
+                size: 32,
+              ),
             ),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  const Text(
+                    'القنوات الرياضية المتاحة',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
                   Text(
-                    value,
+                    '$total قناة',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 12,
-                    ),
-                  ),
                 ],
               ),
+            ),
+            const Icon(
+              Icons.emoji_events_rounded,
+              color: Color(0xFFFFB800),
+              size: 40,
             ),
           ],
         ),
       ),
     );
   }
-  
+
+  // ==========================================================
+  //  صف القنوات
+  // ==========================================================
   Widget _buildRow({
     required String title,
     required IconData icon,
@@ -518,32 +350,101 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   channel: item,
                   width: 180,
                   height: 250,
-                  onTap: () {
-                    if (item.contentType == 'movie') {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => MovieDetailScreen(movie: item),
-                        ),
-                      );
-                    } else {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => PlayerScreen(
-                            streamUrl: item.streamUrl,
-                            channelName: item.name,
-                            channelLogo: item.logo,
-                          ),
-                        ),
-                      );
-                    }
-                  },
+                  onTap: () => _openChannel(item),
                 );
               },
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ==========================================================
+//  Hero Section
+// ==========================================================
+class _HeroSection extends StatelessWidget {
+  const _HeroSection();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 200,
+      margin: const EdgeInsets.fromLTRB(32, 20, 32, 0),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: [
+            Color(0xFF1A2E1A),
+            Color(0xFF0F1A0F),
+          ],
+        ),
+        border: Border.all(
+          color: const Color(0xFF4CAF50).withOpacity(0.4),
+          width: 1.5,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF4CAF50), Color(0xFF2E7D32)],
+                ),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.sports_soccer_rounded,
+                color: Colors.white,
+                size: 56,
+              ),
+            ),
+            const SizedBox(width: 24),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'استيتن فرجة',
+                    style: TextStyle(
+                      color: Color(0xFF4CAF50),
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: 6),
+                  Text(
+                    'كل الرياضة في مكان واحد',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 16,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'قنوات • مباريات • بث مباشر',
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.emoji_events_rounded,
+              color: Color(0xFFFFB800),
+              size: 80,
+            ),
+          ],
+        ),
       ),
     );
   }
