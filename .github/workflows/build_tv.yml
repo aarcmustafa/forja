@@ -154,6 +154,56 @@ jobs:
           cp -r "$RES_SRC"/* "$RES_DEST/"
           find "$RES_DEST" -type f | head -40 || true
 
+      - name: Create styles.xml (LaunchTheme + NormalTheme)
+        working-directory: client
+        run: |
+          mkdir -p android/app/src/main/res/values
+          cat > android/app/src/main/res/values/styles.xml <<'STYLESEOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@drawable/launch_background</item>
+              </style>
+              <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">?android:colorBackground</item>
+              </style>
+          </resources>
+          STYLESEOF
+
+          echo "Created styles.xml"
+          cat android/app/src/main/res/values/styles.xml
+
+      - name: Create launch_background.xml
+        working-directory: client
+        run: |
+          mkdir -p android/app/src/main/res/drawable
+          cat > android/app/src/main/res/drawable/launch_background.xml <<'LBE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@android:color/white" />
+          </layer-list>
+          LBE
+
+          echo "Created launch_background.xml"
+
+      - name: Create values-night styles
+        working-directory: client
+        run: |
+          mkdir -p android/app/src/main/res/values-night
+          cat > android/app/src/main/res/values-night/styles.xml <<'STYLESNEOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+                  <item name="android:windowBackground">@drawable/launch_background</item>
+              </style>
+              <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+                  <item name="android:windowBackground">?android:colorBackground</item>
+              </style>
+          </resources>
+          STYLESNEOF
+
+          echo "Created values-night styles.xml"
+
       - name: Generate encrypted config
         env:
           PLAYLIST_URLS: ${{ secrets.PLAYLIST_URLS }}
@@ -221,24 +271,18 @@ jobs:
         run: |
           python3 - <<'PYEOF'
           import os
-          import re
-
           path = "android/app/build.gradle.kts"
           if not os.path.exists(path):
               path = "android/app/build.gradle"
           if not os.path.exists(path):
               print("no build.gradle found")
               exit(0)
-
           src = open(path, "r", encoding="utf-8").read()
-
           if "core-splashscreen" in src:
               print("core-splashscreen already added")
               exit(0)
-
           marker = "dependencies {"
           idx = src.find(marker)
-
           if idx == -1:
               if path.endswith(".kts"):
                   src += '\n\ndependencies {\n    implementation("androidx.core:core-splashscreen:1.0.1")\n}\n'
@@ -253,10 +297,8 @@ jobs:
                   block = "\n    implementation 'androidx.core:core-splashscreen:1.0.1'"
               src = src[:insert_at] + block + src[insert_at:]
               print("Added to existing dependencies block")
-
           open(path, "w", encoding="utf-8").write(src)
           PYEOF
-
           echo "=== Verifying ==="
           grep -n "core-splashscreen" android/app/build.gradle.kts || echo "NOT FOUND"
 
