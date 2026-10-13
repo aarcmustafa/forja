@@ -3,11 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/channel.dart';
 import '../../data/providers/playlist_provider.dart';
+import '../../data/providers/history_provider.dart';
 import '../live_tv/widgets/channel_card.dart';
 import 'movie_detail_screen.dart';
 
-/// شاشة الأفلام بنمط Netflix
-/// صفوف أفقية حسب اللغة: عربي / تركي / هندي / أجنبي / أنمي / أسيوي...
+/// شاشة الأفلام بنمط Netflix + سجل المشاهدة
 class MoviesNetflixScreen extends ConsumerStatefulWidget {
   const MoviesNetflixScreen({super.key});
 
@@ -19,17 +19,16 @@ class MoviesNetflixScreen extends ConsumerStatefulWidget {
 class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
   final ScrollController _verticalController = ScrollController();
 
-  // ترتيب اللغات حسب الأولوية
   static const List<Map<String, String>> _languagesOrder = [
-    {'code': 'ara', 'title': 'أفلام عربية', 'icon': 'movie'},
-    {'code': 'tur', 'title': 'أفلام تركية', 'icon': 'movie'},
-    {'code': 'hin', 'title': 'أفلام هندية', 'icon': 'movie'},
-    {'code': 'anime', 'title': 'أنمي', 'icon': 'anime'},
-    {'code': 'asian', 'title': 'أفلام أسيوية', 'icon': 'movie'},
-    {'code': 'kor', 'title': 'أفلام كورية', 'icon': 'movie'},
-    {'code': 'jpn', 'title': 'أفلام يابانية', 'icon': 'movie'},
-    {'code': 'eng', 'title': 'أفلام أجنبية', 'icon': 'movie'},
-    {'code': 'fra', 'title': 'أفلام فرنسية', 'icon': 'movie'},
+    {'code': 'ara', 'title': 'أفلام عربية'},
+    {'code': 'tur', 'title': 'أفلام تركية'},
+    {'code': 'hin', 'title': 'أفلام هندية'},
+    {'code': 'anime', 'title': 'أنمي'},
+    {'code': 'asian', 'title': 'أفلام أسيوية'},
+    {'code': 'kor', 'title': 'أفلام كورية'},
+    {'code': 'jpn', 'title': 'أفلام يابانية'},
+    {'code': 'eng', 'title': 'أفلام أجنبية'},
+    {'code': 'fra', 'title': 'أفلام فرنسية'},
   ];
 
   @override
@@ -43,40 +42,54 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
     final state = ref.watch(playlistProvider);
     final allMovies =
         state.allChannels.where((c) => c.contentType == 'movie').toList();
+    final lastMovieId = ref.watch(historyProvider).lastMovieId;
 
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: const Color(0xFF0A0E1A),
         body: SafeArea(
-          child: _buildBody(state, allMovies),
+          child: _buildBody(state, allMovies, lastMovieId),
         ),
       ),
     );
   }
 
-  Widget _buildBody(PlaylistState state, List<Channel> movies) {
-    // تحميل
+  Widget _buildBody(
+    PlaylistState state,
+    List<Channel> movies,
+    String? lastMovieId,
+  ) {
     if (state.isLoading && state.allChannels.isEmpty) {
       return _buildLoading();
     }
 
-    // فارغ
     if (movies.isEmpty) {
       return _buildEmpty();
     }
 
-    // تجميع الأفلام حسب اللغة
     final grouped = _groupByLanguage(movies);
+
+    // ابحث عن آخر فيلم
+    Channel? lastMovie;
+    if (lastMovieId != null) {
+      try {
+        lastMovie = movies.firstWhere((m) => m.id == lastMovieId);
+      } catch (_) {
+        lastMovie = null;
+      }
+    }
 
     return CustomScrollView(
       controller: _verticalController,
       slivers: [
-        // شريط علوي
+        // قسم شوهد حديثاً (إن وُجد)
+        if (lastMovie != null)
+          SliverToBoxAdapter(child: _buildRecentMovie(lastMovie)),
+
         SliverToBoxAdapter(child: _buildHeader(state, movies.length)),
         const SliverToBoxAdapter(child: SizedBox(height: 24)),
 
-        // الصفوف
         for (final lang in _languagesOrder)
           if ((grouped[lang['code']] ?? []).isNotEmpty)
             SliverToBoxAdapter(
@@ -97,7 +110,6 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
     for (final m in movies) {
       map.putIfAbsent(m.language, () => []).add(m);
     }
-    // ترتيب كل مجموعة حسب السنة (الأحدث أولاً)
     for (final key in map.keys) {
       map[key]!.sort((a, b) {
         final ya = a.year ?? 0;
@@ -106,6 +118,60 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
       });
     }
     return map;
+  }
+
+  // ==========================================================
+  //  قسم شوهد حديثاً (آخر فيلم)
+  // ==========================================================
+  Widget _buildRecentMovie(Channel movie) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20, bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Row(
+              children: [
+                Container(
+                  width: 5,
+                  height: 26,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFB800),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Icon(
+                  Icons.history_rounded,
+                  color: Color(0xFFFFB800),
+                  size: 22,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'شوهد حديثاً',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: ChannelCard(
+              channel: movie,
+              width: 180,
+              height: 270,
+              onTap: () => _openMovie(movie),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ==========================================================
@@ -192,7 +258,6 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // عنوان الصف + زر "الكل"
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 32),
             child: Row(
@@ -240,7 +305,6 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
           ),
           const SizedBox(height: 16),
 
-          // الصف الأفقي للبطاقات
           SizedBox(
             height: 300,
             child: ListView.separated(
@@ -265,7 +329,7 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
   }
 
   // ==========================================================
-  //  فتح فيلم
+  //  الفتح
   // ==========================================================
   void _openMovie(Channel movie) {
     Navigator.push(
@@ -276,9 +340,6 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
     );
   }
 
-  // ==========================================================
-  //  فتح قائمة كاملة باللغة
-  // ==========================================================
   void _openLanguageList(String title, List<Channel> movies) {
     Navigator.push(
       context,
@@ -288,9 +349,6 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
     );
   }
 
-  // ==========================================================
-  //  تحميل
-  // ==========================================================
   Widget _buildLoading() {
     return const Center(
       child: Column(
@@ -307,9 +365,6 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
     );
   }
 
-  // ==========================================================
-  //  فارغ
-  // ==========================================================
   Widget _buildEmpty() {
     return const Center(
       child: Column(
@@ -333,7 +388,7 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
 }
 
 // ==========================================================
-//  زر "الكل" القابل للتركيز
+//  زر "الكل"
 // ==========================================================
 class _SeeAllButton extends StatefulWidget {
   final VoidCallback onPressed;
@@ -371,9 +426,7 @@ class _SeeAllButtonState extends State<_SeeAllButton> {
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: _isFocused
-                  ? Colors.white
-                  : const Color(0xFF2A3350),
+              color: _isFocused ? Colors.white : const Color(0xFF2A3350),
               width: _isFocused ? 2 : 1,
             ),
           ),
@@ -403,7 +456,7 @@ class _SeeAllButtonState extends State<_SeeAllButton> {
 }
 
 // ==========================================================
-//  صفحة عرض كل أفلام لغة معينة (شبكة)
+//  صفحة كل أفلام لغة
 // ==========================================================
 class _MovieListPage extends StatelessWidget {
   final String title;
@@ -420,15 +473,12 @@ class _MovieListPage extends StatelessWidget {
         body: SafeArea(
           child: Column(
             children: [
-              // الشريط العلوي
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                 child: Row(
                   children: [
-                    _BackButton(
-                      onPressed: () => Navigator.pop(context),
-                    ),
+                    _BackButton(onPressed: () => Navigator.pop(context)),
                     const SizedBox(width: 16),
                     Expanded(
                       child: Column(
@@ -456,8 +506,6 @@ class _MovieListPage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-
-              // الشبكة
               Expanded(
                 child: GridView.builder(
                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
