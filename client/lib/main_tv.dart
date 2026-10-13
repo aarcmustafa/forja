@@ -8,9 +8,20 @@ import 'data/models/channel.dart';
 //  ⚙️  روابط M3U — ضع روابطك هنا
 // ==========================================================
 const List<String> kPlaylistUrls = [
-  // مثال:
-  // 'https://example.com/playlist1.m3u',
-  // 'https://example.com/playlist2.m3u8',
+  // ============ روابط مباشرة (قنوات) ============
+  'https://m3uextgroup.kiki10kkii.workers.dev/f/gt2izrmxn1nr/Live_AR.m3u',
+  'https://m3uextgroup.kiki10kkii.workers.dev/f/htw0iolrrihk/Live_SPORTS.m3u',
+
+  // ============ قنوات رياضية فردية ============
+  'https://m3uextractor.kiki10kkii.workers.dev/download/1f48228d-7783-43a8-8533-4228b4c9ba43/Live_AR%20_%20ALWAN%20SPORTS.m3u8',
+  'https://m3uextractor.kiki10kkii.workers.dev/download/127c2b7c-21c8-42e9-a903-6aad10029683/Live_AR%20_%20BEIN%20TOD.m3u8',
+  'https://m3uextractor.kiki10kkii.workers.dev/download/a3260edc-48d0-4696-aa1e-3fb6916b2d51/Live_AR%20_%20BEIN%20SPORTS%208K.m3u8',
+  'https://m3uextractor.kiki10kkii.workers.dev/download/08cdf005-1a6f-48e4-8486-912afa4f918d/Live_BeIN%20SPORTS%20__%20BEE__%20.m3u8',
+
+  // ============ روابط Xtream (قنوات + VOD) ============
+  'http://dksipi.com:80/get.php?username=kirham2025&password=M0BfTl2CtK&type=m3u_plus&output=m3u8',
+  'http://xtreamutv.org:80/get.php?username=7rFgH6sFwy&password=HSzDvxrCy6&type=m3u_plus&output=m3u8',
+  'http://prod.dragonkey.net:2082/get.php?username=00228866&password=2pd974kh95&type=m3u_plus&output=m3u8',
 ];
 
 // ==========================================================
@@ -18,7 +29,7 @@ const List<String> kPlaylistUrls = [
 // ==========================================================
 void main() {
   runApp(
-    const ProviderScope(   // ← مطلوب لـ Riverpod
+    const ProviderScope(
       child: EstetnFarjaTvApp(),
     ),
   );
@@ -60,7 +71,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
 
-  // فهارس التطبيق
   static const int _idxHome = 0;
   static const int _idxLive = 1;
   static const int _idxMovies = 2;
@@ -214,7 +224,7 @@ class _HomeScreenState extends State<HomeScreen> {
   //  عند الضغط على قناة
   // ==========================================================
   void _onChannelTap(Channel channel) {
-    // TODO: فتح المشغل — سنبنيه في المرحلة القادمة
+    // TODO: فتح المشغل — المرحلة القادمة
     showDialog(
       context: context,
       builder: (_) => Directionality(
@@ -225,12 +235,17 @@ class _HomeScreenState extends State<HomeScreen> {
             channel.name,
             style: const TextStyle(color: Colors.white),
           ),
-          content: Text(
-            'الباقة: ${channel.group}\n'
-            'التصنيف: ${channel.categoryLabel}\n'
-            'اللغة: ${channel.languageLabel}\n'
-            'الحالة: ${channel.isWorking ? "تعمل" : "متوقفة"}',
-            style: const TextStyle(color: Colors.white70),
+          content: SingleChildScrollView(
+            child: Text(
+              'الباقة: ${channel.group}\n'
+              'التصنيف: ${channel.categoryLabel}\n'
+              'اللغة: ${channel.languageLabel}\n'
+              'النوع: ${channel.contentType}\n'
+              'الحالة: ${channel.isWorking ? "تعمل" : "متوقفة"}\n'
+              'الأولوية: ${channel.priority}\n'
+              '\nالرابط:\n${channel.streamUrl}',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
           ),
           actions: [
             TextButton(
