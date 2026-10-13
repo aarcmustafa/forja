@@ -217,3 +217,117 @@ class Channel {
         group.toLowerCase().contains(query) ||
         genre.toLowerCase().contains(query);
   }
+  
+  /// إنشاء نسخة معدّلة
+  Channel copyWith({
+    String? id,
+    String? name,
+    String? originalName,
+    String? logo,
+    String? streamUrl,
+    String? group,
+    String? category,
+    String? language,
+    String? countryCode,
+    String? genre,
+    String? contentType,
+    String? translation,
+    int? year,
+    double? rating,
+    bool? isWorking,
+    int? priority,
+    DateTime? expiresAt,
+    String? tvgId,
+    Map<String, String>? extras,
+  }) {
+    return Channel(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      originalName: originalName ?? this.originalName,
+      logo: logo ?? this.logo,
+      streamUrl: streamUrl ?? this.streamUrl,
+      group: group ?? this.group,
+      category: category ?? this.category,
+      language: language ?? this.language,
+      countryCode: countryCode ?? this.countryCode,
+      genre: genre ?? this.genre,
+      contentType: contentType ?? this.contentType,
+      translation: translation ?? this.translation,
+      year: year ?? this.year,
+      rating: rating ?? this.rating,
+      isWorking: isWorking ?? this.isWorking,
+      priority: priority ?? this.priority,
+      expiresAt: expiresAt ?? this.expiresAt,
+      tvgId: tvgId ?? this.tvgId,
+      extras: extras ?? this.extras,
+    );
+  }
+
+  /// من JSON
+  factory Channel.fromJson(Map<String, dynamic> json) {
+    return Channel(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? 'غير معروف',
+      originalName: json['originalName'] as String? ?? '',
+      logo: json['logo'] as String? ?? '',
+      streamUrl: json['streamUrl'] as String? ?? '',
+      group: json['group'] as String? ?? 'غير مصنف',
+      category: json['category'] as String? ?? 'general',
+      language: json['language'] as String? ?? 'ara',
+      countryCode: json['countryCode'] as String? ?? '',
+      genre: json['genre'] as String? ?? '',
+      contentType: json['contentType'] as String? ?? 'live',
+      translation: json['translation'] as String?,
+      year: json['year'] as int?,
+      rating: (json['rating'] as num?)?.toDouble(),
+      isWorking: json['isWorking'] as bool? ?? true,
+      priority: json['priority'] as int? ?? 0,
+      expiresAt: json['expiresAt'] != null
+          ? DateTime.tryParse(json['expiresAt'] as String)
+          : null,
+      tvgId: json['tvgId'] as String? ?? '',
+      extras: (json['extras'] as Map<String, dynamic>?)
+              ?.map((k, v) => MapEntry(k, v.toString())) ??
+          const {},
+    );
+  }
+
+  /// إلى JSON
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'originalName': originalName,
+      'logo': logo,
+      'streamUrl': streamUrl,
+      'group': group,
+      'category': category,
+      'language': language,
+      'countryCode': countryCode,
+      'genre': genre,
+      'contentType': contentType,
+      'translation': translation,
+      'year': year,
+      'rating': rating,
+      'isWorking': isWorking,
+      'priority': priority,
+      'expiresAt': expiresAt?.toIso8601String(),
+      'tvgId': tvgId,
+      'extras': extras,
+    };
+  }
+
+  @override
+  String toString() =>
+      'Channel($name | $group | $category | $language | $countryCode)';
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Channel &&
+          runtimeType == other.runtimeType &&
+          id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
+}
