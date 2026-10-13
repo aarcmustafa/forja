@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/channel.dart';
 import '../../data/providers/playlist_provider.dart';
 import '../../data/providers/favorites_provider.dart';
 import '../live_tv/widgets/channel_card.dart';
-import '../movies/movie_detail_screen.dart';
 import '../player/player_screen.dart';
 
-/// شاشة المفضلة
+/// شاشة المفضلة الرياضية
 class FavoritesScreen extends ConsumerStatefulWidget {
   const FavoritesScreen({super.key});
 
@@ -17,20 +17,20 @@ class FavoritesScreen extends ConsumerStatefulWidget {
 }
 
 class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
-  int _tabIndex = 0; // 0=الكل, 1=قنوات, 2=أفلام, 3=مسلسلات
+  String? _selectedCountry;
 
-  final List<String> _tabLabels = const [
-    'الكل',
-    'قنوات',
-    'أفلام',
-    'مسلسلات',
-  ];
-
-  final List<IconData> _tabIcons = const [
-    Icons.favorite_rounded,
-    Icons.live_tv_rounded,
-    Icons.movie_rounded,
-    Icons.tv_rounded,
+  // الدول العربية الشائعة
+  static const List<Map<String, String>> _countries = [
+    {'code': 'SA', 'label': 'السعودية'},
+    {'code': 'AE', 'label': 'الإمارات'},
+    {'code': 'EG', 'label': 'مصر'},
+    {'code': 'MA', 'label': 'المغرب'},
+    {'code': 'DZ', 'label': 'الجزائر'},
+    {'code': 'TN', 'label': 'تونس'},
+    {'code': 'IQ', 'label': 'العراق'},
+    {'code': 'KW', 'label': 'الكويت'},
+    {'code': 'QA', 'label': 'قطر'},
+    {'code': 'JO', 'label': 'الأردن'},
   ];
 
   @override
@@ -39,22 +39,14 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     final all = ref.watch(playlistProvider).allChannels;
 
     // تجميع المفضلة
-    final favorites = all.where((c) => ids.contains(c.id)).toList();
-    final liveFavs =
-        favorites.where((c) => c.contentType == 'live').toList();
-    final movieFavs =
-        favorites.where((c) => c.contentType == 'movie').toList();
-    final seriesFavs =
-        favorites.where((c) => c.contentType == 'series').toList();
+    var favorites = all.where((c) => ids.contains(c.id)).toList();
 
-    // حسب التبويب
-    final currentList = switch (_tabIndex) {
-      0 => favorites,
-      1 => liveFavs,
-      2 => movieFavs,
-      3 => seriesFavs,
-      _ => favorites,
-    };
+    // فلتر الدولة
+    if (_selectedCountry != null) {
+      favorites = favorites
+          .where((c) => c.countryCode == _selectedCountry)
+          .toList();
+    }
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -63,14 +55,14 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         body: SafeArea(
           child: Column(
             children: [
-              _buildHeader(favorites.length),
+              _buildHeader(ids.length),
               const SizedBox(height: 16),
-              _buildTabs(),
+              _buildCountryFilters(),
               const SizedBox(height: 20),
               Expanded(
-                child: currentList.isEmpty
+                child: favorites.isEmpty
                     ? _buildEmpty()
-                    : _buildGrid(currentList),
+                    : _buildGrid(favorites),
               ),
             ],
           ),
@@ -112,7 +104,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                 ),
               ),
               Text(
-                'قنواتك وأفلامك المفضلة',
+                'قنواتك الرياضية المفضلة',
                 style: TextStyle(color: Colors.white54, fontSize: 13),
               ),
             ],
@@ -135,7 +127,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '$total عنصر',
+                  '$total قناة',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 14,
@@ -151,22 +143,29 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
   }
 
   // ==========================================================
-  //  التبويبات
+  //  فلاتر الدول
   // ==========================================================
-  Widget _buildTabs() {
+  Widget _buildCountryFilters() {
     return SizedBox(
-      height: 48,
+      height: 44,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 32),
-        itemCount: _tabLabels.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemCount: _countries.length + 1,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemBuilder: (context, i) {
-          return _TabButton(
-            label: _tabLabels[i],
-            icon: _tabIcons[i],
-            isSelected: _tabIndex == i,
-            onTap: () => setState(() => _tabIndex = i),
+          if (i == 0) {
+            return _CountryChip(
+              label: 'الكل',
+              isSelected: _selectedCountry == null,
+              onTap: () => setState(() => _selectedCountry = null),
+            );
+          }
+          final c = _countries[i - 1];
+          return _CountryChip(
+            label: c['label']!,
+            isSelected: _selectedCountry == c['code'],
+            onTap: () => setState(() => _selectedCountry = c['code']),
           );
         },
       ),
@@ -188,12 +187,12 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
           ),
           SizedBox(height: 16),
           Text(
-            'لا توجد عناصر في المفضلة',
+            'لا توجد قنوات في المفضلة',
             style: TextStyle(color: Colors.white70, fontSize: 16),
           ),
           SizedBox(height: 6),
           Text(
-            'اضغط ⭐ على أي قناة أو فيلم لإضافته',
+            'اضغط ⭐ على أي قناة رياضية لإضافتها',
             style: TextStyle(color: Colors.white38, fontSize: 12),
           ),
         ],
@@ -211,7 +210,7 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
         maxCrossAxisExtent: 200,
         crossAxisSpacing: 16,
         mainAxisSpacing: 16,
-        childAspectRatio: 0.75,
+        childAspectRatio: 0.95,
       ),
       itemCount: items.length,
       itemBuilder: (context, i) {
@@ -221,10 +220,9 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
             ChannelCard(
               channel: item,
               width: 200,
-              height: 270,
-              onTap: () => _openItem(item),
+              height: 200,
+              onTap: () => _openChannel(item),
             ),
-            // زر الإزالة
             Positioned(
               top: 8,
               left: 8,
@@ -242,50 +240,39 @@ class _FavoritesScreenState extends ConsumerState<FavoritesScreen> {
     );
   }
 
-  void _openItem(Channel item) {
-    if (item.contentType == 'movie') {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => MovieDetailScreen(movie: item),
+  void _openChannel(Channel channel) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          streamUrl: channel.streamUrl,
+          channelName: channel.name,
+          channelLogo: channel.logo,
         ),
-      );
-    } else {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PlayerScreen(
-            streamUrl: item.streamUrl,
-            channelName: item.name,
-            channelLogo: item.logo,
-          ),
-        ),
-      );
-    }
+      ),
+    );
   }
 }
 
 // ==========================================================
-//  زر التبويب
+//  شريحة الدولة
 // ==========================================================
-class _TabButton extends StatefulWidget {
+class _CountryChip extends StatefulWidget {
   final String label;
-  final IconData icon;
   final bool isSelected;
   final VoidCallback onTap;
 
-  const _TabButton({
+  const _CountryChip({
     required this.label,
-    required this.icon,
     required this.isSelected,
     required this.onTap,
   });
 
   @override
-  State<_TabButton> createState() => _TabButtonState();
+  State<_CountryChip> createState() => _CountryChipState();
 }
 
-class _TabButtonState extends State<_TabButton> {
+class _CountryChipState extends State<_CountryChip> {
   bool _isFocused = false;
 
   @override
@@ -313,44 +300,25 @@ class _TabButtonState extends State<_TabButton> {
           ),
           decoration: BoxDecoration(
             color: active
-                ? const Color(0xFFFF1744)
+                ? const Color(0xFF00C8FF)
                 : const Color(0xFF141A2E),
             borderRadius: BorderRadius.circular(22),
             border: Border.all(
               color: _isFocused
                   ? Colors.white
                   : active
-                      ? const Color(0xFFFF1744)
+                      ? const Color(0xFF00C8FF)
                       : const Color(0xFF2A3350),
               width: _isFocused ? 2.5 : 1.5,
             ),
-            boxShadow: _isFocused
-                ? [
-                    BoxShadow(
-                      color: const Color(0xFFFF1744).withOpacity(0.5),
-                      blurRadius: 14,
-                    ),
-                  ]
-                : [],
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                widget.icon,
-                color: active ? Colors.white : Colors.white70,
-                size: 18,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                widget.label,
-                style: TextStyle(
-                  color: active ? Colors.white : Colors.white70,
-                  fontSize: 13,
-                  fontWeight: active ? FontWeight.bold : FontWeight.w500,
-                ),
-              ),
-            ],
+          child: Text(
+            widget.label,
+            style: TextStyle(
+              color: active ? Colors.black : Colors.white70,
+              fontSize: 13,
+              fontWeight: active ? FontWeight.bold : FontWeight.w500,
+            ),
           ),
         ),
       ),
@@ -406,128 +374,6 @@ class _RemoveButtonState extends State<_RemoveButton> {
             Icons.close_rounded,
             color: _isFocused ? Colors.white : Colors.white70,
             size: 18,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ==========================================================
-//  دالة مساعدة: زر المفضلة القابل للاستخدام في أي مكان
-// ==========================================================
-class FavoriteButton extends ConsumerWidget {
-  final String channelId;
-  final double size;
-  final bool showLabel;
-
-  const FavoriteButton({
-    super.key,
-    required this.channelId,
-    this.size = 44,
-    this.showLabel = false,
-  });
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isFav = ref.watch(favoritesProvider).contains(channelId);
-
-    return _FavoriteButtonInner(
-      isFavorite: isFav,
-      size: size,
-      showLabel: showLabel,
-      onTap: () {
-        ref.read(favoritesProvider.notifier).toggle(channelId);
-      },
-    );
-  }
-}
-
-class _FavoriteButtonInner extends StatefulWidget {
-  final bool isFavorite;
-  final double size;
-  final bool showLabel;
-  final VoidCallback onTap;
-
-  const _FavoriteButtonInner({
-    required this.isFavorite,
-    required this.size,
-    required this.showLabel,
-    required this.onTap,
-  });
-
-  @override
-  State<_FavoriteButtonInner> createState() => _FavoriteButtonInnerState();
-}
-
-class _FavoriteButtonInnerState extends State<_FavoriteButtonInner> {
-  bool _isFocused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final active = widget.isFavorite || _isFocused;
-
-    return Focus(
-      onFocusChange: (h) => setState(() => _isFocused = h),
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent) {
-          final key = event.logicalKey.keyLabel;
-          if (key == 'Select' || key == 'Enter' || key == 'Space') {
-            widget.onTap();
-          }
-        }
-        return KeyEventResult.ignored;
-      },
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          width: widget.showLabel ? null : widget.size,
-          height: widget.size,
-          padding: widget.showLabel
-              ? const EdgeInsets.symmetric(horizontal: 20)
-              : null,
-          decoration: BoxDecoration(
-            color: active
-                ? const Color(0xFFFF1744)
-                : const Color(0xFF141A2E),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: _isFocused ? Colors.white : const Color(0xFF2A3350),
-              width: _isFocused ? 2 : 1,
-            ),
-            boxShadow: _isFocused
-                ? [
-                    BoxShadow(
-                      color: const Color(0xFFFF1744).withOpacity(0.5),
-                      blurRadius: 14,
-                    ),
-                  ]
-                : [],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                widget.isFavorite
-                    ? Icons.favorite_rounded
-                    : Icons.favorite_border_rounded,
-                color: active ? Colors.white : Colors.white70,
-                size: widget.size * 0.5,
-              ),
-              if (widget.showLabel) ...[
-                const SizedBox(width: 8),
-                Text(
-                  widget.isFavorite ? 'في المفضلة' : 'أضف للمفضلة',
-                  style: TextStyle(
-                    color: active ? Colors.white : Colors.white70,
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ],
           ),
         ),
       ),
