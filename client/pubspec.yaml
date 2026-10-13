@@ -1,5 +1,5 @@
 name: estitn_farja
-description: Estetn Farja IPTV
+description: Estetn Farja IPTV - تطبيق IPTV لـ Android TV و Google TV
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -10,13 +10,8 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.6
-  media_kit: ^1.1.11
-  media_kit_video: ^1.2.5
-  media_kit_libs_android_video: ^1.3.6
   dio: ^5.7.0
   flutter_riverpod: ^2.5.1
-  go_router: ^14.2.7
-  shared_preferences: ^2.3.2
 
 dev_dependencies:
   flutter_test:
