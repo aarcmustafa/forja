@@ -3,7 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
-/// خدمة فحص القنوات - تعمل في الخلفية
+/// خدمة فحص القنوات - تعمل في الخلفية مع إدارة كاش ذكية
 class StreamChecker {
   static const String _boxName = 'stream_checks';
   static const String _kResults = 'results';
@@ -13,6 +13,9 @@ class StreamChecker {
   static const int concurrency = 15;
   static const int backgroundBatchSize = 10;
   static const Duration backgroundDelay = Duration(seconds: 8);
+
+  /// ✅ الحد الأقصى لنتائج الفحص المحفوظة
+  static const int maxSavedResults = 30000;
 
   /// ✅ VLC UA — مقبول من 99% من السيرفرات
   static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
@@ -100,7 +103,7 @@ class StreamChecker {
   }
 
   // ==========================================================
-  //  الفحص الخلفي
+  //  الفحص الخلفي التلقائي
   // ==========================================================
   Future<void> startBackgroundCheck(
     List<Channel> channels, {
@@ -163,7 +166,7 @@ class StreamChecker {
 
     try {
       final raw = _box!.get(_kResults);
-      final Map<String, dynamic> map =
+      Map<String, dynamic> map =
           raw != null ? Map<String, dynamic>.from(raw as Map) : {};
 
       for (int i = 0; i < channels.length; i++) {
@@ -171,6 +174,23 @@ class StreamChecker {
           'ok': results[i],
           'at': DateTime.now().millisecondsSinceEpoch,
         };
+      }
+
+      // ✅ إذا كبر الكاش → احتفظ بأحدث maxSavedResults فقط
+      if (map.length > maxSavedResults) {
+        final entries = map.entries.toList()
+          ..sort((a, b) {
+            final ta = (a.value['at'] as int?) ?? 0;
+            final tb = (b.value['at'] as int?) ?? 0;
+            return tb.compareTo(ta);
+          });
+
+        map = Map.fromEntries(
+          entries.take(maxSavedResults),
+        );
+
+        // ignore: avoid_print
+        print('🧹 تم تنظيف نتائج الفحص القديمة');
       }
 
       await _box!.put(_kResults, map);
@@ -214,6 +234,60 @@ class StreamChecker {
   Future<int> getCheckedCount() async {
     final results = await loadResults();
     return results.length;
+  }
+
+  // ==========================================================
+  //  إدارة الكاش — صيانة تلقائية
+  // ==========================================================
+  /// ✅ صيانة الكاش — تُستدعى عند بدء التطبيق
+  Future<void> maintainCache() async {
+    if (_box == null) await init();
+    if (_box == null) return;
+
+    try {
+      final raw = _box!.get(_kResults);
+      if (raw is! Map) return;
+
+      final map = Map<String, dynamic>.from(raw);
+      if (map.length <= maxSavedResults) return;
+
+      // ترتيب حسب الوقت (الأحدث أولاً)
+      final entries = map.entries.toList()
+        ..sort((a, b) {
+          final ta = (a.value['at'] as int?) ?? 0;
+          final tb = (b.value['at'] as int?) ?? 0;
+          return tb.compareTo(ta);
+        });
+
+      final trimmed = Map.fromEntries(
+        entries.take(maxSavedResults),
+      );
+
+      await _box!.put(_kResults, trimmed);
+      // ignore: avoid_print
+      print('🧹 تم تقليم نتائج الفحص: ${map.length} → ${trimmed.length}');
+    } catch (_) {}
+  }
+
+  /// ✅ معلومات الكاش
+  Future<Map<String, dynamic>> getCacheInfo() async {
+    if (_box == null) await init();
+    if (_box == null) {
+      return {'ready': false, 'count': 0, 'limit': maxSavedResults};
+    }
+
+    try {
+      final raw = _box!.get(_kResults);
+      final count = raw is Map ? raw.length : 0;
+      return {
+        'ready': true,
+        'count': count,
+        'limit': maxSavedResults,
+        'lastCheck': getLastCheckTime()?.toIso8601String(),
+      };
+    } catch (_) {
+      return {'ready': false, 'count': 0, 'limit': maxSavedResults};
+    }
   }
 
   Future<void> clear() async {
