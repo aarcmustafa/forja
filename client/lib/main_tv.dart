@@ -1,7 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'features/live_tv/live_tv_screen.dart';
+import 'data/models/channel.dart';
+
+// ==========================================================
+//  ⚙️  روابط M3U — ضع روابطك هنا
+// ==========================================================
+const List<String> kPlaylistUrls = [
+  // مثال:
+  // 'https://example.com/playlist1.m3u',
+  // 'https://example.com/playlist2.m3u8',
+];
+
+// ==========================================================
+//  نقطة انطلاق التطبيق
+// ==========================================================
 void main() {
-  runApp(const EstetnFarjaTvApp());
+  runApp(
+    const ProviderScope(   // ← مطلوب لـ Riverpod
+      child: EstetnFarjaTvApp(),
+    ),
+  );
 }
 
 class EstetnFarjaTvApp extends StatelessWidget {
@@ -21,13 +41,15 @@ class EstetnFarjaTvApp extends StatelessWidget {
           secondary: Color(0xFFFFB800),
           surface: Color(0xFF141A2E),
         ),
-        fontFamily: 'Cairo',
       ),
       home: const HomeScreen(),
     );
   }
 }
 
+// ==========================================================
+//  الشاشة الرئيسية (جانبية + محتوى)
+// ==========================================================
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -37,6 +59,14 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+
+  // فهارس التطبيق
+  static const int _idxHome = 0;
+  static const int _idxLive = 1;
+  static const int _idxMovies = 2;
+  static const int _idxSeries = 3;
+  static const int _idxPackages = 4;
+  static const int _idxSettings = 5;
 
   final List<String> _menuItems = const [
     'الرئيسية',
@@ -71,6 +101,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ==========================================================
+  //  الشريط الجانبي
+  // ==========================================================
   Widget _buildSidebar() {
     return Container(
       width: 220,
@@ -106,13 +139,14 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Focus(
         onFocusChange: (hasFocus) {
-          if (hasFocus) {
+          if (hasFocus && _selectedIndex != index) {
             setState(() => _selectedIndex = index);
           }
         },
         child: Builder(
           builder: (context) {
             final hasFocus = Focus.of(context).hasFocus;
+            final active = hasFocus || isSelected;
             return GestureDetector(
               onTap: () => setState(() => _selectedIndex = index),
               child: AnimatedContainer(
@@ -122,7 +156,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   horizontal: 16,
                 ),
                 decoration: BoxDecoration(
-                  color: hasFocus || isSelected
+                  color: active
                       ? const Color(0xFF00C8FF)
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
@@ -131,9 +165,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Icon(
                       _menuIcons[index],
-                      color: hasFocus || isSelected
-                          ? Colors.black
-                          : Colors.white70,
+                      color: active ? Colors.black : Colors.white70,
                       size: 22,
                     ),
                     const SizedBox(width: 12),
@@ -141,12 +173,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       _menuItems[index],
                       style: TextStyle(
                         fontSize: 16,
-                        fontWeight: hasFocus || isSelected
+                        fontWeight: active
                             ? FontWeight.bold
                             : FontWeight.normal,
-                        color: hasFocus || isSelected
-                            ? Colors.black
-                            : Colors.white70,
+                        color: active ? Colors.black : Colors.white70,
                       ),
                     ),
                   ],
@@ -159,7 +189,67 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ==========================================================
+  //  المحتوى (حسب الاختيار)
+  // ==========================================================
   Widget _buildContent() {
+    switch (_selectedIndex) {
+      case _idxLive:
+        return LiveTvScreen(
+          playlistUrls: kPlaylistUrls,
+          onChannelTap: _onChannelTap,
+        );
+
+      case _idxHome:
+      case _idxMovies:
+      case _idxSeries:
+      case _idxPackages:
+      case _idxSettings:
+      default:
+        return _buildPlaceholder();
+    }
+  }
+
+  // ==========================================================
+  //  عند الضغط على قناة
+  // ==========================================================
+  void _onChannelTap(Channel channel) {
+    // TODO: فتح المشغل — سنبنيه في المرحلة القادمة
+    showDialog(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          backgroundColor: const Color(0xFF141A2E),
+          title: Text(
+            channel.name,
+            style: const TextStyle(color: Colors.white),
+          ),
+          content: Text(
+            'الباقة: ${channel.group}\n'
+            'التصنيف: ${channel.categoryLabel}\n'
+            'اللغة: ${channel.languageLabel}\n'
+            'الحالة: ${channel.isWorking ? "تعمل" : "متوقفة"}',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                'إغلاق',
+                style: TextStyle(color: Color(0xFF00C8FF)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ==========================================================
+  //  شاشة مؤقتة للأقسام الأخرى
+  // ==========================================================
+  Widget _buildPlaceholder() {
     return Padding(
       padding: const EdgeInsets.all(32),
       child: Column(
@@ -186,7 +276,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'مرحباً بك في استيتن فرجة',
+                    _menuItems[_selectedIndex],
                     style: TextStyle(
                       fontSize: 22,
                       color: Colors.white.withOpacity(0.7),
