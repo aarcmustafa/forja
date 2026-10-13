@@ -7,6 +7,7 @@ import 'features/live_tv/live_tv_screen.dart';
 import 'features/movies/movies_netflix_screen.dart';
 import 'features/series/series_netflix_screen.dart';
 import 'features/packages/packages_screen.dart';
+import 'features/settings/settings_screen.dart';
 import 'features/player/player_screen.dart';
 import 'data/models/channel.dart';
 import 'data/providers/playlist_provider.dart';
@@ -50,7 +51,7 @@ class EstetnFarjaTvApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Estetn Farja TV',
+      title: 'استيتن فرجة',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -68,7 +69,7 @@ class EstetnFarjaTvApp extends StatelessWidget {
 }
 
 // ==========================================================
-//  الشاشة الرئيسية (Shell)
+//  الشاشة الرئيسية
 // ==========================================================
 class MainShell extends ConsumerStatefulWidget {
   const MainShell({super.key});
@@ -78,7 +79,6 @@ class MainShell extends ConsumerStatefulWidget {
 }
 
 class _MainShellState extends ConsumerState<MainShell> {
-  // فتح التطبيق على "الرئيسية"
   int _selectedIndex = 0;
 
   static const int _idxHome = 0;
@@ -143,12 +143,12 @@ class _MainShellState extends ConsumerState<MainShell> {
     return Container(
       width: 220,
       color: const Color(0xFF141A2E),
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 12),
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
+            padding: EdgeInsets.symmetric(vertical: 20),
             child: Text(
               'استيتن فرجة',
               textAlign: TextAlign.center,
@@ -162,6 +162,43 @@ class _MainShellState extends ConsumerState<MainShell> {
           const Divider(color: Color(0xFF2A3350)),
           const SizedBox(height: 12),
           for (int i = 0; i < _menuItems.length; i++) _buildMenuItem(i),
+
+          const Spacer(),
+          const Divider(color: Color(0xFF2A3350)),
+          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'الإصدار 1.0.0',
+                  style: TextStyle(
+                    color: Colors.white38,
+                    fontSize: 11,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'المطور: جلولي مصطفى',
+                  style: TextStyle(
+                    color: Colors.white54,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  '© 2025',
+                  style: TextStyle(
+                    color: Colors.white24,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
         ],
       ),
     );
@@ -244,8 +281,10 @@ class _MainShellState extends ConsumerState<MainShell> {
         return const PackagesScreen();
 
       case _idxSettings:
+        return const SettingsScreen();
+
       default:
-        return _buildPlaceholder();
+        return const HomeScreen();
     }
   }
 
@@ -261,59 +300,6 @@ class _MainShellState extends ConsumerState<MainShell> {
           channelName: channel.name,
           channelLogo: channel.logo,
         ),
-      ),
-    );
-  }
-
-  // ==========================================================
-  //  Placeholder (للإعدادات فقط حالياً)
-  // ==========================================================
-  Widget _buildPlaceholder() {
-    return Padding(
-      padding: const EdgeInsets.all(32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _menuItems[_selectedIndex],
-            style: const TextStyle(
-              fontSize: 32,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 24),
-          Expanded(
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    _menuIcons[_selectedIndex],
-                    size: 80,
-                    color: const Color(0xFF00C8FF).withOpacity(0.5),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    _menuItems[_selectedIndex],
-                    style: TextStyle(
-                      fontSize: 22,
-                      color: Colors.white.withOpacity(0.7),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'قيد التطوير',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white.withOpacity(0.4),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
