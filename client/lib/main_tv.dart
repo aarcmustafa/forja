@@ -4,11 +4,10 @@ import 'package:media_kit/media_kit.dart';
 
 import 'features/home/home_screen.dart';
 import 'features/live_tv/live_tv_screen.dart';
-import 'features/movies/movies_netflix_screen.dart';
-import 'features/series/series_netflix_screen.dart';
+import 'features/live_tv/widgets/sports_matches_widget.dart';
+import 'features/favorites/favorites_screen.dart';
 import 'features/packages/packages_screen.dart';
 import 'features/settings/settings_screen.dart';
-import 'features/favorites/favorites_screen.dart';
 import 'features/player/player_screen.dart';
 import 'features/search/unified_search_screen.dart';
 import 'data/models/channel.dart';
@@ -17,6 +16,7 @@ import 'data/providers/favorites_provider.dart';
 import 'data/providers/history_provider.dart';
 import 'data/local/secure_config.dart';
 import 'data/local/remote_config.dart';
+import 'core/animations/app_animations.dart';
 
 // ==========================================================
 //  روابط M3U — مشفّرة + تُحدَّث عن بعد
@@ -42,13 +42,12 @@ class EstetnFarjaTvApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'استيتن فرجة',
+      title: 'استيتن فرجة الرياضية',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF0A0E1A),
-        fontFamily: 'Cairo',
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFF00C8FF),
           secondary: Color(0xFFFFB800),
@@ -75,17 +74,15 @@ class _MainShellState extends ConsumerState<MainShell> {
 
   static const int _idxHome = 0;
   static const int _idxLive = 1;
-  static const int _idxMovies = 2;
-  static const int _idxSeries = 3;
-  static const int _idxFavorites = 4;
-  static const int _idxPackages = 5;
-  static const int _idxSettings = 6;
+  static const int _idxMatches = 2;
+  static const int _idxFavorites = 3;
+  static const int _idxPackages = 4;
+  static const int _idxSettings = 5;
 
   final List<String> _menuItems = const [
     'الرئيسية',
     'البث المباشر',
-    'الأفلام',
-    'المسلسلات',
+    'المباريات',
     'المفضلة',
     'الباقات',
     'الإعدادات',
@@ -94,8 +91,7 @@ class _MainShellState extends ConsumerState<MainShell> {
   final List<IconData> _menuIcons = const [
     Icons.home_rounded,
     Icons.live_tv_rounded,
-    Icons.movie_rounded,
-    Icons.tv_rounded,
+    Icons.sports_soccer_rounded,
     Icons.favorite_rounded,
     Icons.list_rounded,
     Icons.settings_rounded,
@@ -109,11 +105,7 @@ class _MainShellState extends ConsumerState<MainShell> {
     });
   }
 
-  // ==========================================================
-  //  تحميل القنوات مع تحديث الروابط عن بعد
-  // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
-    // ✅ صيانة الكاش
     try {
       final repo = ref.read(m3uRepositoryProvider);
       await repo.maintainCache();
@@ -121,24 +113,15 @@ class _MainShellState extends ConsumerState<MainShell> {
       await storage.maintain();
     } catch (_) {}
 
-    // ✅ محاولة تحديث الروابط عن بعد
     try {
       final remote = RemoteConfig();
-
-      // 1) اقرأ من Cache فوراً
       final cached = await remote.loadCached();
       if (cached.isNotEmpty) {
         kPlaylistUrls = cached;
-        // ignore: avoid_print
-        print('Using cached URLs: ${cached.length}');
       }
-
-      // 2) جلب التحديث في الخلفية
       remote.fetchRemote().then((remoteUrls) {
         if (remoteUrls != null && remoteUrls.isNotEmpty) {
           kPlaylistUrls = remoteUrls;
-          // ignore: avoid_print
-          print('Remote URLs updated: ${remoteUrls.length}');
         }
       });
     } catch (_) {}
@@ -178,19 +161,37 @@ class _MainShellState extends ConsumerState<MainShell> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Padding(
-            padding: EdgeInsets.symmetric(vertical: 20),
-            child: Text(
-              'استيتن فرجة',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF00C8FF),
-              ),
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              children: [
+                Icon(
+                  Icons.sports_soccer_rounded,
+                  color: Color(0xFF4CAF50),
+                  size: 40,
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'استيتن فرجة',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF4CAF50),
+                  ),
+                ),
+                Text(
+                  'الرياضية',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.white54,
+                  ),
+                ),
+              ],
             ),
           ),
           const Divider(color: Color(0xFF2A3350)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
           _buildSearchButton(),
           const SizedBox(height: 8),
@@ -248,8 +249,8 @@ class _MainShellState extends ConsumerState<MainShell> {
               onTap: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const UnifiedSearchScreen(),
+                  FadeSlideRoute(
+                    page: const UnifiedSearchScreen(),
                   ),
                 );
               },
@@ -328,14 +329,14 @@ class _MainShellState extends ConsumerState<MainShell> {
                   horizontal: 16,
                 ),
                 decoration: BoxDecoration(
-                  color: active ? const Color(0xFF00C8FF) : Colors.transparent,
+                  color: active ? const Color(0xFF4CAF50) : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(
                   children: [
                     Icon(
                       _menuIcons[index],
-                      color: active ? Colors.black : Colors.white70,
+                      color: active ? Colors.white : Colors.white70,
                       size: 22,
                     ),
                     const SizedBox(width: 12),
@@ -346,7 +347,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                           fontSize: 16,
                           fontWeight:
                               active ? FontWeight.bold : FontWeight.normal,
-                          color: active ? Colors.black : Colors.white70,
+                          color: active ? Colors.white : Colors.white70,
                         ),
                       ),
                     ),
@@ -358,7 +359,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                         ),
                         decoration: BoxDecoration(
                           color: active
-                              ? Colors.black
+                              ? Colors.white
                               : const Color(0xFFFF1744),
                           borderRadius: BorderRadius.circular(10),
                         ),
@@ -366,7 +367,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                           '$badge',
                           style: TextStyle(
                             color: active
-                                ? const Color(0xFF00C8FF)
+                                ? const Color(0xFF4CAF50)
                                 : Colors.white,
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
@@ -382,7 +383,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       ),
     );
   }
-  
+
   // ==========================================================
   //  المحتوى
   // ==========================================================
@@ -397,11 +398,8 @@ class _MainShellState extends ConsumerState<MainShell> {
           onChannelTap: _openChannel,
         );
 
-      case _idxMovies:
-        return const MoviesNetflixScreen();
-
-      case _idxSeries:
-        return const SeriesNetflixScreen();
+      case _idxMatches:
+        return _buildMatchesScreen();
 
       case _idxFavorites:
         return const FavoritesScreen();
@@ -418,15 +416,40 @@ class _MainShellState extends ConsumerState<MainShell> {
   }
 
   // ==========================================================
-  //  فتح القناة (مع تسجيل في السجل)
+  //  شاشة المباريات
+  // ==========================================================
+  Widget _buildMatchesScreen() {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0A0E1A),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                const SizedBox(height: 20),
+                SportsMatchesWidget(
+                  onChannelTap: _openChannel,
+                ),
+                const SizedBox(height: 40),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  
+  // ==========================================================
+  //  فتح القناة
   // ==========================================================
   void _openChannel(Channel channel) {
     ref.read(historyProvider.notifier).record(channel);
 
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => PlayerScreen(
+      FadeSlideRoute(
+        page: PlayerScreen(
           streamUrl: channel.streamUrl,
           channelName: channel.name,
           channelLogo: channel.logo,
