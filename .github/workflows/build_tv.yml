@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build-tv:
-    name: Build TV APK with media_kit
+    name: Build TV APK
     runs-on: ubuntu-latest
 
     steps:
@@ -32,36 +32,134 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Verify Flutter
-        run: flutter --version
-
       - name: Generate Android platform
         working-directory: client
         run: |
           flutter create --platforms=android --org com.estitn --project-name estitn_farja .
 
-      - name: Bump minSdkVersion to 23 for media_kit
+      # ==========================================================
+      #  توليد secure_config.dart مع XOR + Base64 + تقسيم
+      # ==========================================================
+      - name: Generate encrypted config
+        env:
+          PLAYLIST_URLS: ${{ secrets.PLAYLIST_URLS }}
+        run: |
+          mkdir -p client/lib/data/local
+
+          python3 << 'PY'
+          import os
+          import base64
+
+          # المفتاح السري (XOR) — يمكنك تغييره لاحقاً
+          key = bytes([
+              0x7A, 0x3F, 0x91, 0x2C, 0xE5, 0x88, 0x4B, 0xD6,
+              0x13, 0x6A, 0xBF, 0x50, 0x27, 0x9E, 0xC4, 0x71,
+              0xA2, 0x5D, 0x38, 0x94, 0xCB, 0x1F, 0x66, 0xD9,
+          ])
+
+          urls_raw = os.environ.get('PLAYLIST_URLS', '')
+          urls = [u.strip() for u in urls_raw.split('\n') if u.strip()]
+
+          if not urls:
+              print('❌ لا توجد روابط في PLAYLIST_URLS')
+              exit(1)
+
+          lines = []
+          lines.append("import 'dart:convert';")
+          lines.append('')
+          lines.append('/// بيانات مشفّرة — تُفكّ في الذاكرة فقط')
+          lines.append('/// ⚠️ مُولّد تلقائياً — لا تعدّله يدوياً')
+          lines.append('class SecureConfig {')
+          lines.append('  static const List<int> _k = [')
+          lines.append('    ' + ', '.join(f'0x{b:02X}' for b in key) + ',')
+          lines.append('  ];')
+          lines.append('')
+          lines.append('  static const List<List<String>> _parts = [')
+
+          for url in urls:
+              url_bytes = url.encode('utf-8')
+              xored = bytes([url_bytes[i] ^ key[i % len(key)] for i in range(len(url_bytes))])
+              b64 = base64.b64encode(xored).decode('ascii')
+              n = len(b64)
+              chunk = (n + 2) // 3
+              parts = [b64[i:i+chunk] for i in range(0, n, chunk)]
+              while len(parts) < 3:
+                  parts.append('')
+              lines.append("    ['" + "', '".join(parts) + "'],")
+
+          lines.append('  ];')
+          lines.append('')
+          lines.append('  static String _decode(List<String> p) {')
+          lines.append('    try {')
+          lines.append('      final bytes = base64Decode(p.join());')
+          lines.append('      final out = <int>[];')
+          lines.append('      for (int i = 0; i < bytes.length; i++) {')
+          lines.append('        out.add(bytes[i] ^ _k[i % _k.length]);')
+          lines.append('      }')
+          lines.append('      return utf8.decode(out, allowMalformed: true);')
+          lines.append('    } catch (_) {')
+          lines.append("      return '';")
+          lines.append('    }')
+          lines.append('  }')
+          lines.append('')
+          lines.append('  static List<String> getPlaylistUrls() {')
+          lines.append('    final r = <String>[];')
+          lines.append('    for (final p in _parts) {')
+          lines.append('      final u = _decode(p);')
+          lines.append('      if (u.isNotEmpty) r.add(u);')
+          lines.append('    }')
+          lines.append('    return r;')
+          lines.append('  }')
+          lines.append('')
+          lines.append('  static List<String>? _cache;')
+          lines.append('  static List<String> get urls {')
+          lines.append('    _cache ??= getPlaylistUrls();')
+          lines.append('    return _cache!;')
+          lines.append('  }')
+          lines.append('}')
+
+          with open('client/lib/data/local/secure_config.dart', 'w', encoding='utf-8') as f:
+              f.write('\n'.join(lines))
+
+          print(f'✓ تم توليد {len(urls)} روابط مشفّرة')
+          PY
+
+          echo "=== Check ==="
+          grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo "0"
+
+      - name: Verify encrypted config
+        run: |
+          if [ ! -f "client/lib/data/local/secure_config.dart" ]; then
+            echo "❌ ملف secure_config.dart غير موجود"
+            exit 1
+          fi
+
+          count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart)
+          echo "✓ عدد الروابط المشفّرة: $count"
+
+          if [ "$count" -lt 1 ]; then
+            echo "❌ لم يتم العثور على روابط"
+            exit 1
+          fi
+
+          echo "=== نموذج من الملف (بدون محتوى حقيقي) ==="
+          head -20 client/lib/data/local/secure_config.dart
+
+      - name: Bump minSdkVersion to 23
         working-directory: client
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
-          echo "=== build.gradle minSdk line ==="
-          grep -n "minSdkVersion" android/app/build.gradle || true
 
-      - name: Add packaging options to build.gradle
+      - name: Add packaging options
         working-directory: client
         run: |
           python3 - <<'PY'
-          import re
           path = "android/app/build.gradle"
           src = open(path, "r", encoding="utf-8").read()
-
-          # إذا لم تكن موجودة، نضيف packagingOptions داخل android { }
           if "packagingOptions" not in src:
-              # نضيف بعد أول سطر android { 
-              marker = "android {"
-              idx = src.find(marker)
+              idx = src.find("android {")
               if idx != -1:
-                  insert_at = idx + len(marker)
+                  insert_at = idx + len("android {")
                   block = """
 
               packagingOptions {
@@ -74,44 +172,30 @@ jobs:
               }
           """
                   src = src[:insert_at] + block + src[insert_at:]
-
           open(path, "w", encoding="utf-8").write(src)
-          print("packagingOptions added successfully")
           PY
 
-      - name: Override AndroidManifest for TV + Media
+      - name: Override AndroidManifest for TV
         working-directory: client
         run: |
           cat > android/app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-              <!-- ========== متطلبات Android TV ========== -->
-              <uses-feature
-                  android:name="android.software.leanback"
-                  android:required="true" />
-              <uses-feature
-                  android:name="android.hardware.touchscreen"
-                  android:required="false" />
-              <uses-feature
-                  android:name="android.hardware.gamepad"
-                  android:required="false" />
-
-              <!-- ========== الصلاحيات ========== -->
+              <uses-feature android:name="android.software.leanback" android:required="true" />
+              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+              <uses-feature android:name="android.hardware.gamepad" android:required="false" />
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
               <uses-permission android:name="android.permission.WAKE_LOCK" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-
               <application
-                  android:label="Estetn Farja TV"
+                  android:label="استيتن فرجة"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher"
                   android:banner="@mipmap/ic_launcher"
                   android:usesCleartextTraffic="true"
                   android:requestLegacyExternalStorage="true"
                   android:hardwareAccelerated="true">
-
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -120,42 +204,26 @@ jobs:
                       android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
                       android:hardwareAccelerated="true"
                       android:windowSoftInputMode="adjustResize">
-
-                      <meta-data
-                          android:name="io.flutter.embedding.android.NormalTheme"
-                          android:resource="@style/NormalTheme" />
-
-                      <!-- ====== إطلاق التطبيق من شاشة Android TV ====== -->
+                      <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
                       </intent-filter>
-
-                      <!-- ====== إطلاق التطبيق من الهواتف (احتياطي) ====== -->
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
-
-                  <meta-data
-                      android:name="flutterEmbedding"
-                      android:value="2" />
+                  <meta-data android:name="flutterEmbedding" android:value="2" />
               </application>
           </manifest>
           EOF
-          echo "=== AndroidManifest.xml created ==="
-          cat android/app/src/main/AndroidManifest.xml
 
       - name: Get dependencies
         working-directory: client
         run: flutter pub get
 
-      - name: Analyze project (non-blocking)
-        working-directory: client
-        run: flutter analyze || true
-
-      - name: Build APK (split per ABI to reduce size)
+      - name: Build APK (split per ABI)
         working-directory: client
         run: |
           flutter build apk --release \
@@ -166,17 +234,9 @@ jobs:
       - name: Rename and list APKs
         run: |
           mkdir -p artifacts
-          # arm64 (الأكثر شيوعاً في Android TV)
-          cp client/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
-             artifacts/estitn-farja-tv-arm64.apk || true
-          # arm32 (للأجهزة القديمة)
-          cp client/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
-             artifacts/estitn-farja-tv-arm32.apk || true
-          # x86_64 (نادر في التلفاز)
-          cp client/build/app/outputs/flutter-apk/app-x86_64-release.apk \
-             artifacts/estitn-farja-tv-x86_64.apk || true
-
-          echo "=== محتويات مجلد artifacts ==="
+          cp client/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk artifacts/estitn-farja-tv-arm64.apk || true
+          cp client/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk artifacts/estitn-farja-tv-arm32.apk || true
+          cp client/build/app/outputs/flutter-apk/app-x86_64-release.apk artifacts/estitn-farja-tv-x86_64.apk || true
           ls -lh artifacts/
 
       - name: Upload APK artifacts
@@ -186,22 +246,8 @@ jobs:
           path: artifacts/*.apk
           retention-days: 30
 
-      - name: Build summary
+      - name: Cleanup generated file
         if: always()
         run: |
-          echo "# 📊 Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**الفرع:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 📦 الملفات الناتجة" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| الملف | الوصف |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| \`estitn-farja-tv-arm64.apk\` | **للأجهزة الحديثة (موصى به)** |" >> $GITHUB_STEP_SUMMARY
-          echo "| \`estitn-farja-tv-arm32.apk\` | للأجهزة القديمة |" >> $GITHUB_STEP_SUMMARY
-          echo "| \`estitn-farja-tv-x86_64.apk\` | لأجهزة x86 (نادر) |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📺 أي ملف أُثبّت؟" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "استخدم **\`estitn-farja-tv-arm64.apk\`** في 95% من الحالات." >> $GITHUB_STEP_SUMMARY
+          rm -f client/lib/data/local/secure_config.dart
+          echo "✓ تم تنظيف الملف المُولّد"
