@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/channel.dart';
 import '../../data/providers/playlist_provider.dart';
 import '../../data/providers/history_provider.dart';
+import '../../core/animations/app_animations.dart';
 import 'widgets/category_tabs.dart';
 import 'widgets/sub_category_chips.dart';
 import 'widgets/paginated_channel_grid.dart';
@@ -126,7 +127,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
               children: [
                 const Icon(
                   Icons.live_tv_rounded,
-                  color: Color(0xFF00C8FF),
+                  color: Color(0xFF4CAF50),
                   size: 16,
                 ),
                 const SizedBox(width: 6),
@@ -153,7 +154,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
                   hintStyle: const TextStyle(color: Colors.white38),
                   prefixIcon: const Icon(
                     Icons.search,
-                    color: Color(0xFF00C8FF),
+                    color: Color(0xFF4CAF50),
                   ),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.close, color: Colors.white54),
@@ -227,22 +228,18 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
   //  الجسم الرئيسي
   // ==========================================================
   Widget _buildBody(PlaylistState state, PlaylistNotifier notifier) {
-    // 1) التحميل
     if (state.isLoading && state.allChannels.isEmpty) {
       return _buildLoading();
     }
 
-    // 2) الخطأ
     if (state.error != null && state.allChannels.isEmpty) {
       return _buildError(state.error!);
     }
 
-    // 3) فارغ
     if (state.filteredChannels.isEmpty) {
       return _buildEmpty();
     }
 
-    // 4) السجل (شوهد حديثاً)
     final recentIds = ref.watch(historyProvider).liveIds;
     final showRecent = state.selectedCategorySlug == null &&
         state.searchQuery.isEmpty &&
@@ -252,7 +249,6 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
       return _buildBodyWithRecent(state, recentIds);
     }
 
-    // 5) قسم الرياضة → صندوق المباريات
     if (state.selectedCategorySlug == 'sport' &&
         state.selectedSubCategorySlug == null &&
         state.searchQuery.isEmpty) {
@@ -269,8 +265,10 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(
-          child: SportsMatchesWidget(
-            onChannelTap: (channel) => widget.onChannelTap?.call(channel),
+          child: FadeInSlide(
+            child: SportsMatchesWidget(
+              onChannelTap: (channel) => widget.onChannelTap?.call(channel),
+            ),
           ),
         ),
         const SliverToBoxAdapter(
@@ -344,79 +342,81 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.only(bottom: 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 5,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFB800),
-                          borderRadius: BorderRadius.circular(3),
+          child: FadeInSlide(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 5,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFB800),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Icon(
-                        Icons.history_rounded,
-                        color: Color(0xFFFFB800),
-                        size: 22,
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'شوهد حديثاً',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
+                        const SizedBox(width: 12),
+                        const Icon(
+                          Icons.history_rounded,
+                          color: Color(0xFFFFB800),
+                          size: 22,
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFB800).withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '${recent.length}',
-                          style: const TextStyle(
-                            color: Color(0xFFFFB800),
-                            fontSize: 12,
+                        const SizedBox(width: 8),
+                        const Text(
+                          'شوهد حديثاً',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFB800).withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '${recent.length}',
+                            style: const TextStyle(
+                              color: Color(0xFFFFB800),
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  height: 200,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    itemCount: recent.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 14),
-                    itemBuilder: (context, i) {
-                      return ChannelCard(
-                        channel: recent[i],
-                        width: 180,
-                        height: 200,
-                        onTap: () => widget.onChannelTap?.call(recent[i]),
-                      );
-                    },
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    height: 200,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      itemCount: recent.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 14),
+                      itemBuilder: (context, i) {
+                        return ChannelCard(
+                          channel: recent[i],
+                          width: 180,
+                          height: 200,
+                          onTap: () => widget.onChannelTap?.call(recent[i]),
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -477,18 +477,29 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
   }
   
   // ==========================================================
-  //  الحالات
+  //  حالة التحميل — Shimmer
   // ==========================================================
   Widget _buildLoading() {
-    return const Center(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 20),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          CircularProgressIndicator(color: Color(0xFF00C8FF), strokeWidth: 3),
-          SizedBox(height: 20),
-          Text(
-            'جارٍ تحميل القنوات الرياضية...',
-            style: TextStyle(color: Colors.white70, fontSize: 14),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 24),
+            child: Row(
+              children: [
+                ShimmerLoading(width: 120, height: 24),
+                SizedBox(width: 12),
+                ShimmerLoading(width: 60, height: 24),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          Expanded(
+            child: ShimmerGrid(
+              itemCount: 15,
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+            ),
           ),
         ],
       ),
@@ -565,7 +576,6 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
   //  شبكة القنوات — Pagination
   // ==========================================================
   Widget _buildGrid(PlaylistState state) {
-    // مفتاح فريد يتغيّر عند تغيير الفلاتر → يعيد تعيين Pagination
     final filterKey = '${state.selectedCategorySlug ?? "all"}_'
         '${state.selectedSubCategorySlug ?? "all"}_'
         '${state.searchQuery}';
@@ -617,7 +627,7 @@ class _TopBarIconButtonState extends State<_TopBarIconButton> {
             height: 48,
             decoration: BoxDecoration(
               color: _isFocused
-                  ? const Color(0xFF00C8FF)
+                  ? const Color(0xFF4CAF50)
                   : const Color(0xFF141A2E),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
@@ -627,7 +637,7 @@ class _TopBarIconButtonState extends State<_TopBarIconButton> {
               boxShadow: _isFocused
                   ? [
                       BoxShadow(
-                        color: const Color(0xFF00C8FF).withOpacity(0.5),
+                        color: const Color(0xFF4CAF50).withOpacity(0.5),
                         blurRadius: 12,
                       ),
                     ]
@@ -638,7 +648,7 @@ class _TopBarIconButtonState extends State<_TopBarIconButton> {
               color: !enabled
                   ? Colors.white24
                   : _isFocused
-                      ? Colors.black
+                      ? Colors.white
                       : Colors.white70,
               size: 22,
             ),
