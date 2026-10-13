@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'features/home/home_screen.dart';
 import 'features/live_tv/live_tv_screen.dart';
 import 'features/movies/movies_netflix_screen.dart';
 import 'features/series/series_netflix_screen.dart';
@@ -77,7 +78,8 @@ class MainShell extends ConsumerStatefulWidget {
 }
 
 class _MainShellState extends ConsumerState<MainShell> {
-  int _selectedIndex = 1;
+  // فتح التطبيق على "الرئيسية"
+  int _selectedIndex = 0;
 
   static const int _idxHome = 0;
   static const int _idxLive = 1;
@@ -223,6 +225,9 @@ class _MainShellState extends ConsumerState<MainShell> {
   // ==========================================================
   Widget _buildContent() {
     switch (_selectedIndex) {
+      case _idxHome:
+        return const HomeScreen();
+
       case _idxLive:
         return LiveTvScreen(
           playlistUrls: kPlaylistUrls,
@@ -238,7 +243,6 @@ class _MainShellState extends ConsumerState<MainShell> {
       case _idxPackages:
         return const PackagesScreen();
 
-      case _idxHome:
       case _idxSettings:
       default:
         return _buildPlaceholder();
@@ -262,7 +266,7 @@ class _MainShellState extends ConsumerState<MainShell> {
   }
 
   // ==========================================================
-  //  Placeholder
+  //  Placeholder (للإعدادات فقط حالياً)
   // ==========================================================
   Widget _buildPlaceholder() {
     return Padding(
