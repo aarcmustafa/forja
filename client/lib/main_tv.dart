@@ -18,31 +18,25 @@ import 'data/local/secure_config.dart';
 import 'data/local/remote_config.dart';
 import 'core/animations/app_animations.dart';
 
-// ==========================================================
-//  روابط M3U — مشفّرة + تُحدَّث عن بعد
-// ==========================================================
 List<String> kPlaylistUrls = SecureConfig.urls;
 
-// ==========================================================
-//  نقطة انطلاق التطبيق
-// ==========================================================
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   runApp(
     const ProviderScope(
-      child: EstetnFarjaTvApp(),
+      child: SttitenFootTvApp(),
     ),
   );
 }
 
-class EstetnFarjaTvApp extends StatelessWidget {
-  const EstetnFarjaTvApp({super.key});
+class SttitenFootTvApp extends StatelessWidget {
+  const SttitenFootTvApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'استيتن فرجة الرياضية',
+      title: 'STTITEN FOOT',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -59,9 +53,6 @@ class EstetnFarjaTvApp extends StatelessWidget {
   }
 }
 
-// ==========================================================
-//  الشاشة الرئيسية
-// ==========================================================
 class MainShell extends ConsumerStatefulWidget {
   const MainShell({super.key});
 
@@ -147,9 +138,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
-  // ==========================================================
-  //  الشريط الجانبي
-  // ==========================================================
   Widget _buildSidebar() {
     final favCount = ref.watch(favoritesProvider).length;
 
@@ -171,20 +159,23 @@ class _MainShellState extends ConsumerState<MainShell> {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'استيتن فرجة',
+                  'STTITEN',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 20,
+                    fontSize: 22,
                     fontWeight: FontWeight.bold,
                     color: Color(0xFF4CAF50),
+                    letterSpacing: 2,
                   ),
                 ),
                 Text(
-                  'الرياضية',
+                  'FOOT',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.white54,
+                    fontSize: 16,
+                    color: Colors.white70,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 5,
                   ),
                 ),
               ],
@@ -208,12 +199,12 @@ class _MainShellState extends ConsumerState<MainShell> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'الإصدار 1.0.0',
+                  'Version 1.0.0',
                   style: TextStyle(color: Colors.white38, fontSize: 11),
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'المطور: جلولي مصطفى',
+                  'Developer: J. Mustapha',
                   style: TextStyle(
                     color: Colors.white54,
                     fontSize: 12,
@@ -234,9 +225,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
-  // ==========================================================
-  //  زر البحث
-  // ==========================================================
   Widget _buildSearchButton() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -283,7 +271,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      'بحث',
+                      'Search',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight:
@@ -303,9 +291,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
-  // ==========================================================
-  //  عنصر قائمة
-  // ==========================================================
   Widget _buildMenuItem(int index, {int badge = 0}) {
     final isSelected = _selectedIndex == index;
     return Padding(
@@ -383,10 +368,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       ),
     );
   }
-
-  // ==========================================================
-  //  المحتوى
-  // ==========================================================
+  
   Widget _buildContent() {
     switch (_selectedIndex) {
       case _idxHome:
@@ -415,9 +397,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     }
   }
 
-  // ==========================================================
-  //  شاشة المباريات
-  // ==========================================================
   Widget _buildMatchesScreen() {
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -439,10 +418,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       ),
     );
   }
-  
-  // ==========================================================
-  //  فتح القناة
-  // ==========================================================
+
   void _openChannel(Channel channel) {
     ref.read(historyProvider.notifier).record(channel);
 
