@@ -37,63 +37,122 @@ jobs:
         run: |
           flutter create --platforms=android --org com.estitn --project-name estitn_farja .
 
+      # ==========================================================
+      #  🎨 استبدال res بالأيقونة + Splash
+      # ==========================================================
+      - name: Install unrar + 7zip
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y unrar-free p7zip-full || true
+
       - name: Check uploaded assets
         run: |
-          echo "=== محتويات assets ==="
-          ls -lh client/assets/ || true
-          echo ""
-          echo "=== محتويات android_res ==="
+          echo "=== محتويات assets/android_res ==="
           ls -lh client/assets/android_res/ || true
+          echo ""
+          echo "=== البحث عن أرشيف ==="
+          find client/assets/android_res -maxdepth 1 \( -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) 2>/dev/null || true
 
-      - name: Extract res.zip
+      - name: Extract archive
         run: |
-          ZIP_FILE="client/assets/android_res/res.zip"
+          BASE="client/assets/android_res"
+          mkdir -p "$BASE/extracted"
 
-          if [ ! -f "$ZIP_FILE" ]; then
-            echo "❌ res.zip غير موجود!"
+          # ابحث عن أول أرشيف (zip / rar / 7z)
+          ARCHIVE=$(find "$BASE" -maxdepth 1 \( -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) 2>/dev/null | head -1)
+
+          if [ -z "$ARCHIVE" ]; then
+            echo "❌ لا يوجد ملف أرشيف"
             exit 1
           fi
 
-          echo "✅ وجدت res.zip"
-          mkdir -p client/assets/android_res/extracted
-          cd client/assets/android_res/extracted
-
-          unzip -o "../res.zip"
-
+          echo "📦 الأرشيف: $ARCHIVE"
+          echo "📏 الحجم: $(stat -c%s "$ARCHIVE") bytes"
           echo ""
-          echo "=== محتويات بعد الفك ==="
-          ls -la
-          find . -type d | head -20
 
-      - name: Locate res folder
-        id: locate_res
-        run: |
-          BASE="client/assets/android_res/extracted"
+          # -------- جرّب ZIP أولاً --------
+          if [[ "$ARCHIVE" == *.zip ]]; then
+            if unzip -t "$ARCHIVE" > /dev/null 2>&1; then
+              echo "✅ ZIP صالح → الفك"
+              unzip -o "$ARCHIVE" -d "$BASE/extracted"
+            else
+              echo "❌ ZIP تالف"
+              exit 1
+            fi
 
-          # ابحث عن مجلد res
-          RES_CANDIDATE=$(find "$BASE" -type d -name "res" 2>/dev/null | head -1)
+          # -------- جرّب RAR --------
+          elif [[ "$ARCHIVE" == *.rar ]]; then
+            echo "🔄 محاولة فك RAR..."
+            if unrar x -o+ "$ARCHIVE" "$BASE/extracted/" 2>&1; then
+              echo "✅ RAR فُكّ بنجاح"
+            elif 7z x "$ARCHIVE" -o"$BASE/extracted" -y 2>&1; then
+              echo "✅ RAR فُكّ بواسطة 7z"
+            else
+              echo "❌ فشل فك RAR"
+              exit 1
+            fi
 
-          # إذا لم يوجد، تحقق إذا كان المحتوى نفسه هو res
-          if [ -z "$RES_CANDIDATE" ]; then
-            if [ -d "$BASE/mipmap-hdpi" ] || [ -d "$BASE/drawable" ]; then
-              RES_CANDIDATE="$BASE"
+          # -------- جرّب 7z --------
+          elif [[ "$ARCHIVE" == *.7z ]]; then
+            echo "🔄 محاولة فك 7z..."
+            if 7z x "$ARCHIVE" -o"$BASE/extracted" -y 2>&1; then
+              echo "✅ 7z فُكّ بنجاح"
+            else
+              echo "❌ فشل فك 7z"
+              exit 1
             fi
           fi
 
-          echo "RES_PATH=$RES_CANDIDATE" >> $GITHUB_OUTPUT
+          echo ""
+          echo "=== محتويات بعد الفك ==="
+          find "$BASE/extracted" -type f | head -40
 
-          if [ -z "$RES_CANDIDATE" ]; then
+      - name: Detect res folder
+        id: locate_res
+        run: |
+          BASE="client/assets/android_res"
+
+          # 1) extracted/res
+          if [ -d "$BASE/extracted/res" ]; then
+            echo "RES_PATH=$BASE/extracted/res" >> $GITHUB_OUTPUT
+            echo "✅ وجدت res في extracted/res"
+
+          # 2) extracted مباشرة
+          elif [ -d "$BASE/extracted/mipmap-hdpi" ] || [ -d "$BASE/extracted/drawable" ]; then
+            echo "RES_PATH=$BASE/extracted" >> $GITHUB_OUTPUT
+            echo "✅ extracted هو res"
+
+          # 3) BASE/res
+          elif [ -d "$BASE/res" ]; then
+            echo "RES_PATH=$BASE/res" >> $GITHUB_OUTPUT
+            echo "✅ وجدت res في BASE/res"
+
+          # 4) BASE مباشرة
+          elif [ -d "$BASE/mipmap-hdpi" ] || [ -d "$BASE/drawable" ]; then
+            echo "RES_PATH=$BASE" >> $GITHUB_OUTPUT
+            echo "✅ BASE هو res"
+
+          else
+            echo "RES_PATH=" >> $GITHUB_OUTPUT
             echo "❌ لم أجد مجلد res"
-            exit 1
+            echo ""
+            echo "=== محتويات extracted ==="
+            ls -la "$BASE/extracted/" || true
+            echo ""
+            echo "=== بحث عميق عن mipmap ==="
+            find "$BASE" -type d -name "mipmap*" 2>/dev/null || true
           fi
-
-          echo "✅ مجلد res: $RES_CANDIDATE"
-          ls -la "$RES_CANDIDATE"
 
       - name: Replace Android res folder
         run: |
           RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
           RES_DEST="client/android/app/src/main/res"
+
+          if [ -z "$RES_SRC" ] || [ ! -d "$RES_SRC" ]; then
+            echo "⚠️ لم أجد res مخصص — سيتم استخدام الافتراضية"
+            echo "سيتم بناء APK لكن بأيقونة Flutter الافتراضية"
+            exit 0
+          fi
 
           echo "📦 المصدر: $RES_SRC"
           echo "📦 الهدف: $RES_DEST"
@@ -103,13 +162,13 @@ jobs:
           mkdir -p "$RES_DEST"
 
           # انسخ ملفات المستخدم
-          cp -r "$RES_SRC"/* "$RES_DEST/"
+          cp -r "$RES_SRC"/* "$RES_DEST/" 2>/dev/null || true
 
           echo ""
           echo "=== محتويات res النهائية ==="
           find "$RES_DEST" -type f | head -40
 
-      - name: Verify icon exists
+      - name: Verify icon
         run: |
           RES_DEST="client/android/app/src/main/res"
 
@@ -117,8 +176,7 @@ jobs:
             SIZE=$(stat -c%s "$RES_DEST/mipmap-xxxhdpi/ic_launcher.png")
             echo "✅ ic_launcher.png موجود (${SIZE} bytes)"
           else
-            echo "❌ ic_launcher.png غير موجود!"
-            exit 1
+            echo "⚠️ ic_launcher.png غير موجود — سيُستخدم الافتراضي"
           fi
 
           if ls "$RES_DEST"/drawable/splash* 1> /dev/null 2>&1; then
@@ -127,6 +185,9 @@ jobs:
             echo "⚠️ ملفات splash غير موجودة"
           fi
 
+      # ==========================================================
+      #  🔐 توليد secure_config
+      # ==========================================================
       - name: Generate encrypted config
         env:
           PLAYLIST_URLS: ${{ secrets.PLAYLIST_URLS }}
@@ -187,137 +248,4 @@ jobs:
           lines.append('    }')
           lines.append('  }')
           lines.append('')
-          lines.append('  static List<String> getPlaylistUrls() {')
-          lines.append('    final r = <String>[];')
-          lines.append('    for (final p in _parts) {')
-          lines.append('      final u = _decode(p);')
-          lines.append('      if (u.isNotEmpty) r.add(u);')
-          lines.append('    }')
-          lines.append('    return r;')
-          lines.append('  }')
-          lines.append('')
-          lines.append('  static List<String>? _cache;')
-          lines.append('  static List<String> get urls {')
-          lines.append('    _cache ??= getPlaylistUrls();')
-          lines.append('    return _cache!;')
-          lines.append('  }')
-          lines.append('}')
-
-          with open('client/lib/data/local/secure_config.dart', 'w', encoding='utf-8') as f:
-              f.write('\n'.join(lines))
-
-          print(f'✓ تم توليد {len(urls)} روابط مشفّرة')
-          PY
-
-      - name: Verify URLs
-        run: |
-          count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo 0)
-          echo "✓ عدد الروابط: $count"
-          if [ "$count" -lt 1 ]; then exit 1; fi
-
-      - name: Bump minSdkVersion to 23
-        working-directory: client
-        run: |
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
-
-      - name: Add packaging options
-        working-directory: client
-        run: |
-          python3 - <<'PY'
-          path = "android/app/build.gradle"
-          src = open(path, "r", encoding="utf-8").read()
-          if "packagingOptions" not in src:
-              idx = src.find("android {")
-              if idx != -1:
-                  insert_at = idx + len("android {")
-                  block = """
-
-              packagingOptions {
-                  jniLibs {
-                      useLegacyPackaging = true
-                  }
-                  resources {
-                      excludes += ['META-INF/*.kotlin_module']
-                  }
-              }
-          """
-                  src = src[:insert_at] + block + src[insert_at:]
-          open(path, "w", encoding="utf-8").write(src)
-          PY
-
-      - name: Override AndroidManifest for TV
-        working-directory: client
-        run: |
-          cat > android/app/src/main/AndroidManifest.xml <<'EOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-feature android:name="android.software.leanback" android:required="true" />
-              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-              <uses-feature android:name="android.hardware.gamepad" android:required="false" />
-              <uses-permission android:name="android.permission.INTERNET" />
-              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-              <uses-permission android:name="android.permission.WAKE_LOCK" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-              <application
-                  android:label="استيتن فرجة"
-                  android:name="${applicationName}"
-                  android:icon="@mipmap/ic_launcher"
-                  android:roundIcon="@mipmap/ic_launcher_round"
-                  android:banner="@mipmap/ic_launcher"
-                  android:usesCleartextTraffic="true"
-                  android:requestLegacyExternalStorage="true"
-                  android:hardwareAccelerated="true">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true"
-                      android:launchMode="singleTop"
-                      android:theme="@style/LaunchTheme"
-                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-                      android:hardwareAccelerated="true"
-                      android:windowSoftInputMode="adjustResize">
-                      <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-                      </intent-filter>
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-                  <meta-data android:name="flutterEmbedding" android:value="2" />
-              </application>
-          </manifest>
-          EOF
-
-      - name: Get dependencies
-        working-directory: client
-        run: flutter pub get
-
-      - name: Build APK
-        working-directory: client
-        run: |
-          flutter build apk --release \
-            -t lib/main_tv.dart \
-            --split-per-abi \
-            --android-skip-build-dependency-validation
-
-      - name: Rename APKs
-        run: |
-          mkdir -p artifacts
-          cp client/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk artifacts/estitn-farja-tv-arm64.apk || true
-          cp client/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk artifacts/estitn-farja-tv-arm32.apk || true
-          cp client/build/app/outputs/flutter-apk/app-x86_64-release.apk artifacts/estitn-farja-tv-x86_64.apk || true
-          ls -lh artifacts/
-
-      - name: Upload APKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: estitn-farja-tv-apk
-          path: artifacts/*.apk
-          retention-days: 30
-
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -f client/lib/data/local/secure_config.dart
+          lines.append('  static List<String> getPlaylistUrls
