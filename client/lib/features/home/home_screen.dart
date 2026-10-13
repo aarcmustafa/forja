@@ -46,8 +46,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(
-                color: Color(0xFF00C8FF), strokeWidth: 3),
+            CircularProgressIndicator(color: Color(0xFF00C8FF), strokeWidth: 3),
             SizedBox(height: 20),
             Text(
               'جارٍ تحميل المحتوى...',
@@ -107,9 +106,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       slivers: [
         if (featured.isNotEmpty)
           SliverToBoxAdapter(child: _buildHero(featured)),
-
         const SliverToBoxAdapter(child: SizedBox(height: 24)),
-
         SliverToBoxAdapter(
           child: _buildStats(
             liveChannels.length,
@@ -117,9 +114,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             series.length,
           ),
         ),
-
         const SliverToBoxAdapter(child: SizedBox(height: 32)),
-
         if (sportsChannels.isNotEmpty)
           SliverToBoxAdapter(
             child: _buildRow(
@@ -192,15 +187,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               color: const Color(0xFFE91E63),
             ),
           ),
-
         const SliverToBoxAdapter(child: SizedBox(height: 40)),
       ],
     );
   }
 
-  // ==========================================================
-  //  Hero Section
-  // ==========================================================
   Widget _buildHero(List<Channel> featured) {
     return Container(
       height: 320,
@@ -458,11 +449,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
     );
   }
-}
-
-  // ==========================================================
-  //  صف أفقى
-  // ==========================================================
+  
   Widget _buildRow({
     required String title,
     required IconData icon,
@@ -497,8 +484,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
                 const SizedBox(width: 12),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: color.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(12),
@@ -529,7 +518,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   channel: item,
                   width: 180,
                   height: 250,
-                  onTap: () => _openItem(item),
+                  onTap: () {
+                    if (item.contentType == 'movie') {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => MovieDetailScreen(movie: item),
+                        ),
+                      );
+                    } else {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PlayerScreen(
+                            streamUrl: item.streamUrl,
+                            channelName: item.name,
+                            channelLogo: item.logo,
+                          ),
+                        ),
+                      );
+                    }
+                  },
                 );
               },
             ),
@@ -537,30 +546,5 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ],
       ),
     );
-  }
-
-  // ==========================================================
-  //  فتح عنصر
-  // ==========================================================
-  void _openItem(Channel item) {
-    if (item.contentType == 'movie') {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => MovieDetailScreen(movie: item),
-        ),
-      );
-    } else {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PlayerScreen(
-            streamUrl: item.streamUrl,
-            channelName: item.name,
-            channelLogo: item.logo,
-          ),
-        ),
-      );
-    }
   }
 }
