@@ -1,13 +1,10 @@
 import 'package:dio/dio.dart';
 import '../models/channel.dart';
 
-/// مستودع تحميل وتحليل ملفات M3U
-/// يدعم: VLC User Agent + Referer تلقائي
+/// مستودع تحميل وتحليل M3U — VLC UA + Referer تلقائي
 class M3uRepository {
-  /// ✅ VLC User Agent — مقبول من 99% من سيرفرات IPTV
   static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
 
-  /// استخراج Referer من الرابط (الأصل الأساسي)
   static String extractReferer(String url) {
     try {
       final uri = Uri.parse(url);
@@ -17,7 +14,6 @@ class M3uRepository {
     }
   }
 
-  /// استخراج Origin (بدون /)
   static String extractOrigin(String url) {
     try {
       final uri = Uri.parse(url);
@@ -27,7 +23,6 @@ class M3uRepository {
     }
   }
 
-  /// Headers الموحدة لكل الطلبات
   static Map<String, String> standardHeaders(String url) {
     final referer = extractReferer(url);
     return {
@@ -59,7 +54,6 @@ class M3uRepository {
               },
             ));
 
-  /// تحميل قائمة M3U من رابط
   Future<List<Channel>> loadFromUrl(
     String url, {
     bool forceRefresh = false,
@@ -88,8 +82,7 @@ class M3uRepository {
       throw Exception('خطأ في الاتصال: ${e.message}');
     }
   }
-  
-  /// تحميل من محتوى نصي مباشرة
+
   List<Channel> parseM3uContent(String content) {
     final lines = content.split('\n');
     final channels = <Channel>[];
@@ -150,7 +143,6 @@ class M3uRepository {
     final tvgId = info['tvg-id'] ?? '';
     final logo = info['tvg-logo'] ?? '';
 
-    // اكتشاف Referer مخصص من السطر (إن وُجد)
     final customReferer = info['referer'] ?? info['http-referrer'] ?? '';
     final customUA = info['user-agent'] ?? info['http-user-agent'] ?? '';
 
@@ -164,7 +156,6 @@ class M3uRepository {
     final originalName = _extractOriginalName(name);
     final priority = _calculatePriority(url);
 
-    // extras: نحفظ Referer/UA المخصصين إن وُجدا
     final extras = <String, String>{};
     if (customReferer.isNotEmpty) extras['referer'] = customReferer;
     if (customUA.isNotEmpty) extras['user_agent'] = customUA;
@@ -219,7 +210,7 @@ class M3uRepository {
     }
     return '';
   }
-
+  
   // ==========================================================
   //  التصنيف الذكي
   // ==========================================================
@@ -401,15 +392,39 @@ class M3uRepository {
     return null;
   }
 
+  /// حساب الأولوية — الروابط الأفضل تُقدَّم
   int _calculatePriority(String url) {
     int priority = 0;
-    if (url.contains('.m3u8')) priority += 10;
-    if (url.startsWith('https://')) priority += 5;
-    if (url.contains('token=') || url.contains('exp=')) priority += 3;
     final lower = url.toLowerCase();
-    if (lower.contains('1080') || lower.contains('fhd')) priority += 3;
+
+    // صيغة البث
+    if (lower.contains('.m3u8')) {
+      priority += 15; // HLS (الأفضل)
+    } else if (lower.contains('.ts')) {
+      priority += 10; // TS
+    } else if (lower.contains('.mpd')) {
+      priority += 8; // DASH
+    } else if (lower.startsWith('rtsp://')) {
+      priority += 6;
+    } else if (lower.startsWith('rtmp://')) {
+      priority += 5;
+    } else if (lower.startsWith('udp://') || lower.startsWith('rtp://')) {
+      priority += 4;
+    } else if (lower.contains('.mp4') || lower.contains('.mkv')) {
+      priority += 3;
+    }
+
+    // الأمان
+    if (lower.startsWith('https://')) priority += 5;
+
+    // مدة الصلاحية
+    if (lower.contains('token=') || lower.contains('exp=')) priority += 3;
+
+    // الجودة
+    if (lower.contains('4k') || lower.contains('uhd')) priority += 6;
+    if (lower.contains('1080') || lower.contains('fhd')) priority += 4;
     if (lower.contains('720') || lower.contains('hd')) priority += 2;
-    if (lower.contains('4k') || lower.contains('uhd')) priority += 4;
+
     return priority;
   }
 
