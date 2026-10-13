@@ -3,8 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'features/live_tv/live_tv_screen.dart';
-import 'features/movies/movies_screen.dart';
-import 'features/movies/movie_detail_screen.dart';
+import 'features/movies/movies_netflix_screen.dart';
 import 'features/series/series_screen.dart';
 import 'features/player/player_screen.dart';
 import 'data/models/channel.dart';
@@ -77,6 +76,7 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
+  // فتح التطبيق على "البث المباشر"
   int _selectedIndex = 1;
 
   static const int _idxHome = 0;
@@ -230,9 +230,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         );
 
       case _idxMovies:
-        return MoviesScreen(
-          onMovieTap: _openMovieDetail,
-        );
+        return const MoviesNetflixScreen();
 
       case _idxSeries:
         return SeriesScreen(
@@ -248,7 +246,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   // ==========================================================
-  //  فتح المشغل مباشرة
+  //  فتح المشغل
   // ==========================================================
   void _openPlayer(Channel channel) {
     Navigator.push(
@@ -259,18 +257,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           channelName: channel.name,
           channelLogo: channel.logo,
         ),
-      ),
-    );
-  }
-
-  // ==========================================================
-  //  فتح تفاصيل الفيلم
-  // ==========================================================
-  void _openMovieDetail(Channel movie) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => MovieDetailScreen(movie: movie),
       ),
     );
   }
