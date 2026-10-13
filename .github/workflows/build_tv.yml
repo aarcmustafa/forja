@@ -74,8 +74,8 @@ jobs:
         run: |
           RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
           RES_DEST="client/android/app/src/main/res"
-          test -z "$RES_SRC" && echo "no custom res, using default" && exit 0
-          test ! -d "$RES_SRC" && echo "res path not a directory" && exit 0
+          test -z "$RES_SRC" && echo "no custom res" && exit 0
+          test ! -d "$RES_SRC" && echo "not a directory" && exit 0
           rm -rf "$RES_DEST"
           mkdir -p "$RES_DEST"
           cp -r "$RES_SRC"/* "$RES_DEST/"
@@ -83,7 +83,7 @@ jobs:
 
       - name: Verify icon
         run: |
-          test -f "client/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" && echo "icon found" || echo "icon missing, using default"
+          test -f "client/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" && echo "icon found" || echo "icon missing"
 
       - name: Generate encrypted config
         env:
@@ -91,16 +91,15 @@ jobs:
         run: |
           mkdir -p client/lib/data/local
           python3 client/scripts/gen_config.py > client/lib/data/local/secure_config.dart
-          echo "Generated secure_config.dart"
+          echo "Generated"
 
       - name: Verify URLs
         run: |
           count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo 0)
-          echo "URLs count: $count"
+          echo "URLs: $count"
           test "$count" -lt 1 && echo "ERROR: no URLs" && exit 1
-          echo "OK"
 
-      - name: Bump minSdkVersion to 23
+      - name: Bump minSdkVersion
         working-directory: client
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
@@ -130,7 +129,7 @@ jobs:
           open(path, "w", encoding="utf-8").write(src)
           PYEOF
 
-      - name: Override AndroidManifest for TV
+      - name: Override AndroidManifest
         working-directory: client
         run: |
           cat > android/app/src/main/AndroidManifest.xml <<'XMLEOF'
@@ -174,32 +173,32 @@ jobs:
               </application>
           </manifest>
           XMLEOF
-          
-- name: Get dependencies
-  working-directory: client
-  run: flutter pub get
 
-- name: Build APK
-  working-directory: client
-  run: |
-    flutter build apk --release -t lib/main_tv.dart --split-per-abi --android-skip-build-dependency-validation
+      - name: Get dependencies
+        working-directory: client
+        run: flutter pub get
 
-- name: Rename APKs
-  run: |
-    mkdir -p artifacts
-    cp client/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk artifacts/estitn-farja-tv-arm64.apk || true
-    cp client/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk artifacts/estitn-farja-tv-arm32.apk || true
-    cp client/build/app/outputs/flutter-apk/app-x86_64-release.apk artifacts/estitn-farja-tv-x86_64.apk || true
-    ls -lh artifacts/
+      - name: Build APK
+        working-directory: client
+        run: |
+          flutter build apk --release -t lib/main_tv.dart --split-per-abi --android-skip-build-dependency-validation
 
-- name: Upload APKs
-  uses: actions/upload-artifact@v4
-  with:
-    name: estitn-farja-tv-apk
-    path: artifacts/*.apk
-    retention-days: 30
+      - name: Rename APKs
+        run: |
+          mkdir -p artifacts
+          cp client/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk artifacts/estitn-farja-tv-arm64.apk || true
+          cp client/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk artifacts/estitn-farja-tv-arm32.apk || true
+          cp client/build/app/outputs/flutter-apk/app-x86_64-release.apk artifacts/estitn-farja-tv-x86_64.apk || true
+          ls -lh artifacts/
 
-- name: Cleanup
-  if: always()
-  run: |
-    rm -f client/lib/data/local/secure_config.dart
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: estitn-farja-tv-apk
+          path: artifacts/*.apk
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f client/lib/data/local/secure_config.dart
