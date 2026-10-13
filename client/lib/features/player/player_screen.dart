@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
-/// شاشة المشغل — محسّنة للتلفاز مع دعم الريموت
+/// شاشة المشغل — محسّنة للتلفاز مع دعم كل صيغ IPTV
+/// يدعم: HLS, TS, DASH, RTSP, RTMP, UDP, MMS, FLV, MP4, MKV...
 class PlayerScreen extends StatefulWidget {
   final String streamUrl;
   final String channelName;
@@ -36,14 +37,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _isPlaying = false;
   bool _isBuffering = false;
 
-  // تحسينات
+  // تحسينات المشغل
   double _volume = 100.0;
   bool _isMuted = false;
   double _playbackSpeed = 1.0;
   int _aspectMode = 0;
   bool _showVolumeBar = false;
 
-  // إعادة المحاولة
+  // إعادة المحاولة التلقائية
   int _retryCount = 0;
   static const int _maxRetries = 3;
   bool _isReconnecting = false;
@@ -72,11 +73,31 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       player = Player(
         configuration: const PlayerConfiguration(
-          bufferSize: 64 * 1024 * 1024,
+          // 96MB لتقليل التقطيع في البث عالي الجودة
+          bufferSize: 96 * 1024 * 1024,
           logLevel: MPVLogLevel.error,
+          // ✅ قائمة بروتوكولات شاملة لكل صيغ IPTV
           protocolWhitelist: [
-            'http', 'https', 'hls', 'tcp', 'tls',
-            'crypto', 'file', 'udp', 'rtp', 'rtsp', 'rtmp',
+            // HTTP/HTTPS (HLS, TS, MP4...)
+            'http', 'https',
+            // HLS
+            'hls', 'm3u8',
+            // Transport Stream
+            'mpegts', 'ts',
+            // MPEG-DASH
+            'dash', 'mpd',
+            // RTSP (كاميرات و IPTV)
+            'rtsp', 'rtsps',
+            // RTMP (Flash)
+            'rtmp', 'rtmps', 'rtmpt', 'rtmpe',
+            // UDP/RTP Multicast
+            'udp', 'rtp', 'mms', 'mmsh', 'mmst',
+            // منافذ آمنة
+            'tcp', 'tls', 'crypto',
+            // ملفات محلية
+            'file', 'concat', 'data',
+            // بروتوكولات حديثة
+            'srt', 'rist',
           ],
         ),
       );
@@ -122,9 +143,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  // ==========================================================
+  //  فتح البث مع VLC UA + Referer
+  // ==========================================================
   Future<void> _openStream() async {
-    await player.open(Media(widget.streamUrl), play: true);
+    // ✅ بناء Headers مع VLC UA + Referer تلقائي
+    final headers = _buildHeaders(widget.streamUrl);
 
+    await player.open(
+      Media(
+        widget.streamUrl,
+        httpHeaders: headers,
+      ),
+      play: true,
+    );
+
+    // إخفاء شاشة التحميل بعد 3 ثوانٍ كحد أقصى
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted && _isLoading) {
         setState(() => _isLoading = false);
@@ -134,6 +168,30 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _retryCount = 0;
   }
 
+  /// بناء Headers مع VLC User Agent + Referer تلقائي
+  Map<String, String> _buildHeaders(String url) {
+    final headers = <String, String>{
+      // ✅ VLC User Agent — مقبول من 99% من السيرفرات
+      'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+      'Accept': '*/*',
+      'Connection': 'keep-alive',
+      'Icy-MetaData': '1',
+    };
+
+    // استخراج Referer و Origin تلقائياً
+    try {
+      final uri = Uri.parse(url);
+      final origin = '${uri.scheme}://${uri.host}';
+      headers['Referer'] = '$origin/';
+      headers['Origin'] = origin;
+    } catch (_) {}
+
+    return headers;
+  }
+
+  // ==========================================================
+  //  معالج الأخطاء مع إعادة المحاولة
+  // ==========================================================
   void _handleError(String error) {
     if (!mounted) return;
 
