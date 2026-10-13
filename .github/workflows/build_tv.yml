@@ -38,18 +38,40 @@ jobs:
           flutter create --platforms=android --org com.estitn --project-name estitn_farja --no-pub temp_app
           rm -rf "$GITHUB_WORKSPACE/client/android"
           cp -r /tmp/temp_app/android "$GITHUB_WORKSPACE/client/android"
-          echo "=== Copied android folder ==="
-          ls -la "$GITHUB_WORKSPACE/client/android"
-          echo "=== app folder ==="
-          ls -la "$GITHUB_WORKSPACE/client/android/app"
+          echo "Copied android folder"
 
-      - name: Verify android created
+      - name: Auto-fix Dart files
         run: |
-          ls -la client/android/ || true
-          echo "---"
-          ls -la client/android/app/ || true
-          echo "---"
-          echo "done"
+          echo "=== Fix 1: Add flutter/services import ==="
+          find client/lib -name "*.dart" | while read f; do
+            if grep -q "KeyDownEvent" "$f"; then
+              if ! grep -q "package:flutter/services.dart" "$f"; then
+                sed -i "1i import 'package:flutter/services.dart';" "$f"
+                echo "Added import to: $f"
+              fi
+            fi
+          done
+
+          echo ""
+          echo "=== Fix 2: media_kit controller.value ==="
+          find client/lib -name "*.dart" | while read f; do
+            if grep -q "controller.value.size" "$f"; then
+              sed -i "s|controller.value.size.width|player.state.width ?? 1920|g" "$f"
+              sed -i "s|controller.value.size.height|player.state.height ?? 1080|g" "$f"
+              echo "Fixed controller.value in: $f"
+            fi
+          done
+
+          echo ""
+          echo "=== Fix 3: streamCheckerProvider in main_tv ==="
+          if grep -q "streamCheckerProvider" client/lib/main_tv.dart; then
+            sed -i "/final checker = ref.read(streamCheckerProvider);/d" client/lib/main_tv.dart
+            sed -i "/await checker.maintainCache();/d" client/lib/main_tv.dart
+            echo "Removed streamCheckerProvider from main_tv"
+          fi
+
+          echo ""
+          echo "=== Done ==="
 
       - name: Install unrar and 7zip
         run: |
