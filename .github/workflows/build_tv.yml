@@ -35,7 +35,16 @@ jobs:
       - name: Generate Android platform
         working-directory: client
         run: |
-          flutter create --platforms=android --org com.estitn --project-name estitn_farja .
+          flutter create --platforms=android --org com.estitn --project-name estitn_farja --no-pub .
+
+      - name: Verify android created
+        working-directory: client
+        run: |
+          ls -la
+          echo "---"
+          ls -la android || echo "android missing"
+          echo "---"
+          ls -la android/app || echo "android/app missing"
 
       - name: Install unrar and 7zip
         run: |
