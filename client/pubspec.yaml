@@ -1,131 +1,27 @@
-name: Setup Project
+name: estitn_farja
+description: Estetn Farja IPTV
+publish_to: 'none'
+version: 1.0.0+1
 
-on:
-  workflow_dispatch:
+environment:
+  sdk: '>=3.3.0 <4.0.0'
 
-permissions:
-  contents: write
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.5
+  media_kit_libs_android_video: ^1.3.6
+  dio: ^5.7.0
+  flutter_riverpod: ^2.5.1
+  go_router: ^14.2.7
+  shared_preferences: ^2.3.2
 
-jobs:
-  setup:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
 
-      - name: Create structure
-        run: |
-          mkdir -p client/lib/core/constants
-          mkdir -p client/lib/core/theme
-          mkdir -p client/lib/core/utils
-          mkdir -p client/lib/data/models
-          mkdir -p client/lib/data/repositories
-          mkdir -p client/lib/data/providers
-          mkdir -p client/lib/features/live_tv
-          mkdir -p client/lib/features/movies
-          mkdir -p client/lib/features/series
-          mkdir -p client/lib/features/player
-          mkdir -p client/lib/tv/screens
-          mkdir -p client/lib/tv/widgets
-          mkdir -p client/lib/tv/navigation
-          mkdir -p server/src
-          mkdir -p data-pipeline/scripts
-          mkdir -p shared
-          mkdir -p docs
-
-      - name: Create pubspec.yaml
-        run: |
-          printf 'name: estitn_farja\n' > client/pubspec.yaml
-          printf 'description: Estetn Farja IPTV\n' >> client/pubspec.yaml
-          printf "publish_to: 'none'\n" >> client/pubspec.yaml
-          printf 'version: 1.0.0+1\n' >> client/pubspec.yaml
-          printf '\n' >> client/pubspec.yaml
-          printf 'environment:\n' >> client/pubspec.yaml
-          printf "  sdk: '>=3.0.0 <4.0.0'\n" >> client/pubspec.yaml
-          printf '\n' >> client/pubspec.yaml
-          printf 'dependencies:\n' >> client/pubspec.yaml
-          printf '  flutter:\n' >> client/pubspec.yaml
-          printf '    sdk: flutter\n' >> client/pubspec.yaml
-          printf '\n' >> client/pubspec.yaml
-          printf 'flutter:\n' >> client/pubspec.yaml
-          printf '  uses-material-design: true\n' >> client/pubspec.yaml
-
-      - name: Create main_tv.dart
-        run: |
-          printf "import 'package:flutter/material.dart';\n" > client/lib/main_tv.dart
-          printf '\n' >> client/lib/main_tv.dart
-          printf 'void main() => runApp(const EstetnFarjaTvApp());\n' >> client/lib/main_tv.dart
-          printf '\n' >> client/lib/main_tv.dart
-          printf 'class EstetnFarjaTvApp extends StatelessWidget {\n' >> client/lib/main_tv.dart
-          printf '  const EstetnFarjaTvApp({super.key});\n' >> client/lib/main_tv.dart
-          printf '  @override\n' >> client/lib/main_tv.dart
-          printf '  Widget build(BuildContext context) {\n' >> client/lib/main_tv.dart
-          printf '    return MaterialApp(\n' >> client/lib/main_tv.dart
-          printf "      title: 'Estetn Farja TV',\n" >> client/lib/main_tv.dart
-          printf '      debugShowCheckedModeBanner: false,\n' >> client/lib/main_tv.dart
-          printf '      theme: ThemeData.dark(useMaterial3: true),\n' >> client/lib/main_tv.dart
-          printf '      home: const Scaffold(\n' >> client/lib/main_tv.dart
-          printf "        body: Center(child: Text('Estetn Farja TV')),\n" >> client/lib/main_tv.dart
-          printf '      ),\n' >> client/lib/main_tv.dart
-          printf '    );\n' >> client/lib/main_tv.dart
-          printf '  }\n' >> client/lib/main_tv.dart
-          printf '}\n' >> client/lib/main_tv.dart
-
-      - name: Create main_mobile.dart
-        run: |
-          printf "import 'package:flutter/material.dart';\n" > client/lib/main_mobile.dart
-          printf '\n' >> client/lib/main_mobile.dart
-          printf 'void main() => runApp(const EstetnFarjaMobileApp());\n' >> client/lib/main_mobile.dart
-          printf '\n' >> client/lib/main_mobile.dart
-          printf 'class EstetnFarjaMobileApp extends StatelessWidget {\n' >> client/lib/main_mobile.dart
-          printf '  const EstetnFarjaMobileApp({super.key});\n' >> client/lib/main_mobile.dart
-          printf '  @override\n' >> client/lib/main_mobile.dart
-          printf '  Widget build(BuildContext context) {\n' >> client/lib/main_mobile.dart
-          printf '    return MaterialApp(\n' >> client/lib/main_mobile.dart
-          printf "      title: 'Estetn Farja',\n" >> client/lib/main_mobile.dart
-          printf '      debugShowCheckedModeBanner: false,\n' >> client/lib/main_mobile.dart
-          printf '      theme: ThemeData.dark(useMaterial3: true),\n' >> client/lib/main_mobile.dart
-          printf '      home: const Scaffold(\n' >> client/lib/main_mobile.dart
-          printf "        body: Center(child: Text('Estetn Farja Mobile')),\n" >> client/lib/main_mobile.dart
-          printf '      ),\n' >> client/lib/main_mobile.dart
-          printf '    );\n' >> client/lib/main_mobile.dart
-          printf '  }\n' >> client/lib/main_mobile.dart
-          printf '}\n' >> client/lib/main_mobile.dart
-
-      - name: Create README and gitignore
-        run: |
-          printf '# Estetn Farja IPTV\n' > README.md
-          printf '\n' >> README.md
-          printf 'IPTV app for Android TV and Mobile.\n' >> README.md
-          printf 'client/build/\n' > .gitignore
-          printf 'client/.dart_tool/\n' >> .gitignore
-          printf 'server/node_modules/\n' >> .gitignore
-          printf '__pycache__/\n' >> .gitignore
-          printf '.DS_Store\n' >> .gitignore
-
-      - name: Add .gitkeep
-        run: |
-          touch client/lib/core/constants/.gitkeep
-          touch client/lib/core/theme/.gitkeep
-          touch client/lib/core/utils/.gitkeep
-          touch client/lib/data/models/.gitkeep
-          touch client/lib/data/repositories/.gitkeep
-          touch client/lib/data/providers/.gitkeep
-          touch client/lib/features/live_tv/.gitkeep
-          touch client/lib/features/movies/.gitkeep
-          touch client/lib/features/series/.gitkeep
-          touch client/lib/features/player/.gitkeep
-          touch client/lib/tv/screens/.gitkeep
-          touch client/lib/tv/widgets/.gitkeep
-          touch client/lib/tv/navigation/.gitkeep
-          touch server/src/.gitkeep
-          touch data-pipeline/scripts/.gitkeep
-          touch shared/.gitkeep
-          touch docs/.gitkeep
-
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "chore: setup structure" || echo "no changes"
-          git push
+flutter:
+  uses-material-design: true
