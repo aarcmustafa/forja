@@ -48,7 +48,6 @@ jobs:
               fi
             fi
           done
-
           find client/lib -name "*.dart" | while read f; do
             if grep -q "controller.value.size" "$f"; then
               sed -i "s|controller.value.size.width|(player.state.width ?? 1920).toDouble()|g" "$f"
@@ -82,9 +81,7 @@ jobs:
           BASE="client/assets/android_res"
           mkdir -p "$BASE/extracted"
           ARCHIVE=$(find "$BASE" -maxdepth 1 \( -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) 2>/dev/null | head -1)
-          if [ -z "$ARCHIVE" ]; then
-            exit 0
-          fi
+          if [ -z "$ARCHIVE" ]; then exit 0; fi
           if [ "${ARCHIVE##*.}" = "zip" ]; then
             unzip -o "$ARCHIVE" -d "$BASE/extracted"
           elif [ "${ARCHIVE##*.}" = "rar" ]; then
@@ -92,21 +89,16 @@ jobs:
           else
             7z x "$ARCHIVE" -o"$BASE/extracted" -y
           fi
-          find "$BASE/extracted" -type f | head -40 || true
 
       - name: Detect res folder
         id: locate_res
         run: |
           BASE="client/assets/android_res"
           RES_PATH=""
-          if [ -d "$BASE/extracted/res" ]; then
-            RES_PATH="$BASE/extracted/res"
-          elif [ -d "$BASE/extracted/mipmap-hdpi" ]; then
-            RES_PATH="$BASE/extracted"
-          elif [ -d "$BASE/res" ]; then
-            RES_PATH="$BASE/res"
-          elif [ -d "$BASE/mipmap-hdpi" ]; then
-            RES_PATH="$BASE"
+          if [ -d "$BASE/extracted/res" ]; then RES_PATH="$BASE/extracted/res"
+          elif [ -d "$BASE/extracted/mipmap-hdpi" ]; then RES_PATH="$BASE/extracted"
+          elif [ -d "$BASE/res" ]; then RES_PATH="$BASE/res"
+          elif [ -d "$BASE/mipmap-hdpi" ]; then RES_PATH="$BASE"
           fi
           echo "RES_PATH=$RES_PATH" >> $GITHUB_OUTPUT
 
@@ -114,12 +106,8 @@ jobs:
         run: |
           RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
           RES_DEST="client/android/app/src/main/res"
-          if [ -z "$RES_SRC" ]; then
-            exit 0
-          fi
-          if [ ! -d "$RES_SRC" ]; then
-            exit 0
-          fi
+          if [ -z "$RES_SRC" ]; then exit 0; fi
+          if [ ! -d "$RES_SRC" ]; then exit 0; fi
           rm -rf "$RES_DEST"
           mkdir -p "$RES_DEST"
           cp -r "$RES_SRC"/* "$RES_DEST/"
@@ -146,9 +134,7 @@ jobs:
       - name: Verify URLs
         run: |
           count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo 0)
-          if [ "$count" -lt 1 ]; then
-            exit 1
-          fi
+          if [ "$count" -lt 1 ]; then exit 1; fi
 
       - name: Bump minSdkVersion to 23
         working-directory: client
@@ -164,13 +150,11 @@ jobs:
         working-directory: client
         run: |
           python3 - <<'PYEOF'
-          import os
-          import re
+          import os, re
           path = "android/app/build.gradle.kts"
           if not os.path.exists(path):
               path = "android/app/build.gradle"
-          if not os.path.exists(path):
-              exit(0)
+          if not os.path.exists(path): exit(0)
           src = open(path, "r", encoding="utf-8").read()
           if "ndkVersion" in src:
               src = re.sub(r'ndkVersion\s*=?\s*[^\n]+', 'ndkVersion = "28.2.13676358"', src)
@@ -179,8 +163,7 @@ jobs:
               idx = src.find(marker)
               if idx != -1:
                   insert_at = idx + len(marker)
-                  block = '\n    ndkVersion = "28.2.13676358"\n'
-                  src = src[:insert_at] + block + src[insert_at:]
+                  src = src[:insert_at] + '\n    ndkVersion = "28.2.13676358"\n' + src[insert_at:]
           open(path, "w", encoding="utf-8").write(src)
           PYEOF
 
@@ -188,19 +171,13 @@ jobs:
         working-directory: client
         run: |
           python3 - <<'PYEOF'
-          import os
-          import re
+          import os, re
           path = "android/app/build.gradle.kts"
           if not os.path.exists(path):
               path = "android/app/build.gradle"
-          if not os.path.exists(path):
-              exit(0)
+          if not os.path.exists(path): exit(0)
           src = open(path, "r", encoding="utf-8").read()
-          src = re.sub(
-              r'applicationId\s*=?\s*"[^"]*"',
-              'applicationId = "com.estitn.farja.mobile"',
-              src
-          )
+          src = re.sub(r'applicationId\s*=?\s*"[^"]*"', 'applicationId = "com.estitn.sttiten.foot.mobile"', src)
           open(path, "w", encoding="utf-8").write(src)
           PYEOF
 
@@ -212,19 +189,16 @@ jobs:
           path = "android/app/build.gradle.kts"
           if not os.path.exists(path):
               path = "android/app/build.gradle"
-          if not os.path.exists(path):
-              exit(0)
+          if not os.path.exists(path): exit(0)
           src = open(path, "r", encoding="utf-8").read()
-          if "core-splashscreen" in src:
-              exit(0)
+          if "core-splashscreen" in src: exit(0)
           marker = "dependencies {"
           idx = src.find(marker)
           if idx == -1:
               src += '\n\ndependencies {\n    implementation("androidx.core:core-splashscreen:1.0.1")\n}\n'
           else:
               insert_at = idx + len(marker)
-              block = '\n    implementation("androidx.core:core-splashscreen:1.0.1")'
-              src = src[:insert_at] + block + src[insert_at:]
+              src = src[:insert_at] + '\n    implementation("androidx.core:core-splashscreen:1.0.1")' + src[insert_at:]
           open(path, "w", encoding="utf-8").write(src)
           PYEOF
 
@@ -235,27 +209,14 @@ jobs:
           import os
           candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
           for path in candidates:
-              if not os.path.exists(path):
-                  continue
+              if not os.path.exists(path): continue
               src = open(path, "r", encoding="utf-8").read()
-              if "packagingOptions" in src or "packaging {" in src:
-                  continue
+              if "packagingOptions" in src or "packaging {" in src: continue
               marker = "android {"
               idx = src.find(marker)
-              if idx == -1:
-                  continue
+              if idx == -1: continue
               insert_at = idx + len(marker)
-              block = """
-
-              packaging {
-                  jniLibs {
-                      useLegacyPackaging = true
-                  }
-                  resources {
-                      excludes += setOf("META-INF/*.kotlin_module")
-                  }
-              }
-          """
+              block = '\n\n    packaging {\n        jniLibs {\n            useLegacyPackaging = true\n        }\n        resources {\n            excludes += setOf("META-INF/*.kotlin_module")\n        }\n    }\n'
               src = src[:insert_at] + block + src[insert_at:]
               open(path, "w", encoding="utf-8").write(src)
           PYEOF
@@ -271,7 +232,7 @@ jobs:
               <uses-permission android:name="android.permission.WAKE_LOCK" />
               <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
               <application
-                  android:label="استيتن فرجة"
+                  android:label="STTITEN FOOT"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher"
                   android:roundIcon="@mipmap/ic_launcher_round"
@@ -309,13 +270,13 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p artifacts
-          cp client/build/app/outputs/flutter-apk/app-release.apk artifacts/estitn-farja-mobile.apk || true
+          cp client/build/app/outputs/flutter-apk/app-release.apk artifacts/sttiten-foot-mobile.apk || true
           ls -lh artifacts/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: estitn-farja-mobile-apk
+          name: sttiten-foot-mobile-apk
           path: artifacts/*.apk
           retention-days: 30
 
