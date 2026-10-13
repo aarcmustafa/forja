@@ -189,6 +189,7 @@ jobs:
         run: |
           python3 - <<'PYEOF'
           import os
+          import re
           path = "android/app/build.gradle.kts"
           if not os.path.exists(path):
               path = "android/app/build.gradle"
@@ -197,7 +198,6 @@ jobs:
               exit(0)
           src = open(path, "r", encoding="utf-8").read()
           if "ndkVersion" in src:
-              import re
               src = re.sub(r'ndkVersion\s*=?\s*[^\n]+', 'ndkVersion = "28.2.13676358"', src)
               print("Replaced existing ndkVersion")
           else:
@@ -215,6 +215,50 @@ jobs:
           PYEOF
           echo "=== Verifying ==="
           grep -n "ndkVersion" android/app/build.gradle.kts || echo "NOT FOUND"
+
+      - name: Add core-splashscreen dependency
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          import re
+
+          path = "android/app/build.gradle.kts"
+          if not os.path.exists(path):
+              path = "android/app/build.gradle"
+          if not os.path.exists(path):
+              print("no build.gradle found")
+              exit(0)
+
+          src = open(path, "r", encoding="utf-8").read()
+
+          if "core-splashscreen" in src:
+              print("core-splashscreen already added")
+              exit(0)
+
+          marker = "dependencies {"
+          idx = src.find(marker)
+
+          if idx == -1:
+              if path.endswith(".kts"):
+                  src += '\n\ndependencies {\n    implementation("androidx.core:core-splashscreen:1.0.1")\n}\n'
+              else:
+                  src += "\n\ndependencies {\n    implementation 'androidx.core:core-splashscreen:1.0.1'\n}\n"
+              print("Appended dependencies block")
+          else:
+              insert_at = idx + len(marker)
+              if path.endswith(".kts"):
+                  block = '\n    implementation("androidx.core:core-splashscreen:1.0.1")'
+              else:
+                  block = "\n    implementation 'androidx.core:core-splashscreen:1.0.1'"
+              src = src[:insert_at] + block + src[insert_at:]
+              print("Added to existing dependencies block")
+
+          open(path, "w", encoding="utf-8").write(src)
+          PYEOF
+
+          echo "=== Verifying ==="
+          grep -n "core-splashscreen" android/app/build.gradle.kts || echo "NOT FOUND"
 
       - name: Add packaging options
         working-directory: client
