@@ -189,7 +189,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                 ),
                 SizedBox(height: 4),
                 Text(
-                  '© 2025',
+                  '© 2026',
                   style: TextStyle(color: Colors.white24, fontSize: 10),
                 ),
               ],
