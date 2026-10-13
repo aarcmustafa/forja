@@ -3,7 +3,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 import 'xtream_client.dart';
 
-/// مستودع موحّد — Xtream API + M3U + Fallback UA + أفضل UA محفوظ
+/// مستودع موحّد — Xtream API + M3U + Fallback UA + إدارة كاش ذكية
 class M3uRepository {
   // ==========================================================
   //  User Agents للتجربة بالتتابع
@@ -17,6 +17,15 @@ class M3uRepository {
     'TiviMate/4.7.0',
     'Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   ];
+
+  // ==========================================================
+  //  حدود الكاش (قابلة للتعديل)
+  // ==========================================================
+  /// الحد الأقصى لعدد روابط M3U في الذاكرة
+  static const int maxInMemoryEntries = 15;
+
+  /// الحد الأقصى لحجم كاش أفضل UA في Hive
+  static const int maxBestUaEntries = 50;
 
   // ==========================================================
   //  Hive — لحفظ أفضل UA لكل رابط
@@ -52,7 +61,7 @@ class M3uRepository {
     }
   }
 
-  /// حفظ أفضل UA لرابط
+  /// حفظ أفضل UA لرابط + تقليم تلقائي
   Future<void> _saveBestUa(String url, String ua) async {
     await _initUaBox();
     if (_uaBox == null) return;
@@ -62,6 +71,7 @@ class M3uRepository {
           raw is Map ? Map<String, dynamic>.from(raw) : {};
       map[url] = ua;
       await _uaBox!.put(_kBestUas, map);
+      await _trimUaCache();
     } catch (_) {}
   }
 
@@ -113,12 +123,15 @@ class M3uRepository {
             ));
 
   // ==========================================================
-  //  الدالة الرئيسية — تحميل من رابط (Hybrid)
+  //  الدالة الرئيسية
   // ==========================================================
   Future<List<Channel>> loadFromUrl(
     String url, {
     bool forceRefresh = false,
   }) async {
+    // ✅ فحص وإدارة الكاش قبل كل تحميل
+    _trimInMemoryCache();
+
     if (!forceRefresh && _cache.containsKey(url)) {
       return _cache[url]!;
     }
@@ -128,13 +141,89 @@ class M3uRepository {
     if (credentials != null) {
       final channels = await _loadFromXtream(credentials);
       _cache[url] = channels;
+      _trimInMemoryCache();
       return channels;
     }
 
     // 📄 M3U مباشر
     final channels = await _loadFromM3u(url);
     _cache[url] = channels;
+    _trimInMemoryCache();
     return channels;
+  }
+
+  // ==========================================================
+  //  إدارة الكاش — التقليم التلقائي
+  // ==========================================================
+  /// تقليم الكاش في الذاكرة إذا تضخم
+  void _trimInMemoryCache() {
+    if (_cache.length <= maxInMemoryEntries) return;
+
+    final toRemove = _cache.length - maxInMemoryEntries;
+    final keysToRemove = _cache.keys.take(toRemove).toList();
+    for (final key in keysToRemove) {
+      _cache.remove(key);
+    }
+
+    // ignore: avoid_print
+    print('🧹 تم تنظيف $toRemove عنصر من كاش الذاكرة');
+  }
+
+  /// تقليم كاش أفضل UA في Hive
+  Future<void> _trimUaCache() async {
+    await _initUaBox();
+    if (_uaBox == null) return;
+
+    try {
+      final raw = _uaBox!.get(_kBestUas);
+      if (raw is! Map) return;
+
+      final map = Map<String, dynamic>.from(raw);
+      if (map.length <= maxBestUaEntries) return;
+
+      final toRemove = map.length - maxBestUaEntries;
+      final keysToRemove = map.keys.take(toRemove).toList();
+      for (final key in keysToRemove) {
+        map.remove(key);
+      }
+
+      await _uaBox!.put(_kBestUas, map);
+      // ignore: avoid_print
+      print('🧹 تم تنظيف $toRemove UA قديم من Hive');
+    } catch (_) {}
+  }
+
+  /// ✅ صيانة الكاش — تُستدعى عند بدء التطبيق
+  Future<void> maintainCache() async {
+    _trimInMemoryCache();
+    await _trimUaCache();
+  }
+
+  /// ✅ إعادة تعيين كل الكاش
+  Future<void> resetAllCache() async {
+    _cache.clear();
+    await _initUaBox();
+    if (_uaBox != null) {
+      try {
+        await _uaBox!.delete(_kBestUas);
+      } catch (_) {}
+    }
+    // ignore: avoid_print
+    print('🔄 تم إعادة تعيين كل الكاش');
+  }
+
+  /// ✅ إعادة تعيين كاش رابط واحد فقط
+  void resetUrlCache(String url) {
+    _cache.remove(url);
+  }
+
+  /// معلومات الكاش الحالية
+  Map<String, dynamic> getCacheInfo() {
+    return {
+      'inMemoryEntries': _cache.length,
+      'inMemoryLimit': maxInMemoryEntries,
+      'uaCacheReady': _uaInitialized,
+    };
   }
   
 // ==========================================================
@@ -183,7 +272,7 @@ Future<List<Channel>> _loadFromXtream(
       print('⚠️ فشل جلب المسلسلات: $e');
     }
 
-    // إذا فشل كل شيء → Fallback إلى M3U
+    // Fallback إلى M3U إذا فشل كل شيء
     if (all.isEmpty) {
       // ignore: avoid_print
       print('❌ Xtream: لم تُجلب أي بيانات، سنستخدم M3U');
@@ -199,7 +288,7 @@ Future<List<Channel>> _loadFromXtream(
 }
 
 // ==========================================================
-//  تحميل من M3U (مع Fallback UA + حفظ أفضل UA)
+//  تحميل من M3U
 // ==========================================================
 Future<List<Channel>> _loadFromM3u(String url) async {
   final data = await _fetchWithFallback(url);
@@ -230,7 +319,6 @@ Future<String?> _fetchWithFallback(String url) async {
     final data = await _tryFetch(url, ua);
 
     if (data != null) {
-      // ✅ احفظ UA الناجح
       await _saveBestUa(url, ua);
       // ignore: avoid_print
       print('✅ حمّل بنجاح بـ UA: $ua');
@@ -244,7 +332,7 @@ Future<String?> _fetchWithFallback(String url) async {
   return null;
 }
 
-/// محاولة تحميل واحدة بـ UA محدد
+/// محاولة تحميل واحدة
 Future<String?> _tryFetch(String url, String ua) async {
   try {
     final headers = <String, String>{
