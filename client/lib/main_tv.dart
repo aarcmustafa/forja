@@ -14,21 +14,12 @@ import 'data/models/channel.dart';
 import 'data/providers/playlist_provider.dart';
 import 'data/providers/favorites_provider.dart';
 import 'data/providers/history_provider.dart';
+import 'data/local/secure_config.dart';
 
 // ==========================================================
-//  ⚙️  روابط M3U
+//  ⚙️  روابط M3U (مشفّرة — تُفكّ في الذاكرة فقط)
 // ==========================================================
-const List<String> kPlaylistUrls = [
-  'https://m3uextgroup.kiki10kkii.workers.dev/f/gt2izrmxn1nr/Live_AR.m3u',
-  'https://m3uextgroup.kiki10kkii.workers.dev/f/htw0iolrrihk/Live_SPORTS.m3u',
-  'https://m3uextractor.kiki10kkii.workers.dev/download/1f48228d-7783-43a8-8533-4228b4c9ba43/Live_AR%20_%20ALWAN%20SPORTS.m3u8',
-  'https://m3uextractor.kiki10kkii.workers.dev/download/127c2b7c-21c8-42e9-a903-6aad10029683/Live_AR%20_%20BEIN%20TOD.m3u8',
-  'https://m3uextractor.kiki10kkii.workers.dev/download/a3260edc-48d0-4696-aa1e-3fb6916b2d51/Live_AR%20_%20BEIN%20SPORTS%208K.m3u8',
-  'https://m3uextractor.kiki10kkii.workers.dev/download/08cdf005-1a6f-48e4-8486-912afa4f918d/Live_BeIN%20SPORTS%20__%20BEE__%20.m3u8',
-  'http://dksipi.com:80/get.php?username=kirham2025&password=M0BfTl2CtK&type=m3u_plus&output=m3u8',
-  'http://xtreamutv.org:80/get.php?username=7rFgH6sFwy&password=HSzDvxrCy6&type=m3u_plus&output=m3u8',
-  'http://prod.dragonkey.net:2082/get.php?username=00228866&password=2pd974kh95&type=m3u_plus&output=m3u8',
-];
+final List<String> kPlaylistUrls = SecureConfig.urls;
 
 // ==========================================================
 //  نقطة انطلاق التطبيق
@@ -318,10 +309,8 @@ class _MainShellState extends ConsumerState<MainShell> {
   //  فتح القناة (مع تسجيل في السجل)
   // ==========================================================
   void _openChannel(Channel channel) {
-    // ✅ تسجيل في السجل
     ref.read(historyProvider.notifier).record(channel);
 
-    // فتح المشغل
     Navigator.push(
       context,
       MaterialPageRoute(
