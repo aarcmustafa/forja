@@ -13,6 +13,7 @@ import 'features/player/player_screen.dart';
 import 'data/models/channel.dart';
 import 'data/providers/playlist_provider.dart';
 import 'data/providers/favorites_provider.dart';
+import 'data/providers/history_provider.dart';
 
 // ==========================================================
 //  ⚙️  روابط M3U
@@ -286,27 +287,41 @@ class _MainShellState extends ConsumerState<MainShell> {
     switch (_selectedIndex) {
       case _idxHome:
         return const HomeScreen();
+
       case _idxLive:
         return LiveTvScreen(
           playlistUrls: kPlaylistUrls,
-          onChannelTap: _openPlayer,
+          onChannelTap: _openChannel,
         );
+
       case _idxMovies:
         return const MoviesNetflixScreen();
+
       case _idxSeries:
         return const SeriesNetflixScreen();
+
       case _idxFavorites:
         return const FavoritesScreen();
+
       case _idxPackages:
         return const PackagesScreen();
+
       case _idxSettings:
         return const SettingsScreen();
+
       default:
         return const HomeScreen();
     }
   }
 
-  void _openPlayer(Channel channel) {
+  // ==========================================================
+  //  فتح القناة (مع تسجيل في السجل)
+  // ==========================================================
+  void _openChannel(Channel channel) {
+    // ✅ تسجيل في السجل
+    ref.read(historyProvider.notifier).record(channel);
+
+    // فتح المشغل
     Navigator.push(
       context,
       MaterialPageRoute(
