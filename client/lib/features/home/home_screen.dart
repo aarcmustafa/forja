@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/channel.dart';
 import '../../data/providers/playlist_provider.dart';
 import '../../data/providers/history_provider.dart';
+import '../../core/animations/app_animations.dart';
 import '../live_tv/widgets/channel_card.dart';
 import '../live_tv/widgets/sports_matches_widget.dart';
 import '../player/player_screen.dart';
@@ -43,16 +45,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   Widget _buildBody(PlaylistState state, List<Channel> all) {
     if (state.isLoading && all.isEmpty) {
-      return const Center(
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 20),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircularProgressIndicator(
-                color: Color(0xFF00C8FF), strokeWidth: 3),
-            SizedBox(height: 20),
-            Text(
-              'جارٍ تحميل القنوات الرياضية...',
-              style: TextStyle(color: Colors.white70, fontSize: 14),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 32),
+              child: Row(
+                children: [
+                  ShimmerLoading(width: 200, height: 200),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            Expanded(
+              child: ShimmerGrid(
+                itemCount: 10,
+                padding: const EdgeInsets.fromLTRB(32, 0, 32, 24),
+              ),
             ),
           ],
         ),
@@ -100,14 +110,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       controller: _scrollController,
       slivers: [
         // Hero
-        const SliverToBoxAdapter(child: _HeroSection()),
+        const SliverToBoxAdapter(
+          child: FadeInSlide(
+            child: _HeroSection(),
+          ),
+        ),
 
         const SliverToBoxAdapter(child: SizedBox(height: 20)),
 
         // صندوق المباريات
         SliverToBoxAdapter(
-          child: SportsMatchesWidget(
-            onChannelTap: _openChannel,
+          child: FadeInSlide(
+            delay: const Duration(milliseconds: 100),
+            child: SportsMatchesWidget(
+              onChannelTap: _openChannel,
+            ),
           ),
         ),
 
@@ -115,7 +132,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
         // الإحصائيات
         SliverToBoxAdapter(
-          child: _buildStats(all.length),
+          child: FadeInSlide(
+            delay: const Duration(milliseconds: 150),
+            child: _buildStats(all.length),
+          ),
         ),
 
         const SliverToBoxAdapter(child: SizedBox(height: 32)),
@@ -128,6 +148,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               icon: Icons.sports_soccer_rounded,
               items: beinChannels.take(20).toList(),
               color: const Color(0xFF00C8FF),
+              index: 0,
             ),
           ),
         if (sscChannels.isNotEmpty)
@@ -137,6 +158,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               icon: Icons.sports_soccer_rounded,
               items: sscChannels.take(20).toList(),
               color: const Color(0xFF4CAF50),
+              index: 1,
             ),
           ),
         if (adChannels.isNotEmpty)
@@ -146,6 +168,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               icon: Icons.sports_soccer_rounded,
               items: adChannels.take(20).toList(),
               color: const Color(0xFFFFB800),
+              index: 2,
             ),
           ),
         if (alwanChannels.isNotEmpty)
@@ -155,6 +178,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               icon: Icons.sports_soccer_rounded,
               items: alwanChannels.take(20).toList(),
               color: const Color(0xFFE91E63),
+              index: 3,
             ),
           ),
         if (alkassChannels.isNotEmpty)
@@ -164,6 +188,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               icon: Icons.sports_soccer_rounded,
               items: alkassChannels.take(20).toList(),
               color: const Color(0xFF9C27B0),
+              index: 4,
             ),
           ),
         if (others.isNotEmpty)
@@ -173,6 +198,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               icon: Icons.sports_rounded,
               items: others.take(20).toList(),
               color: const Color(0xFF00BCD4),
+              index: 5,
             ),
           ),
 
@@ -197,8 +223,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     ref.read(historyProvider.notifier).record(channel);
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => PlayerScreen(
+      FadeSlideRoute(
+        page: PlayerScreen(
           streamUrl: channel.streamUrl,
           channelName: channel.name,
           channelLogo: channel.logo,
@@ -280,82 +306,87 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   // ==========================================================
-  //  صف القنوات
+  //  صف القنوات — مع FadeInSlide
   // ==========================================================
   Widget _buildRow({
     required String title,
     required IconData icon,
     required List<Channel> items,
     required Color color,
+    int index = 0,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
+    return FadeInSlide(
+      delay: Duration(milliseconds: 100 * index),
+      duration: const Duration(milliseconds: 500),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(icon, color: color, size: 20),
                   ),
-                  child: Icon(icon, color: color, size: 20),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${items.length}',
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 12,
+                  const SizedBox(width: 10),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${items.length}',
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 280,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 32),
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 14),
-              itemBuilder: (context, i) {
-                final item = items[i];
-                return ChannelCard(
-                  channel: item,
-                  width: 180,
-                  height: 250,
-                  onTap: () => _openChannel(item),
-                );
-              },
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 280,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                itemCount: items.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 14),
+                itemBuilder: (context, i) {
+                  final item = items[i];
+                  return ChannelCard(
+                    channel: item,
+                    width: 180,
+                    height: 250,
+                    onTap: () => _openChannel(item),
+                  );
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
