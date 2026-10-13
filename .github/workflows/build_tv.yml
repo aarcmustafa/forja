@@ -56,8 +56,8 @@ jobs:
           echo "=== Fix 2: media_kit controller.value ==="
           find client/lib -name "*.dart" | while read f; do
             if grep -q "controller.value.size" "$f"; then
-              sed -i "s|controller.value.size.width|player.state.width ?? 1920|g" "$f"
-              sed -i "s|controller.value.size.height|player.state.height ?? 1080|g" "$f"
+              sed -i "s|controller.value.size.width|(player.state.width ?? 1920).toDouble()|g" "$f"
+              sed -i "s|controller.value.size.height|(player.state.height ?? 1080).toDouble()|g" "$f"
               echo "Fixed controller.value in: $f"
             fi
           done
@@ -264,6 +264,27 @@ jobs:
       - name: Build APK
         working-directory: client
         run: |
+          flutter build apk --release -t lib/main_tv.dart --split-per-abi --android-skip-build-dependency-validation
+
+      - name: Rename APKs
+        run: |
+          mkdir -p artifacts
+          cp client/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk artifacts/estitn-farja-tv-arm64.apk || true
+          cp client/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk artifacts/estitn-farja-tv-arm32.apk || true
+          cp client/build/app/outputs/flutter-apk/app-x86_64-release.apk artifacts/estitn-farja-tv-x86_64.apk || true
+          ls -lh artifacts/
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: estitn-farja-tv-apk
+          path: artifacts/*.apk
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f client/lib/data/local/secure_config.dartun: |
           flutter build apk --release -t lib/main_tv.dart --split-per-abi --android-skip-build-dependency-validation
 
       - name: Rename APKs
