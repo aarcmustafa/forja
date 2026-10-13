@@ -51,11 +51,18 @@ jobs:
           BASE="client/assets/android_res"
           mkdir -p "$BASE/extracted"
           ARCHIVE=$(find "$BASE" -maxdepth 1 \( -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) 2>/dev/null | head -1)
-          test -z "$ARCHIVE" && echo "no archive found" && exit 1
+          if [ -z "$ARCHIVE" ]; then
+            echo "no archive found"
+            exit 1
+          fi
           echo "Archive: $ARCHIVE"
-          test "${ARCHIVE##*.}" = "zip" && unzip -o "$ARCHIVE" -d "$BASE/extracted"
-          test "${ARCHIVE##*.}" = "rar" && (unrar x -o+ "$ARCHIVE" "$BASE/extracted/" || 7z x "$ARCHIVE" -o"$BASE/extracted" -y)
-          test "${ARCHIVE##*.}" = "7z" && 7z x "$ARCHIVE" -o"$BASE/extracted" -y
+          if [ "${ARCHIVE##*.}" = "zip" ]; then
+            unzip -o "$ARCHIVE" -d "$BASE/extracted"
+          elif [ "${ARCHIVE##*.}" = "rar" ]; then
+            unrar x -o+ "$ARCHIVE" "$BASE/extracted/" || 7z x "$ARCHIVE" -o"$BASE/extracted" -y
+          else
+            7z x "$ARCHIVE" -o"$BASE/extracted" -y
+          fi
           find "$BASE/extracted" -type f | head -40 || true
 
       - name: Detect res folder
@@ -63,10 +70,15 @@ jobs:
         run: |
           BASE="client/assets/android_res"
           RES_PATH=""
-          test -d "$BASE/extracted/res" && RES_PATH="$BASE/extracted/res"
-          test -z "$RES_PATH" && test -d "$BASE/extracted/mipmap-hdpi" && RES_PATH="$BASE/extracted"
-          test -z "$RES_PATH" && test -d "$BASE/res" && RES_PATH="$BASE/res"
-          test -z "$RES_PATH" && test -d "$BASE/mipmap-hdpi" && RES_PATH="$BASE"
+          if [ -d "$BASE/extracted/res" ]; then
+            RES_PATH="$BASE/extracted/res"
+          elif [ -d "$BASE/extracted/mipmap-hdpi" ]; then
+            RES_PATH="$BASE/extracted"
+          elif [ -d "$BASE/res" ]; then
+            RES_PATH="$BASE/res"
+          elif [ -d "$BASE/mipmap-hdpi" ]; then
+            RES_PATH="$BASE"
+          fi
           echo "RES_PATH=$RES_PATH" >> $GITHUB_OUTPUT
           echo "Detected: $RES_PATH"
 
@@ -74,8 +86,14 @@ jobs:
         run: |
           RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
           RES_DEST="client/android/app/src/main/res"
-          test -z "$RES_SRC" && echo "no custom res" && exit 0
-          test ! -d "$RES_SRC" && echo "not a directory" && exit 0
+          if [ -z "$RES_SRC" ]; then
+            echo "no custom res, using default"
+            exit 0
+          fi
+          if [ ! -d "$RES_SRC" ]; then
+            echo "res path not a directory"
+            exit 0
+          fi
           rm -rf "$RES_DEST"
           mkdir -p "$RES_DEST"
           cp -r "$RES_SRC"/* "$RES_DEST/"
@@ -83,7 +101,11 @@ jobs:
 
       - name: Verify icon
         run: |
-          test -f "client/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" && echo "icon found" || echo "icon missing"
+          if [ -f "client/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" ]; then
+            echo "icon found"
+          else
+            echo "icon missing, using default"
+          fi
 
       - name: Generate encrypted config
         env:
@@ -91,15 +113,19 @@ jobs:
         run: |
           mkdir -p client/lib/data/local
           python3 client/scripts/gen_config.py > client/lib/data/local/secure_config.dart
-          echo "Generated"
+          echo "Generated secure_config.dart"
 
       - name: Verify URLs
         run: |
           count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo 0)
           echo "URLs: $count"
-          test "$count" -lt 1 && echo "ERROR: no URLs" && exit 1
+          if [ "$count" -lt 1 ]; then
+            echo "ERROR: no URLs"
+            exit 1
+          fi
+          echo "OK"
 
-      - name: Bump minSdkVersion
+      - name: Bump minSdkVersion to 23
         working-directory: client
         run: |
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
