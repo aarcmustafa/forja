@@ -331,3 +331,229 @@ class _MoviesNetflixScreenState extends ConsumerState<MoviesNetflixScreen> {
     );
   }
 }
+
+// ==========================================================
+//  زر "الكل" القابل للتركيز
+// ==========================================================
+class _SeeAllButton extends StatefulWidget {
+  final VoidCallback onPressed;
+
+  const _SeeAllButton({required this.onPressed});
+
+  @override
+  State<_SeeAllButton> createState() => _SeeAllButtonState();
+}
+
+class _SeeAllButtonState extends State<_SeeAllButton> {
+  bool _isFocused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent) {
+          final key = event.logicalKey.keyLabel;
+          if (key == 'Select' || key == 'Enter' || key == 'Space') {
+            widget.onPressed();
+          }
+        }
+        return KeyEventResult.ignored;
+      },
+      child: GestureDetector(
+        onTap: widget.onPressed,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: _isFocused
+                ? const Color(0xFF00C8FF)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: _isFocused
+                  ? Colors.white
+                  : const Color(0xFF2A3350),
+              width: _isFocused ? 2 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'الكل',
+                style: TextStyle(
+                  color: _isFocused ? Colors.black : Colors.white70,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.arrow_back_rounded,
+                color: _isFocused ? Colors.black : Colors.white70,
+                size: 16,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ==========================================================
+//  صفحة عرض كل أفلام لغة معينة (شبكة)
+// ==========================================================
+class _MovieListPage extends StatelessWidget {
+  final String title;
+  final List<Channel> movies;
+
+  const _MovieListPage({required this.title, required this.movies});
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0A0E1A),
+        body: SafeArea(
+          child: Column(
+            children: [
+              // الشريط العلوي
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                child: Row(
+                  children: [
+                    _BackButton(
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            '${movies.length} فيلم',
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // الشبكة
+              Expanded(
+                child: GridView.builder(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                  gridDelegate:
+                      const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 200,
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                    childAspectRatio: 0.75,
+                  ),
+                  itemCount: movies.length,
+                  itemBuilder: (context, i) {
+                    final movie = movies[i];
+                    return ChannelCard(
+                      channel: movie,
+                      width: 200,
+                      height: 270,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => MovieDetailScreen(movie: movie),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ==========================================================
+//  زر الرجوع
+// ==========================================================
+class _BackButton extends StatefulWidget {
+  final VoidCallback onPressed;
+
+  const _BackButton({required this.onPressed});
+
+  @override
+  State<_BackButton> createState() => _BackButtonState();
+}
+
+class _BackButtonState extends State<_BackButton> {
+  bool _isFocused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent) {
+          final key = event.logicalKey.keyLabel;
+          if (key == 'Select' || key == 'Enter' || key == 'Space') {
+            widget.onPressed();
+          }
+        }
+        return KeyEventResult.ignored;
+      },
+      child: GestureDetector(
+        onTap: widget.onPressed,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: _isFocused
+                ? const Color(0xFF00C8FF)
+                : const Color(0xFF141A2E),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: _isFocused ? Colors.white : const Color(0xFF2A3350),
+              width: _isFocused ? 2 : 1,
+            ),
+            boxShadow: _isFocused
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF00C8FF).withOpacity(0.5),
+                      blurRadius: 12,
+                    ),
+                  ]
+                : [],
+          ),
+          child: Icon(
+            Icons.arrow_forward_rounded,
+            color: _isFocused ? Colors.black : Colors.white70,
+            size: 22,
+          ),
+        ),
+      ),
+    );
+  }
+}
