@@ -4,7 +4,7 @@ import 'package:media_kit/media_kit.dart';
 
 import 'features/live_tv/live_tv_screen.dart';
 import 'features/movies/movies_netflix_screen.dart';
-import 'features/series/series_screen.dart';
+import 'features/series/series_netflix_screen.dart';
 import 'features/player/player_screen.dart';
 import 'data/models/channel.dart';
 import 'data/providers/playlist_provider.dart';
@@ -76,7 +76,6 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  // فتح التطبيق على "البث المباشر"
   int _selectedIndex = 1;
 
   static const int _idxHome = 0;
@@ -233,9 +232,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         return const MoviesNetflixScreen();
 
       case _idxSeries:
-        return SeriesScreen(
-          onSeriesTap: _openPlayer,
-        );
+        return const SeriesNetflixScreen();
 
       case _idxHome:
       case _idxPackages:
