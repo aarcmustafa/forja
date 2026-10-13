@@ -1,14 +1,30 @@
 import 'package:dio/dio.dart';
 import '../models/channel.dart';
+import 'xtream_client.dart';
 
-/// مستودع تحميل وتحليل M3U — VLC UA + Referer تلقائي
+/// مستودع موحّد — Xtream API + M3U مباشر + VLC UA
 class M3uRepository {
+  // ==========================================================
+  //  User Agents للتجربة بالتتابع
+  // ==========================================================
   static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
 
+  static const List<String> fallbackUserAgents = [
+    'VLC/3.0.20 LibVLC/3.0.20',
+    'IPTV Smarters Pro',
+    'okhttp/4.9.0',
+    'TiviMate/4.7.0',
+    'Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  ];
+
+  // ==========================================================
+  //  استخراج Referer من الرابط
+  // ==========================================================
   static String extractReferer(String url) {
     try {
       final uri = Uri.parse(url);
-      return '${uri.scheme}://${uri.host}/';
+      final portPart = uri.hasPort ? ':${uri.port}' : '';
+      return '${uri.scheme}://${uri.host}$portPart/';
     } catch (_) {
       return '';
     }
@@ -17,7 +33,8 @@ class M3uRepository {
   static String extractOrigin(String url) {
     try {
       final uri = Uri.parse(url);
-      return '${uri.scheme}://${uri.host}';
+      final portPart = uri.hasPort ? ':${uri.port}' : '';
+      return '${uri.scheme}://${uri.host}$portPart';
     } catch (_) {
       return '';
     }
@@ -35,15 +52,20 @@ class M3uRepository {
     };
   }
 
+  // ==========================================================
+  //  الحالة
+  // ==========================================================
   final Dio _dio;
   final Map<String, List<Channel>> _cache = {};
 
   M3uRepository({Dio? dio})
       : _dio = dio ??
             Dio(BaseOptions(
-              connectTimeout: const Duration(seconds: 20),
-              receiveTimeout: const Duration(seconds: 120),
+              connectTimeout: const Duration(seconds: 30),
+              receiveTimeout: const Duration(seconds: 180),
+              sendTimeout: const Duration(seconds: 30),
               followRedirects: true,
+              maxRedirects: 5,
               validateStatus: (status) => status != null && status < 500,
               headers: {
                 'User-Agent': vlcUserAgent,
@@ -54,6 +76,9 @@ class M3uRepository {
               },
             ));
 
+  // ==========================================================
+  //  الدالة الرئيسية — تحميل من رابط (Hybrid)
+  // ==========================================================
   Future<List<Channel>> loadFromUrl(
     String url, {
     bool forceRefresh = false,
@@ -62,125 +87,247 @@ class M3uRepository {
       return _cache[url]!;
     }
 
+    // ✅ كشف Xtream تلقائياً
+    final credentials = XtreamDetector.extract(url);
+    if (credentials != null) {
+      // 🎯 Xtream API (أسرع 30 مرة)
+      final channels = await _loadFromXtream(credentials);
+      _cache[url] = channels;
+      return channels;
+    }
+
+    // 📄 M3U مباشر (workers.dev etc)
+    final channels = await _loadFromM3u(url);
+    _cache[url] = channels;
+    return channels;
+  }
+  
+// ==========================================================
+//  تحميل من Xtream API
+// ==========================================================
+Future<List<Channel>> _loadFromXtream(
+  XtreamCredentials credentials,
+) async {
+  final client = XtreamClient(credentials);
+  final all = <Channel>[];
+
+  try {
+    // 1) القنوات المباشرة
     try {
+      final liveCats = await client.getLiveCategories();
+      final live = await client.getLiveStreams(categories: liveCats);
+      all.addAll(live);
+      // ignore: avoid_print
+      print('✅ Xtream Live: ${live.length} قناة');
+    } catch (e) {
+      // ignore: avoid_print
+      print('⚠️ فشل جلب القنوات: $e');
+    }
+
+    // 2) الأفلام (VOD)
+    try {
+      final vodCats = await client.getVodCategories();
+      final vod = await client.getVodStreams(categories: vodCats);
+      all.addAll(vod);
+      // ignore: avoid_print
+      print('✅ Xtream VOD: ${vod.length} فيلم');
+    } catch (e) {
+      // ignore: avoid_print
+      print('⚠️ فشل جلب الأفلام: $e');
+    }
+
+    // 3) المسلسلات
+    try {
+      final seriesCats = await client.getSeriesCategories();
+      final series = await client.getSeries(categories: seriesCats);
+      all.addAll(series);
+      // ignore: avoid_print
+      print('✅ Xtream Series: ${series.length} مسلسل');
+    } catch (e) {
+      // ignore: avoid_print
+      print('⚠️ فشل جلب المسلسلات: $e');
+    }
+
+    // إذا فشل كل شيء → ارجع فارغاً
+    if (all.isEmpty) {
+      // ignore: avoid_print
+      print('❌ Xtream: لم تُجلب أي بيانات، سنستخدم M3U');
+      // Fallback إلى M3U
+      return await _loadFromM3u(
+        '${credentials.server}/get.php?username=${credentials.username}&password=${credentials.password}&type=m3u_plus&output=m3u8',
+      );
+    }
+
+    return all;
+  } finally {
+    client.dispose();
+  }
+}
+
+// ==========================================================
+//  تحميل من M3U (مع Fallback UA)
+// ==========================================================
+Future<List<Channel>> _loadFromM3u(String url) async {
+  final data = await _fetchWithFallback(url);
+
+  if (data == null || data.isEmpty) {
+    throw Exception('فشل تحميل الملف بعد تجربة كل User-Agents');
+  }
+
+  return parseM3uContent(data);
+}
+
+/// تجربة عدة User-Agents حتى يعمل أحدها
+Future<String?> _fetchWithFallback(String url) async {
+  for (int i = 0; i < fallbackUserAgents.length; i++) {
+    final ua = fallbackUserAgents[i];
+
+    try {
+      final headers = <String, String>{
+        'User-Agent': ua,
+        'Accept': '*/*',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Icy-MetaData': '1',
+      };
+
+      final referer = extractReferer(url);
+      if (referer.isNotEmpty) {
+        headers['Referer'] = referer;
+        headers['Origin'] = extractOrigin(url);
+      }
+
       final response = await _dio.get<String>(
         url,
         options: Options(
           responseType: ResponseType.plain,
-          headers: standardHeaders(url),
+          headers: headers,
         ),
       );
 
-      if (response.statusCode != 200 || response.data == null) {
-        throw Exception('فشل تحميل الملف: رمز ${response.statusCode}');
+      if (response.statusCode == 200 &&
+          response.data != null &&
+          response.data!.isNotEmpty) {
+        // ignore: avoid_print
+        print('✅ M3U حمّل بنجاح بـ UA: $ua');
+        return response.data;
       }
 
-      final channels = parseM3uContent(response.data!);
-      _cache[url] = channels;
-      return channels;
-    } on DioException catch (e) {
-      throw Exception('خطأ في الاتصال: ${e.message}');
+      // ignore: avoid_print
+      print('⚠️ UA[$i] فشل: رمز ${response.statusCode}');
+    } catch (e) {
+      // ignore: avoid_print
+      print('⚠️ UA[$i] خطأ: $e');
+      await Future.delayed(const Duration(milliseconds: 800));
+    }
+  }
+  return null;
+}
+
+// ==========================================================
+//  تحليل M3U
+// ==========================================================
+List<Channel> parseM3uContent(String content) {
+  final lines = content.split('\n');
+  final channels = <Channel>[];
+  Map<String, String>? currentInfo;
+  String? currentName;
+
+  for (final rawLine in lines) {
+    final line = rawLine.trim();
+    if (line.isEmpty) continue;
+    if (line.startsWith('#EXTM3U')) continue;
+
+    if (line.startsWith('#EXTINF:')) {
+      currentInfo = _parseExtInf(line);
+      currentName = _extractName(line);
+      continue;
+    }
+
+    if (line.startsWith('#')) continue;
+
+    if (currentInfo != null && currentName != null) {
+      final channel = _buildChannel(
+        name: currentName,
+        url: line,
+        info: currentInfo,
+      );
+      channels.add(channel);
+      currentInfo = null;
+      currentName = null;
     }
   }
 
-  List<Channel> parseM3uContent(String content) {
-    final lines = content.split('\n');
-    final channels = <Channel>[];
-    Map<String, String>? currentInfo;
-    String? currentName;
+  return channels;
+}
 
-    for (final rawLine in lines) {
-      final line = rawLine.trim();
-      if (line.isEmpty) continue;
-      if (line.startsWith('#EXTM3U')) continue;
-
-      if (line.startsWith('#EXTINF:')) {
-        currentInfo = _parseExtInf(line);
-        currentName = _extractName(line);
-        continue;
-      }
-
-      if (line.startsWith('#')) continue;
-
-      if (currentInfo != null && currentName != null) {
-        final channel = _buildChannel(
-          name: currentName,
-          url: line,
-          info: currentInfo,
-        );
-        channels.add(channel);
-        currentInfo = null;
-        currentName = null;
-      }
-    }
-
-    return channels;
+Map<String, String> _parseExtInf(String line) {
+  final info = <String, String>{};
+  final regex = RegExp(r'([a-zA-Z0-9\-_]+)="([^"]*)"');
+  for (final match in regex.allMatches(line)) {
+    info[match.group(1)!] = match.group(2)!;
   }
+  return info;
+}
 
-  Map<String, String> _parseExtInf(String line) {
-    final info = <String, String>{};
-    final regex = RegExp(r'([a-zA-Z0-9\-_]+)="([^"]*)"');
-    for (final match in regex.allMatches(line)) {
-      info[match.group(1)!] = match.group(2)!;
-    }
-    return info;
+String _extractName(String line) {
+  final commaIndex = line.lastIndexOf(',');
+  if (commaIndex == -1 || commaIndex == line.length - 1) {
+    return 'قناة غير معروفة';
   }
+  return line.substring(commaIndex + 1).trim();
+}
 
-  String _extractName(String line) {
-    final commaIndex = line.lastIndexOf(',');
-    if (commaIndex == -1 || commaIndex == line.length - 1) {
-      return 'قناة غير معروفة';
-    }
-    return line.substring(commaIndex + 1).trim();
-  }
+Channel _buildChannel({
+  required String name,
+  required String url,
+  required Map<String, String> info,
+}) {
+  final group = info['group-title'] ?? 'غير مصنف';
+  final tvgId = info['tvg-id'] ?? '';
+  final logo = info['tvg-logo'] ?? '';
 
-  Channel _buildChannel({
-    required String name,
-    required String url,
-    required Map<String, String> info,
-  }) {
-    final group = info['group-title'] ?? 'غير مصنف';
-    final tvgId = info['tvg-id'] ?? '';
-    final logo = info['tvg-logo'] ?? '';
+  final customReferer = info['referer'] ?? info['http-referrer'] ?? '';
+  final customUA = info['user-agent'] ?? info['http-user-agent'] ?? '';
 
-    final customReferer = info['referer'] ?? info['http-referrer'] ?? '';
-    final customUA = info['user-agent'] ?? info['http-user-agent'] ?? '';
+  final category = _inferCategory(name, group);
+  final contentType = _inferContentType(name, group, url);
+  final language = _inferLanguage(name, group);
+  final countryCode = _inferCountry(name, group);
+  final genre = _inferGenre(name, group);
+  final translation = _inferTranslation(name, group);
+  final year = _extractYear(name);
+  final originalName = _extractOriginalName(name);
+  final priority = _calculatePriority(url);
 
-    final category = _inferCategory(name, group);
-    final contentType = _inferContentType(name, group, url);
-    final language = _inferLanguage(name, group);
-    final countryCode = _inferCountry(name, group);
-    final genre = _inferGenre(name, group);
-    final translation = _inferTranslation(name, group);
-    final year = _extractYear(name);
-    final originalName = _extractOriginalName(name);
-    final priority = _calculatePriority(url);
+  final extras = <String, String>{};
+  if (customReferer.isNotEmpty) extras['referer'] = customReferer;
+  if (customUA.isNotEmpty) extras['user_agent'] = customUA;
 
-    final extras = <String, String>{};
-    if (customReferer.isNotEmpty) extras['referer'] = customReferer;
-    if (customUA.isNotEmpty) extras['user_agent'] = customUA;
-
-    return Channel(
-      id: _generateId(name, url),
-      name: _cleanName(name),
-      originalName: originalName,
-      logo: logo,
-      streamUrl: url,
-      group: group,
-      category: category,
-      language: language,
-      countryCode: countryCode,
-      genre: genre,
-      contentType: contentType,
-      translation: translation,
-      year: year,
-      isWorking: true,
-      priority: priority,
-      tvgId: tvgId,
-      extras: extras,
-    );
-  }
-
+  return Channel(
+    id: _generateId(name, url),
+    name: _cleanName(name),
+    originalName: originalName,
+    logo: logo,
+    streamUrl: url,
+    group: group,
+    category: category,
+    language: language,
+    countryCode: countryCode,
+    genre: genre,
+    contentType: contentType,
+    translation: translation,
+    year: year,
+    isWorking: true,
+    priority: priority,
+    tvgId: tvgId,
+    extras: extras,
+  );
+}
+  
+  // ==========================================================
+  //  أدوات مساعدة
+  // ==========================================================
   String _generateId(String name, String url) {
     return '${name.hashCode}_${url.hashCode}';
   }
@@ -210,7 +357,7 @@ class M3uRepository {
     }
     return '';
   }
-  
+
   // ==========================================================
   //  التصنيف الذكي
   // ==========================================================
@@ -392,18 +539,16 @@ class M3uRepository {
     return null;
   }
 
-  /// حساب الأولوية — الروابط الأفضل تُقدَّم
   int _calculatePriority(String url) {
     int priority = 0;
     final lower = url.toLowerCase();
 
-    // صيغة البث
     if (lower.contains('.m3u8')) {
-      priority += 15; // HLS (الأفضل)
+      priority += 15;
     } else if (lower.contains('.ts')) {
-      priority += 10; // TS
+      priority += 10;
     } else if (lower.contains('.mpd')) {
-      priority += 8; // DASH
+      priority += 8;
     } else if (lower.startsWith('rtsp://')) {
       priority += 6;
     } else if (lower.startsWith('rtmp://')) {
@@ -414,13 +559,8 @@ class M3uRepository {
       priority += 3;
     }
 
-    // الأمان
     if (lower.startsWith('https://')) priority += 5;
-
-    // مدة الصلاحية
     if (lower.contains('token=') || lower.contains('exp=')) priority += 3;
-
-    // الجودة
     if (lower.contains('4k') || lower.contains('uhd')) priority += 6;
     if (lower.contains('1080') || lower.contains('fhd')) priority += 4;
     if (lower.contains('720') || lower.contains('hd')) priority += 2;
@@ -435,6 +575,9 @@ class M3uRepository {
     return false;
   }
 
+  // ==========================================================
+  //  أدوات
+  // ==========================================================
   void clearCache() => _cache.clear();
   void dispose() => _dio.close();
 }
