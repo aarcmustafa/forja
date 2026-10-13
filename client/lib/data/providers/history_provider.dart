@@ -196,9 +196,3 @@ final lastSeriesProvider = Provider<Channel?>((ref) {
   }
   return null;
 });
-
-// ==========================================================
-//  استيراد playlistProvider (مؤخر) لتجنب circular imports
-// ==========================================================
-// ignore: implementation_imports
-import 'playlist_provider.dart' deferred as playlist;
