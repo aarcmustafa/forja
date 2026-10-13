@@ -10,6 +10,7 @@ import 'features/packages/packages_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/favorites/favorites_screen.dart';
 import 'features/player/player_screen.dart';
+import 'features/search/unified_search_screen.dart';
 import 'data/models/channel.dart';
 import 'data/providers/playlist_provider.dart';
 import 'data/providers/favorites_provider.dart';
@@ -155,6 +156,13 @@ class _MainShellState extends ConsumerState<MainShell> {
           ),
           const Divider(color: Color(0xFF2A3350)),
           const SizedBox(height: 12),
+
+          // 🔍 زر البحث الموحد
+          _buildSearchButton(),
+
+          const SizedBox(height: 8),
+
+          // القائمة الرئيسية
           for (int i = 0; i < _menuItems.length; i++)
             _buildMenuItem(i, badge: i == _idxFavorites ? favCount : 0),
 
@@ -193,6 +201,86 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
+  // ==========================================================
+  //  زر البحث
+  // ==========================================================
+  Widget _buildSearchButton() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Focus(
+        onFocusChange: (hasFocus) {},
+        child: Builder(
+          builder: (context) {
+            final hasFocus = Focus.of(context).hasFocus;
+            return GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const UnifiedSearchScreen(),
+                  ),
+                );
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                  horizontal: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: hasFocus
+                      ? const Color(0xFFFFB800)
+                      : const Color(0xFF0A0E1A),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: hasFocus
+                        ? Colors.white
+                        : const Color(0xFF2A3350),
+                    width: hasFocus ? 2 : 1,
+                  ),
+                  boxShadow: hasFocus
+                      ? [
+                          BoxShadow(
+                            color: const Color(0xFFFFB800).withOpacity(0.5),
+                            blurRadius: 14,
+                          ),
+                        ]
+                      : [],
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.search_rounded,
+                      color: hasFocus
+                          ? Colors.black
+                          : const Color(0xFFFFB800),
+                      size: 22,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'بحث',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight:
+                            hasFocus ? FontWeight.bold : FontWeight.w500,
+                        color: hasFocus
+                            ? Colors.black
+                            : const Color(0xFFFFB800),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  // ==========================================================
+  //  عنصر قائمة
+  // ==========================================================
   Widget _buildMenuItem(int index, {int badge = 0}) {
     final isSelected = _selectedIndex == index;
     return Padding(
