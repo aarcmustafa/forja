@@ -1,8 +1,9 @@
 import 'package:dio/dio.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 import 'xtream_client.dart';
 
-/// مستودع موحّد — Xtream API + M3U مباشر + VLC UA
+/// مستودع موحّد — Xtream API + M3U + Fallback UA + أفضل UA محفوظ
 class M3uRepository {
   // ==========================================================
   //  User Agents للتجربة بالتتابع
@@ -16,6 +17,53 @@ class M3uRepository {
     'TiviMate/4.7.0',
     'Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   ];
+
+  // ==========================================================
+  //  Hive — لحفظ أفضل UA لكل رابط
+  // ==========================================================
+  static const String _boxName = 'best_user_agents';
+  static const String _kBestUas = 'uas_map';
+
+  Box? _uaBox;
+  bool _uaInitialized = false;
+
+  Future<void> _initUaBox() async {
+    if (_uaInitialized) return;
+    try {
+      await Hive.initFlutter();
+      _uaBox = await Hive.openBox(_boxName);
+      _uaInitialized = true;
+    } catch (_) {
+      _uaInitialized = false;
+    }
+  }
+
+  /// قراءة أفضل UA محفوظ لرابط
+  Future<String?> _getBestUa(String url) async {
+    await _initUaBox();
+    if (_uaBox == null) return null;
+    try {
+      final raw = _uaBox!.get(_kBestUas);
+      if (raw is! Map) return null;
+      final map = Map<String, dynamic>.from(raw);
+      return map[url]?.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// حفظ أفضل UA لرابط
+  Future<void> _saveBestUa(String url, String ua) async {
+    await _initUaBox();
+    if (_uaBox == null) return;
+    try {
+      final raw = _uaBox!.get(_kBestUas);
+      final Map<String, dynamic> map =
+          raw is Map ? Map<String, dynamic>.from(raw) : {};
+      map[url] = ua;
+      await _uaBox!.put(_kBestUas, map);
+    } catch (_) {}
+  }
 
   // ==========================================================
   //  استخراج Referer من الرابط
@@ -38,18 +86,6 @@ class M3uRepository {
     } catch (_) {
       return '';
     }
-  }
-
-  static Map<String, String> standardHeaders(String url) {
-    final referer = extractReferer(url);
-    return {
-      'User-Agent': vlcUserAgent,
-      'Accept': '*/*',
-      'Accept-Encoding': 'gzip, deflate',
-      'Connection': 'keep-alive',
-      if (referer.isNotEmpty) 'Referer': referer,
-      if (referer.isNotEmpty) 'Origin': extractOrigin(url),
-    };
   }
 
   // ==========================================================
@@ -90,13 +126,12 @@ class M3uRepository {
     // ✅ كشف Xtream تلقائياً
     final credentials = XtreamDetector.extract(url);
     if (credentials != null) {
-      // 🎯 Xtream API (أسرع 30 مرة)
       final channels = await _loadFromXtream(credentials);
       _cache[url] = channels;
       return channels;
     }
 
-    // 📄 M3U مباشر (workers.dev etc)
+    // 📄 M3U مباشر
     final channels = await _loadFromM3u(url);
     _cache[url] = channels;
     return channels;
@@ -124,7 +159,7 @@ Future<List<Channel>> _loadFromXtream(
       print('⚠️ فشل جلب القنوات: $e');
     }
 
-    // 2) الأفلام (VOD)
+    // 2) الأفلام
     try {
       final vodCats = await client.getVodCategories();
       final vod = await client.getVodStreams(categories: vodCats);
@@ -148,11 +183,10 @@ Future<List<Channel>> _loadFromXtream(
       print('⚠️ فشل جلب المسلسلات: $e');
     }
 
-    // إذا فشل كل شيء → ارجع فارغاً
+    // إذا فشل كل شيء → Fallback إلى M3U
     if (all.isEmpty) {
       // ignore: avoid_print
       print('❌ Xtream: لم تُجلب أي بيانات، سنستخدم M3U');
-      // Fallback إلى M3U
       return await _loadFromM3u(
         '${credentials.server}/get.php?username=${credentials.username}&password=${credentials.password}&type=m3u_plus&output=m3u8',
       );
@@ -165,7 +199,7 @@ Future<List<Channel>> _loadFromXtream(
 }
 
 // ==========================================================
-//  تحميل من M3U (مع Fallback UA)
+//  تحميل من M3U (مع Fallback UA + حفظ أفضل UA)
 // ==========================================================
 Future<List<Channel>> _loadFromM3u(String url) async {
   final data = await _fetchWithFallback(url);
@@ -177,51 +211,73 @@ Future<List<Channel>> _loadFromM3u(String url) async {
   return parseM3uContent(data);
 }
 
-/// تجربة عدة User-Agents حتى يعمل أحدها
+/// تجربة عدة UAs + حفظ أفضل UA
 Future<String?> _fetchWithFallback(String url) async {
-  for (int i = 0; i < fallbackUserAgents.length; i++) {
-    final ua = fallbackUserAgents[i];
-
-    try {
-      final headers = <String, String>{
-        'User-Agent': ua,
-        'Accept': '*/*',
-        'Accept-Encoding': 'gzip, deflate',
-        'Connection': 'keep-alive',
-        'Icy-MetaData': '1',
-      };
-
-      final referer = extractReferer(url);
-      if (referer.isNotEmpty) {
-        headers['Referer'] = referer;
-        headers['Origin'] = extractOrigin(url);
-      }
-
-      final response = await _dio.get<String>(
-        url,
-        options: Options(
-          responseType: ResponseType.plain,
-          headers: headers,
-        ),
-      );
-
-      if (response.statusCode == 200 &&
-          response.data != null &&
-          response.data!.isNotEmpty) {
-        // ignore: avoid_print
-        print('✅ M3U حمّل بنجاح بـ UA: $ua');
-        return response.data;
-      }
-
+  // 1) جرّب أفضل UA محفوظ أولاً
+  final bestUa = await _getBestUa(url);
+  if (bestUa != null) {
+    final data = await _tryFetch(url, bestUa);
+    if (data != null) {
       // ignore: avoid_print
-      print('⚠️ UA[$i] فشل: رمز ${response.statusCode}');
-    } catch (e) {
-      // ignore: avoid_print
-      print('⚠️ UA[$i] خطأ: $e');
-      await Future.delayed(const Duration(milliseconds: 800));
+      print('⚡ استخدام UA محفوظ: $bestUa');
+      return data;
     }
   }
+
+  // 2) جرّب كل UAs
+  for (int i = 0; i < fallbackUserAgents.length; i++) {
+    final ua = fallbackUserAgents[i];
+    final data = await _tryFetch(url, ua);
+
+    if (data != null) {
+      // ✅ احفظ UA الناجح
+      await _saveBestUa(url, ua);
+      // ignore: avoid_print
+      print('✅ حمّل بنجاح بـ UA: $ua');
+      return data;
+    }
+
+    // ignore: avoid_print
+    print('⚠️ UA[$i] فشل: $ua');
+    await Future.delayed(const Duration(milliseconds: 500));
+  }
   return null;
+}
+
+/// محاولة تحميل واحدة بـ UA محدد
+Future<String?> _tryFetch(String url, String ua) async {
+  try {
+    final headers = <String, String>{
+      'User-Agent': ua,
+      'Accept': '*/*',
+      'Accept-Encoding': 'gzip, deflate',
+      'Connection': 'keep-alive',
+      'Icy-MetaData': '1',
+    };
+
+    final referer = extractReferer(url);
+    if (referer.isNotEmpty) {
+      headers['Referer'] = referer;
+      headers['Origin'] = extractOrigin(url);
+    }
+
+    final response = await _dio.get<String>(
+      url,
+      options: Options(
+        responseType: ResponseType.plain,
+        headers: headers,
+      ),
+    );
+
+    if (response.statusCode == 200 &&
+        response.data != null &&
+        response.data!.isNotEmpty) {
+      return response.data;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
 }
 
 // ==========================================================
@@ -576,7 +632,7 @@ Channel _buildChannel({
   }
 
   // ==========================================================
-  //  أدوات
+  //  أدوات عامة
   // ==========================================================
   void clearCache() => _cache.clear();
   void dispose() => _dio.close();
