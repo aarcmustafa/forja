@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'features/live_tv/live_tv_screen.dart';
 import 'features/movies/movies_netflix_screen.dart';
 import 'features/series/series_netflix_screen.dart';
+import 'features/packages/packages_screen.dart';
 import 'features/player/player_screen.dart';
 import 'data/models/channel.dart';
 import 'data/providers/playlist_provider.dart';
@@ -60,22 +61,22 @@ class EstetnFarjaTvApp extends StatelessWidget {
           surface: Color(0xFF141A2E),
         ),
       ),
-      home: const HomeScreen(),
+      home: const MainShell(),
     );
   }
 }
 
 // ==========================================================
-//  الشاشة الرئيسية
+//  الشاشة الرئيسية (Shell)
 // ==========================================================
-class HomeScreen extends ConsumerStatefulWidget {
-  const HomeScreen({super.key});
+class MainShell extends ConsumerStatefulWidget {
+  const MainShell({super.key});
 
   @override
-  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<MainShell> createState() => _MainShellState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> {
+class _MainShellState extends ConsumerState<MainShell> {
   int _selectedIndex = 1;
 
   static const int _idxHome = 0;
@@ -234,8 +235,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       case _idxSeries:
         return const SeriesNetflixScreen();
 
-      case _idxHome:
       case _idxPackages:
+        return const PackagesScreen();
+
+      case _idxHome:
       case _idxSettings:
       default:
         return _buildPlaceholder();
