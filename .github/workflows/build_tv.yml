@@ -65,6 +65,33 @@ jobs:
           echo ""
           echo "=== Done ==="
 
+      - name: Download real Cairo fonts
+        working-directory: client
+        run: |
+          mkdir -p assets/fonts
+          cd assets/fonts
+
+          echo "Downloading Cairo font from Google Fonts..."
+
+          curl -sL -o cairo-var.ttf \
+            "https://github.com/google/fonts/raw/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf"
+
+          if [ -f cairo-var.ttf ] && [ -s cairo-var.ttf ]; then
+            SIZE=$(stat -c%s cairo-var.ttf)
+            echo "Downloaded Cairo font: $SIZE bytes"
+
+            cp cairo-var.ttf main_font.ttf
+            cp cairo-var.ttf main_font_bold.ttf
+            cp cairo-var.ttf Cairo-SemiBold.ttf
+            cp cairo-var.ttf Cairo-Black.ttf
+          else
+            echo "Failed to download, using placeholders"
+            touch main_font.ttf main_font_bold.ttf Cairo-SemiBold.ttf Cairo-Black.ttf
+          fi
+
+          echo "=== Fonts ready ==="
+          ls -lh *.ttf
+
       - name: Install unrar and 7zip
         run: |
           sudo apt-get update -qq
@@ -186,7 +213,6 @@ jobs:
                   print("Added ndkVersion")
           open(path, "w", encoding="utf-8").write(src)
           PYEOF
-
           echo "=== Verifying ==="
           grep -n "ndkVersion" android/app/build.gradle.kts || echo "NOT FOUND"
 
