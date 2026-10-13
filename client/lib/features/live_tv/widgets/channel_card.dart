@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
-import '../../../data/models/channel.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// بطاقة عرض القناة - مصممة خصيصاً للتلفاز
-/// تدعم:
-/// - التكبير عند Focus (الريموت)
-/// - عرض الشعار
-/// - اسم القناة والباقة
-/// - حالات التحميل والخطأ
-class ChannelCard extends StatefulWidget {
+import '../../../data/models/channel.dart';
+import '../../../data/providers/tv_focus_provider.dart';
+
+/// بطاقة عرض القناة — مصممة للتلفاز
+/// ✨ الإضاءة تبقى على آخر عنصر تم التركيز عليه
+class ChannelCard extends ConsumerStatefulWidget {
   final Channel channel;
   final VoidCallback? onTap;
   final bool isFocused;
@@ -24,62 +23,110 @@ class ChannelCard extends StatefulWidget {
   });
 
   @override
-  State<ChannelCard> createState() => _ChannelCardState();
+  ConsumerState<ChannelCard> createState() => _ChannelCardState();
 }
 
-class _ChannelCardState extends State<ChannelCard> {
+class _ChannelCardState extends ConsumerState<ChannelCard> {
   bool _isFocused = false;
   bool _imageError = false;
 
+  void _setAsSelected() {
+    // ✅ احفظ العنصر كآخر عنصر تم التركيز/الضغط عليه
+    setSelectedItem(ref, widget.channel.id);
+  }
+
   @override
   Widget build(BuildContext context) {
-    // إما isFocused من الأب أو حالتنا الداخلية
     final focused = widget.isFocused || _isFocused;
+    final isSelected = isItemSelected(ref, widget.channel.id);
+
+    // ==========================================================
+    //  الألوان حسب الحالة
+    // ==========================================================
+    // 1) التركيز (Focus) → إضاءة قوية + تكبير
+    // 2) العنصر المُختار (لكن ليس Focus) → إضاءة متوسطة دائمة
+    // 3) عادي → حدود رمادية
+
+    Color borderColor;
+    double borderWidth;
+    List<BoxShadow> shadows;
+    double scale;
+
+    if (focused) {
+      // ✨ التركيز الحالي — إضاءة قوية
+      borderColor = const Color(0xFF00C8FF);
+      borderWidth = 3;
+      scale = 1.08;
+      shadows = [
+        BoxShadow(
+          color: const Color(0xFF00C8FF).withOpacity(0.7),
+          blurRadius: 24,
+          spreadRadius: 3,
+        ),
+        BoxShadow(
+          color: const Color(0xFF00C8FF).withOpacity(0.3),
+          blurRadius: 40,
+          spreadRadius: 6,
+        ),
+      ];
+    } else if (isSelected) {
+      // 💡 العنصر المُختار (دائم) — إضاءة متوسطة
+      borderColor = const Color(0xFF00C8FF);
+      borderWidth = 2;
+      scale = 1.0;
+      shadows = [
+        BoxShadow(
+          color: const Color(0xFF00C8FF).withOpacity(0.4),
+          blurRadius: 16,
+          spreadRadius: 1,
+        ),
+      ];
+    } else {
+      // ⚪ عادي
+      borderColor = const Color(0xFF2A3350);
+      borderWidth = 1;
+      scale = 1.0;
+      shadows = [];
+    }
 
     return Focus(
       onFocusChange: (hasFocus) {
         setState(() => _isFocused = hasFocus);
+        if (hasFocus) _setAsSelected();
       },
       onKeyEvent: (node, event) {
-        // دعم زر Enter/OK على الريموت
         if (event is KeyDownEvent) {
-          // ignore: avoid_print
-          if (event.logicalKey.keyLabel == 'Select' ||
-              event.logicalKey.keyLabel == 'Enter' ||
-              event.logicalKey.keyLabel == 'Space') {
+          final key = event.logicalKey.keyLabel;
+          if (key == 'Select' ||
+              key == 'Enter' ||
+              key == 'Space') {
+            _setAsSelected();
             widget.onTap?.call();
           }
         }
         return KeyEventResult.ignored;
       },
       child: GestureDetector(
-        onTap: widget.onTap,
+        onTap: () {
+          _setAsSelected();
+          widget.onTap?.call();
+        },
         child: AnimatedScale(
-          scale: focused ? 1.08 : 1.0,
+          scale: scale,
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutCubic,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
+            duration: const Duration(milliseconds: 200),
             width: widget.width,
             height: widget.height,
             decoration: BoxDecoration(
               color: const Color(0xFF141A2E),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: focused
-                    ? const Color(0xFF00C8FF)
-                    : const Color(0xFF2A3350),
-                width: focused ? 3 : 1,
+                color: borderColor,
+                width: borderWidth,
               ),
-              boxShadow: focused
-                  ? [
-                      BoxShadow(
-                        color: const Color(0xFF00C8FF).withOpacity(0.4),
-                        blurRadius: 20,
-                        spreadRadius: 2,
-                      ),
-                    ]
-                  : [],
+              boxShadow: shadows,
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(11),
@@ -91,7 +138,7 @@ class _ChannelCardState extends State<ChannelCard> {
                     child: Container(
                       width: double.infinity,
                       color: Colors.black26,
-                      child: _buildLogo(focused),
+                      child: _buildLogo(focused, isSelected),
                     ),
                   ),
 
@@ -109,9 +156,13 @@ class _ChannelCardState extends State<ChannelCard> {
                             overflow: TextOverflow.ellipsis,
                             textAlign: TextAlign.center,
                             style: TextStyle(
-                              color: focused ? Colors.white : Colors.white70,
+                              color: focused
+                                  ? Colors.white
+                                  : isSelected
+                                      ? Colors.white
+                                      : Colors.white70,
                               fontSize: 12,
-                              fontWeight: focused
+                              fontWeight: focused || isSelected
                                   ? FontWeight.bold
                                   : FontWeight.normal,
                             ),
@@ -123,7 +174,9 @@ class _ChannelCardState extends State<ChannelCard> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.4),
+                                color: Colors.white.withOpacity(
+                                  focused || isSelected ? 0.6 : 0.4,
+                                ),
                                 fontSize: 9,
                               ),
                             ),
@@ -140,16 +193,17 @@ class _ChannelCardState extends State<ChannelCard> {
     );
   }
 
-  Widget _buildLogo(bool focused) {
+  Widget _buildLogo(bool focused, bool isSelected) {
     if (widget.channel.logo.isEmpty || _imageError) {
-      // أيقونة بديلة عند عدم وجود شعار
       return Center(
         child: Icon(
           _getCategoryIcon(),
           size: focused ? 50 : 44,
           color: focused
               ? const Color(0xFF00C8FF)
-              : Colors.white.withOpacity(0.3),
+              : isSelected
+                  ? const Color(0xFF00C8FF).withOpacity(0.7)
+                  : Colors.white.withOpacity(0.3),
         ),
       );
     }
@@ -160,7 +214,6 @@ class _ChannelCardState extends State<ChannelCard> {
         widget.channel.logo,
         fit: BoxFit.contain,
         errorBuilder: (_, __, ___) {
-          // عند فشل تحميل الصورة
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && !_imageError) {
               setState(() => _imageError = true);
@@ -172,7 +225,9 @@ class _ChannelCardState extends State<ChannelCard> {
               size: focused ? 50 : 44,
               color: focused
                   ? const Color(0xFF00C8FF)
-                  : Colors.white.withOpacity(0.3),
+                  : isSelected
+                      ? const Color(0xFF00C8FF).withOpacity(0.7)
+                      : Colors.white.withOpacity(0.3),
             ),
           );
         },
@@ -185,7 +240,9 @@ class _ChannelCardState extends State<ChannelCard> {
               child: CircularProgressIndicator(
                 strokeWidth: 2,
                 valueColor: AlwaysStoppedAnimation(
-                  focused ? const Color(0xFF00C8FF) : Colors.white30,
+                  focused || isSelected
+                      ? const Color(0xFF00C8FF)
+                      : Colors.white30,
                 ),
               ),
             ),
