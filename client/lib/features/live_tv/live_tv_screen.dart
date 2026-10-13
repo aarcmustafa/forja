@@ -7,6 +7,7 @@ import '../../data/providers/history_provider.dart';
 import 'widgets/category_tabs.dart';
 import 'widgets/sub_category_chips.dart';
 import 'widgets/channel_card.dart';
+import 'widgets/sports_matches_widget.dart';
 
 /// الشاشة الرئيسية للبث المباشر
 class LiveTvScreen extends ConsumerStatefulWidget {
@@ -252,7 +253,87 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
       return _buildBodyWithRecent(state, recentIds);
     }
 
+    // 5) ✅ قسم الرياضة → صندوق المباريات
+    if (state.selectedCategorySlug == 'sport' &&
+        state.selectedSubCategorySlug == null &&
+        state.searchQuery.isEmpty) {
+      return _buildSportsBody(state);
+    }
+
     return _buildGrid(state);
+  }
+  
+  // ==========================================================
+  //  ✅ جسم الرياضة — المباريات + الشبكة
+  // ==========================================================
+  Widget _buildSportsBody(PlaylistState state) {
+    return CustomScrollView(
+      controller: _scrollController,
+      slivers: [
+        // صندوق المباريات
+        SliverToBoxAdapter(
+          child: SportsMatchesWidget(
+            onChannelTap: (channel) => widget.onChannelTap?.call(channel),
+          ),
+        ),
+
+        // عنوان الشبكة
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 32),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 5,
+                  height: 24,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Color(0xFF00C8FF),
+                      borderRadius: BorderRadius.all(Radius.circular(3)),
+                    ),
+                  ),
+                ),
+                SizedBox(width: 12),
+                Text(
+                  'كل القنوات الرياضية',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 16)),
+
+        // الشبكة
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          sliver: SliverGrid(
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 200,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+              childAspectRatio: 0.95,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, i) {
+                final channel = state.filteredChannels[i];
+                return ChannelCard(
+                  channel: channel,
+                  width: 200,
+                  height: 200,
+                  onTap: () => widget.onChannelTap?.call(channel),
+                );
+              },
+              childCount: state.filteredChannels.length,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   // ==========================================================
@@ -380,7 +461,6 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
         ),
         const SliverToBoxAdapter(child: SizedBox(height: 16)),
 
-        // الشبكة
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
           sliver: SliverGrid(
