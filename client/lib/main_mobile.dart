@@ -18,31 +18,25 @@ import 'data/local/secure_config.dart';
 import 'data/local/remote_config.dart';
 import 'core/animations/app_animations.dart';
 
-// ==========================================================
-//  روابط M3U
-// ==========================================================
 List<String> kPlaylistUrls = SecureConfig.urls;
 
-// ==========================================================
-//  نقطة انطلاق التطبيق
-// ==========================================================
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   runApp(
     const ProviderScope(
-      child: EstetnFarjaMobileApp(),
+      child: SttitenFootMobileApp(),
     ),
   );
 }
 
-class EstetnFarjaMobileApp extends StatelessWidget {
-  const EstetnFarjaMobileApp({super.key});
+class SttitenFootMobileApp extends StatelessWidget {
+  const SttitenFootMobileApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'استيتن فرجة',
+      title: 'STTITEN FOOT',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -59,9 +53,6 @@ class EstetnFarjaMobileApp extends StatelessWidget {
   }
 }
 
-// ==========================================================
-//  Mobile Shell — Bottom Navigation
-// ==========================================================
 class MobileShell extends ConsumerStatefulWidget {
   const MobileShell({super.key});
 
@@ -72,7 +63,6 @@ class MobileShell extends ConsumerStatefulWidget {
 class _MobileShellState extends ConsumerState<MobileShell> {
   int _selectedIndex = 0;
 
-  // فهارس
   static const int _idxHome = 0;
   static const int _idxLive = 1;
   static const int _idxMatches = 2;
@@ -103,9 +93,6 @@ class _MobileShellState extends ConsumerState<MobileShell> {
     });
   }
 
-  // ==========================================================
-  //  تحميل القنوات (نفس منطق التلفاز)
-  // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
     try {
       final repo = ref.read(m3uRepositoryProvider);
@@ -158,9 +145,6 @@ class _MobileShellState extends ConsumerState<MobileShell> {
     );
   }
 
-  // ==========================================================
-  //  AppBar
-  // ==========================================================
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
       backgroundColor: const Color(0xFF141A2E),
@@ -188,11 +172,12 @@ class _MobileShellState extends ConsumerState<MobileShell> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                'استيتن فرجة',
+                'STTITEN FOOT',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
                 ),
               ),
               Text(
@@ -224,9 +209,6 @@ class _MobileShellState extends ConsumerState<MobileShell> {
     );
   }
 
-  // ==========================================================
-  //  Bottom Navigation Bar
-  // ==========================================================
   Widget _buildBottomNav() {
     final favCount = ref.watch(favoritesProvider).length;
 
@@ -296,9 +278,6 @@ class _MobileShellState extends ConsumerState<MobileShell> {
     );
   }
 
-  // ==========================================================
-  //  شاشة المباريات
-  // ==========================================================
   Widget _buildMatchesScreen() {
     return SafeArea(
       child: SingleChildScrollView(
@@ -315,9 +294,6 @@ class _MobileShellState extends ConsumerState<MobileShell> {
     );
   }
 
-  // ==========================================================
-  //  فتح القناة
-  // ==========================================================
   void _openChannel(Channel channel) {
     ref.read(historyProvider.notifier).record(channel);
     Navigator.push(
@@ -333,9 +309,6 @@ class _MobileShellState extends ConsumerState<MobileShell> {
   }
 }
 
-// ==========================================================
-//  شاشة "المزيد" (الباقات + الإعدادات)
-// ==========================================================
 class _MoreScreen extends ConsumerStatefulWidget {
   const _MoreScreen();
 
@@ -350,7 +323,6 @@ class _MoreScreenState extends ConsumerState<_MoreScreen> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // شريط تبويبات علوي
         Container(
           color: const Color(0xFF0A0E1A),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -376,8 +348,6 @@ class _MoreScreenState extends ConsumerState<_MoreScreen> {
             ],
           ),
         ),
-
-        // المحتوى
         Expanded(
           child: IndexedStack(
             index: _tabIndex,
@@ -392,9 +362,6 @@ class _MoreScreenState extends ConsumerState<_MoreScreen> {
   }
 }
 
-// ==========================================================
-//  زر تبويب "المزيد"
-// ==========================================================
 class _MoreTab extends StatelessWidget {
   final String label;
   final IconData icon;
