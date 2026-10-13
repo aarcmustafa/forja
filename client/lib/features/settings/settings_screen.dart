@@ -8,15 +8,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 // ==========================================================
 class AppInfo {
   static const String appName = 'استيتن فرجة';
+  static const String appSubtitle = 'الرياضية';
   static const String version = '1.0.0';
   static const String buildNumber = '1';
   static const String developer = 'جلولي مصطفى';
   static const String platform = 'Android TV / Google TV';
-  static const String year = '2025';
+  static const String year = '2026';
 }
 
 // ==========================================================
-//  مزود الإعدادات
+//  حالة الإعدادات
 // ==========================================================
 class SettingsState {
   final bool filterAdult;
@@ -97,7 +98,7 @@ final settingsProvider =
   return SettingsNotifier();
 });
 
-/// دالة جاهزة لفحص البالغين
+/// دالة فحص البالغين
 bool isAdultContent(String name, String group) {
   final text = '${name.toLowerCase()} ${group.toLowerCase()}';
   const keywords = [
@@ -137,45 +138,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF00C8FF).withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.settings_rounded,
-                        color: Color(0xFF00C8FF),
-                        size: 32,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'الإعدادات',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          'تخصيص تجربتك',
-                          style: TextStyle(
-                            color: Colors.white54,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                _buildTopTitle(),
                 const SizedBox(height: 32),
-
                 _sectionTitle('الأمان والخصوصية', Icons.security_rounded),
                 const SizedBox(height: 12),
                 _switchTile(
@@ -212,7 +176,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ],
                 const SizedBox(height: 32),
-
                 _sectionTitle('حول التطبيق', Icons.info_rounded),
                 const SizedBox(height: 12),
                 _infoCard(),
@@ -226,272 +189,328 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ),
     );
   }
-}
 
-// ==========================================================
-//  امتداد لدوال البناء
-// ==========================================================
-extension _SettingsWidgets on _SettingsScreenState {
-  Widget _sectionTitle(String title, IconData icon) {
+  // ==========================================================
+  //  العنوان الرئيسي
+  // ==========================================================
+  Widget _buildTopTitle() {
     return Row(
       children: [
-        Icon(icon, color: const Color(0xFF00C8FF), size: 20),
-        const SizedBox(width: 8),
-        Text(
-          title,
-          style: const TextStyle(
-            color: Color(0xFF00C8FF),
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF4CAF50), Color(0xFF2E7D32)],
+            ),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: const Icon(
+            Icons.settings_rounded,
+            color: Colors.white,
+            size: 32,
           ),
         ),
-        const SizedBox(width: 12),
-        Expanded(child: Container(height: 1, color: const Color(0xFF2A3350))),
+        const SizedBox(width: 16),
+        const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'الإعدادات',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              'تخصيص تجربتك الرياضية',
+              style: TextStyle(
+                color: Colors.white54,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }
-
-  Widget _switchTile({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return _FocusTile(
-      onTap: () => onChanged(!value),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: const Color(0xFF141A2E),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFF2A3350)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF00C8FF).withOpacity(0.15),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: const Color(0xFF00C8FF), size: 22),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Switch(
-              value: value,
-              activeColor: const Color(0xFF00C8FF),
-              onChanged: onChanged,
-            ),
-          ],
+  
+// ==========================================================
+//  عناوين الأقسام
+// ==========================================================
+Widget _sectionTitle(String title, IconData icon) {
+  return Row(
+    children: [
+      Icon(icon, color: const Color(0xFF00C8FF), size: 20),
+      const SizedBox(width: 8),
+      Text(
+        title,
+        style: const TextStyle(
+          color: Color(0xFF00C8FF),
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
         ),
       ),
-    );
-  }
+      const SizedBox(width: 12),
+      Expanded(child: Container(height: 1, color: const Color(0xFF2A3350))),
+    ],
+  );
+}
 
-  Widget _actionTile({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return _FocusTile(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: const Color(0xFF141A2E),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFF2A3350)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFB800).withOpacity(0.15),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: const Color(0xFFFFB800), size: 22),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(
-              Icons.arrow_back_ios_new_rounded,
-              color: Colors.white38,
-              size: 18,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _infoCard() {
-    return Container(
+// ==========================================================
+//  Switch Tile
+// ==========================================================
+Widget _switchTile({
+  required IconData icon,
+  required String title,
+  required String subtitle,
+  required bool value,
+  required ValueChanged<bool> onChanged,
+}) {
+  return _FocusTile(
+    onTap: () => onChanged(!value),
+    child: Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: const Color(0xFF141A2E),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFF2A3350)),
       ),
-      child: Column(
-        children: [
-          _infoRow('اسم التطبيق', AppInfo.appName),
-          const Divider(color: Color(0xFF2A3350), height: 24),
-          _infoRow('الإصدار', AppInfo.version),
-          const Divider(color: Color(0xFF2A3350), height: 24),
-          _infoRow('رقم البناء', AppInfo.buildNumber),
-          const Divider(color: Color(0xFF2A3350), height: 24),
-          _infoRow('المنصة', AppInfo.platform),
-        ],
-      ),
-    );
-  }
-
-  Widget _infoRow(String label, String value) {
-    return Row(
-      children: [
-        Text(
-          label,
-          style: const TextStyle(color: Colors.white54, fontSize: 14),
-        ),
-        const Spacer(),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _developerCard() {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: [
-            const Color(0xFF00C8FF).withOpacity(0.15),
-            const Color(0xFF141A2E),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: const Color(0xFF00C8FF).withOpacity(0.3),
-          width: 1.5,
-        ),
-      ),
       child: Row(
         children: [
           Container(
-            width: 70,
-            height: 70,
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF00C8FF), Color(0xFF0090D4)],
-              ),
-              borderRadius: BorderRadius.circular(16),
+              color: const Color(0xFF00C8FF).withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
             ),
-            child: const Center(
-              child: Text(
-                'ج.م',
-                style: TextStyle(
-                  color: Colors.black,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
+            child: Icon(icon, color: const Color(0xFF00C8FF), size: 22),
           ),
-          const SizedBox(width: 20),
+          const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'المطور',
-                  style: TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  AppInfo.developer,
-                  style: TextStyle(
+                Text(
+                  title,
+                  style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 22,
+                    fontSize: 16,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Text(
-                  '© ${AppInfo.year} جميع الحقوق محفوظة',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.4),
-                    fontSize: 11,
+                  subtitle,
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 13,
                   ),
                 ),
               ],
             ),
           ),
+          Switch(
+            value: value,
+            activeColor: const Color(0xFF00C8FF),
+            onChanged: onChanged,
+          ),
         ],
       ),
-    );
-  }
+    ),
+  );
 }
+
 // ==========================================================
-//  حوار تعيين كود PIN + دوال مساعدة
+//  Action Tile
 // ==========================================================
-extension _SettingsDialogs on _SettingsScreenState {
+Widget _actionTile({
+  required IconData icon,
+  required String title,
+  required String subtitle,
+  required VoidCallback onTap,
+}) {
+  return _FocusTile(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141A2E),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF2A3350)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFB800).withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: const Color(0xFFFFB800), size: 22),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: Colors.white38,
+            size: 18,
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+// ==========================================================
+//  معلومات التطبيق
+// ==========================================================
+Widget _infoCard() {
+  return Container(
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      color: const Color(0xFF141A2E),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(color: const Color(0xFF2A3350)),
+    ),
+    child: Column(
+      children: [
+        _infoRow('اسم التطبيق', AppInfo.appName),
+        const Divider(color: Color(0xFF2A3350), height: 24),
+        _infoRow('النوع', AppInfo.appSubtitle),
+        const Divider(color: Color(0xFF2A3350), height: 24),
+        _infoRow('الإصدار', AppInfo.version),
+        const Divider(color: Color(0xFF2A3350), height: 24),
+        _infoRow('رقم البناء', AppInfo.buildNumber),
+        const Divider(color: Color(0xFF2A3350), height: 24),
+        _infoRow('المنصة', AppInfo.platform),
+      ],
+    ),
+  );
+}
+
+Widget _infoRow(String label, String value) {
+  return Row(
+    children: [
+      Text(
+        label,
+        style: const TextStyle(color: Colors.white54, fontSize: 14),
+      ),
+      const Spacer(),
+      Text(
+        value,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ],
+  );
+}
+
+// ==========================================================
+//  بطاقة المطور
+// ==========================================================
+Widget _developerCard() {
+  return Container(
+    padding: const EdgeInsets.all(24),
+    decoration: BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topRight,
+        end: Alignment.bottomLeft,
+        colors: [
+          const Color(0xFF4CAF50).withOpacity(0.15),
+          const Color(0xFF141A2E),
+        ],
+      ),
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(
+        color: const Color(0xFF4CAF50).withOpacity(0.3),
+        width: 1.5,
+      ),
+    ),
+    child: Row(
+      children: [
+        Container(
+          width: 70,
+          height: 70,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF4CAF50), Color(0xFF2E7D32)],
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: const Center(
+            child: Text(
+              'ج.م',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 20),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'المطور',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                AppInfo.developer,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '© ${AppInfo.year} جميع الحقوق محفوظة',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.4),
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+  
+  // ==========================================================
+  //  حوار تعيين كود PIN
+  // ==========================================================
   Future<void> _showSetPinDialog() async {
     final ctrl = TextEditingController();
     final confirm = TextEditingController();
