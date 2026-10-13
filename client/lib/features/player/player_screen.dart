@@ -29,27 +29,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String? _error;
   Timer? _hideControlsTimer;
   Timer? _retryTimer;
+  Timer? _volumeBarTimer;
 
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _isPlaying = false;
   bool _isBuffering = false;
 
-  // ====== تحسينات جديدة ======
-  double _volume = 100.0;      // الصوت (0-100)
+  // تحسينات
+  double _volume = 100.0;
   bool _isMuted = false;
-  double _playbackSpeed = 1.0; // سرعة التشغيل
-  int _aspectMode = 0;         // 0=contain, 1=cover, 2=fill
+  double _playbackSpeed = 1.0;
+  int _aspectMode = 0;
   bool _showVolumeBar = false;
-  Timer? _volumeBarTimer;
 
-  // ====== إعادة المحاولة ======
+  // إعادة المحاولة
   int _retryCount = 0;
   static const int _maxRetries = 3;
   bool _isReconnecting = false;
 
   final List<double> _speedOptions = const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-  final List<String> _aspectLabels = const ['ملائم', 'تغطية', 'تعبئة'];
 
   @override
   void initState() {
@@ -84,7 +83,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       controller = VideoController(player);
 
-      // ====== الاستماع للحالات ======
       player.stream.playing.listen((playing) {
         if (!mounted) return;
         setState(() => _isPlaying = playing);
@@ -113,9 +111,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _handleError(error);
       });
 
-      // ====== تشغيل ======
       await _openStream();
-
       _startHideControlsTimer();
     } catch (e) {
       if (!mounted) return;
@@ -126,14 +122,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  /// فتح البث
   Future<void> _openStream() async {
-    await player.open(
-      Media(widget.streamUrl),
-      play: true,
-    );
+    await player.open(Media(widget.streamUrl), play: true);
 
-    // إخفاء شاشة التحميل بعد 3 ثوانٍ كحد أقصى
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted && _isLoading) {
         setState(() => _isLoading = false);
@@ -143,11 +134,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _retryCount = 0;
   }
 
-  /// معالج الأخطاء مع إعادة المحاولة
   void _handleError(String error) {
     if (!mounted) return;
 
-    // إذا كان الخطأ مؤقتاً → حاول مرة أخرى
     if (_retryCount < _maxRetries) {
       _retryCount++;
       setState(() {
@@ -155,15 +144,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
         _error = null;
       });
 
-      // انتظر 3 ثواني ثم أعد المحاولة
       _retryTimer?.cancel();
       _retryTimer = Timer(const Duration(seconds: 3), () async {
         if (!mounted) return;
         try {
           await _openStream();
-          if (mounted) {
-            setState(() => _isReconnecting = false);
-          }
+          if (mounted) setState(() => _isReconnecting = false);
         } catch (_) {
           if (mounted && _retryCount >= _maxRetries) {
             setState(() {
@@ -175,7 +161,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
         }
       });
     } else {
-      // استنفدت المحاولات
       setState(() {
         _error = error;
         _isLoading = false;
@@ -190,9 +175,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _startHideControlsTimer() {
     _hideControlsTimer?.cancel();
     _hideControlsTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted && _showControls) {
-        setState(() => _showControls = false);
-      }
+      if (mounted && _showControls) setState(() => _showControls = false);
     });
   }
 
@@ -248,7 +231,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _changeSpeed() {
-    // دورة بين الخيارات
     final idx = _speedOptions.indexOf(_playbackSpeed);
     final nextIdx = (idx + 1) % _speedOptions.length;
     final newSpeed = _speedOptions[nextIdx];
@@ -274,13 +256,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
         return BoxFit.contain;
     }
   }
-}
 
-// ==========================================================
-//  BUILD — الواجهة الرئيسية
-// ==========================================================
-extension _PlayerBuild on _PlayerScreenState {
-  Widget buildPlayer(BuildContext context) {
+  String _formatDuration(Duration d) {
+    if (d.inHours > 0) {
+      return '${d.inHours}:${d.inMinutes.remainder(60).toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+    }
+    return '${d.inMinutes.toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+  }
+
+  // ==========================================================
+  //  BUILD
+  // ==========================================================
+  @override
+  Widget build(BuildContext context) {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
@@ -290,35 +278,28 @@ extension _PlayerBuild on _PlayerScreenState {
           onKeyEvent: (node, event) {
             if (event is KeyDownEvent) {
               final key = event.logicalKey.keyLabel;
-
-              // تشغيل / إيقاف
               if (key == 'Select' ||
                   key == 'Enter' ||
                   key == 'Media Play Pause') {
                 _togglePlayPause();
                 return KeyEventResult.handled;
               }
-              // رجوع
               if (key == 'Escape' || key == 'Go Back') {
                 Navigator.pop(context);
                 return KeyEventResult.handled;
               }
-              // يمين (تقديم)
               if (key == 'Arrow Right') {
                 _seekForward();
                 return KeyEventResult.handled;
               }
-              // يسار (ترجيع)
               if (key == 'Arrow Left') {
                 _seekBackward();
                 return KeyEventResult.handled;
               }
-              // أعلى (رفع الصوت)
               if (key == 'Arrow Up') {
                 _setVolume((_volume + 10).clamp(0, 100));
                 return KeyEventResult.handled;
               }
-              // أسفل (خفض الصوت)
               if (key == 'Arrow Down') {
                 _setVolume((_volume - 10).clamp(0, 100));
                 return KeyEventResult.handled;
@@ -330,7 +311,6 @@ extension _PlayerBuild on _PlayerScreenState {
             onTap: _toggleControls,
             child: Stack(
               children: [
-                // ============ الفيديو ============
                 Center(
                   child: _error != null
                       ? _buildError()
@@ -348,21 +328,11 @@ extension _PlayerBuild on _PlayerScreenState {
                           ),
                         ),
                 ),
-
-                // ============ شاشة التحميل ============
                 if (_isLoading && _error == null) _buildLoading(),
-
-                // ============ إشعار إعادة الاتصال ============
                 if (_isReconnecting) _buildReconnecting(),
-
-                // ============ التخزين المؤقت ============
                 if (_isBuffering && !_isLoading && !_isReconnecting)
                   _buildBuffering(),
-
-                // ============ مؤشر الصوت ============
                 if (_showVolumeBar) _buildVolumeOverlay(),
-
-                // ============ أزرار التحكم ============
                 if (_showControls && _error == null) ...[
                   _buildTopBar(context),
                   _buildBottomBar(context),
@@ -374,7 +344,7 @@ extension _PlayerBuild on _PlayerScreenState {
       ),
     );
   }
-
+  
   // ==========================================================
   //  شاشة التحميل
   // ==========================================================
@@ -430,10 +400,7 @@ extension _PlayerBuild on _PlayerScreenState {
       right: 0,
       child: Center(
         child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 24,
-            vertical: 16,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           decoration: BoxDecoration(
             color: const Color(0xFFFF9800).withOpacity(0.95),
             borderRadius: BorderRadius.circular(14),
@@ -495,17 +462,14 @@ extension _PlayerBuild on _PlayerScreenState {
   }
 
   // ==========================================================
-  //  مؤشر الصوت (يظهر عند تغيير الصوت)
+  //  مؤشر الصوت
   // ==========================================================
   Widget _buildVolumeOverlay() {
     return Positioned(
       top: 40,
       left: 40,
       child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 18,
-          vertical: 12,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
         decoration: BoxDecoration(
           color: Colors.black.withOpacity(0.75),
           borderRadius: BorderRadius.circular(12),
@@ -551,12 +515,10 @@ extension _PlayerBuild on _PlayerScreenState {
       ),
     );
   }
-}
 
-// ==========================================================
-//  الشريط العلوي
-// ==========================================================
-extension _PlayerTopBar on _PlayerScreenState {
+  // ==========================================================
+  //  الشريط العلوي
+  // ==========================================================
   Widget _buildTopBar(BuildContext context) {
     return Positioned(
       top: 0,
@@ -581,8 +543,6 @@ extension _PlayerTopBar on _PlayerScreenState {
               onPressed: () => Navigator.pop(context),
             ),
             const SizedBox(width: 20),
-
-            // شعار القناة
             if (widget.channelLogo != null &&
                 widget.channelLogo!.isNotEmpty)
               Container(
@@ -602,7 +562,6 @@ extension _PlayerTopBar on _PlayerScreenState {
             if (widget.channelLogo != null &&
                 widget.channelLogo!.isNotEmpty)
               const SizedBox(width: 14),
-
             Expanded(
               child: Text(
                 widget.channelName,
@@ -615,8 +574,6 @@ extension _PlayerTopBar on _PlayerScreenState {
                 ),
               ),
             ),
-
-            // سرعة التشغيل
             if (_playbackSpeed != 1.0)
               Container(
                 margin: const EdgeInsets.only(left: 12),
@@ -637,8 +594,6 @@ extension _PlayerTopBar on _PlayerScreenState {
                   ),
                 ),
               ),
-
-            // مؤشر LIVE
             Container(
               margin: const EdgeInsets.only(left: 12),
               padding: const EdgeInsets.symmetric(
@@ -676,12 +631,10 @@ extension _PlayerTopBar on _PlayerScreenState {
       ),
     );
   }
-}
 
-// ==========================================================
-//  الشريط السفلي
-// ==========================================================
-extension _PlayerBottomBar on _PlayerScreenState {
+  // ==========================================================
+  //  الشريط السفلي
+  // ==========================================================
   Widget _buildBottomBar(BuildContext context) {
     return Positioned(
       bottom: 0,
@@ -711,9 +664,6 @@ extension _PlayerBottomBar on _PlayerScreenState {
     );
   }
 
-  // ==========================================================
-  //  شريط التقدم
-  // ==========================================================
   Widget _buildProgressBar() {
     final total = _duration.inMilliseconds.toDouble();
     final current = _position.inMilliseconds.toDouble();
@@ -767,14 +717,10 @@ extension _PlayerBottomBar on _PlayerScreenState {
     );
   }
 
-  // ==========================================================
-  //  أزرار التحكم
-  // ==========================================================
   Widget _buildControlRow() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // صوت
         _CircleButton(
           icon: _isMuted || _volume == 0
               ? Icons.volume_off_rounded
@@ -783,16 +729,12 @@ extension _PlayerBottomBar on _PlayerScreenState {
           onPressed: _toggleMute,
         ),
         const SizedBox(width: 18),
-
-        // ترجيع 10
         _CircleButton(
           icon: Icons.replay_10,
           size: 40,
           onPressed: _seekBackward,
         ),
         const SizedBox(width: 18),
-
-        // تشغيل/إيقاف
         _CircleButton(
           icon: _isPlaying
               ? Icons.pause_rounded
@@ -802,24 +744,18 @@ extension _PlayerBottomBar on _PlayerScreenState {
           onPressed: _togglePlayPause,
         ),
         const SizedBox(width: 18),
-
-        // تقديم 10
         _CircleButton(
           icon: Icons.forward_10,
           size: 40,
           onPressed: _seekForward,
         ),
         const SizedBox(width: 18),
-
-        // سرعة
         _CircleButton(
           icon: Icons.speed_rounded,
           size: 40,
           onPressed: _changeSpeed,
         ),
         const SizedBox(width: 18),
-
-        // أبعاد
         _CircleButton(
           icon: Icons.aspect_ratio_rounded,
           size: 40,
@@ -827,18 +763,6 @@ extension _PlayerBottomBar on _PlayerScreenState {
         ),
       ],
     );
-  }
-}
-
-// ==========================================================
-//  أدوات مساعدة
-// ==========================================================
-extension _PlayerHelpers on _PlayerScreenState {
-  String _formatDuration(Duration d) {
-    if (d.inHours > 0) {
-      return '${d.inHours}:${d.inMinutes.remainder(60).toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
-    }
-    return '${d.inMinutes.toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
   }
 
   // ==========================================================
@@ -927,7 +851,7 @@ extension _PlayerHelpers on _PlayerScreenState {
 }
 
 // ==========================================================
-//  زر دائري
+//  زر دائري قابل للتركيز
 // ==========================================================
 class _CircleButton extends StatefulWidget {
   final IconData icon;
