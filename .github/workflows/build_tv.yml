@@ -284,25 +284,5 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          rm -f client/lib/data/local/secure_config.dartun: |
-          flutter build apk --release -t lib/main_tv.dart --split-per-abi --android-skip-build-dependency-validation
-
-      - name: Rename APKs
-        run: |
-          mkdir -p artifacts
-          cp client/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk artifacts/estitn-farja-tv-arm64.apk || true
-          cp client/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk artifacts/estitn-farja-tv-arm32.apk || true
-          cp client/build/app/outputs/flutter-apk/app-x86_64-release.apk artifacts/estitn-farja-tv-x86_64.apk || true
-          ls -lh artifacts/
-
-      - name: Upload APKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: estitn-farja-tv-apk
-          path: artifacts/*.apk
-          retention-days: 30
-
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -f client/lib/data/local/secure_config.dart
+          rm -f "$GITHUB_WORKSPACE/client/lib/data/local/secure_config.dart" || true
+          echo "Cleanup done"
