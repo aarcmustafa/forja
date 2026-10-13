@@ -107,7 +107,22 @@ class _MainShellState extends ConsumerState<MainShell> {
     });
   }
 
+  // ==========================================================
+  //  تحميل القنوات مع صيانة الكاش
+  // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
+    // ✅ صيانة الكاش أولاً
+    try {
+      final repo = ref.read(m3uRepositoryProvider);
+      await repo.maintainCache();
+
+      final storage = ref.read(localStorageProvider);
+      await storage.maintain();
+
+      final checker = ref.read(streamCheckerProvider);
+      await checker.maintainCache();
+    } catch (_) {}
+
     if (kPlaylistUrls.isEmpty) return;
     final state = ref.read(playlistProvider);
     if (state.allChannels.isNotEmpty || state.isLoading) return;
