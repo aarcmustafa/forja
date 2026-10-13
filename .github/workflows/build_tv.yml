@@ -63,14 +63,6 @@ jobs:
           done
 
           echo ""
-          echo "=== Fix 3: streamCheckerProvider in main_tv ==="
-          if grep -q "streamCheckerProvider" client/lib/main_tv.dart; then
-            sed -i "/final checker = ref.read(streamCheckerProvider);/d" client/lib/main_tv.dart
-            sed -i "/await checker.maintainCache();/d" client/lib/main_tv.dart
-            echo "Removed streamCheckerProvider from main_tv"
-          fi
-
-          echo ""
           echo "=== Done ==="
 
       - name: Install unrar and 7zip
@@ -165,43 +157,38 @@ jobs:
             echo "updated build.gradle.kts"
           fi
 
-      - name: Limit ABIs to arm64 plus armv7
+      - name: Fix NDK version
         working-directory: client
         run: |
           python3 - <<'PYEOF'
           import os
-          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
-          for path in candidates:
-              if not os.path.exists(path):
-                  continue
-              src = open(path, "r", encoding="utf-8").read()
-              if "abiFilters" in src:
-                  print(f"abiFilters already in {path}")
-                  continue
-              marker = "defaultConfig {"
+          path = "android/app/build.gradle.kts"
+          if not os.path.exists(path):
+              path = "android/app/build.gradle"
+          if not os.path.exists(path):
+              print("no build.gradle found")
+              exit(0)
+          src = open(path, "r", encoding="utf-8").read()
+          if "ndkVersion" in src:
+              import re
+              src = re.sub(r'ndkVersion\s*=?\s*[^\n]+', 'ndkVersion = "27.0.12077973"', src)
+              print("Replaced existing ndkVersion")
+          else:
+              marker = "android {"
               idx = src.find(marker)
-              if idx == -1:
-                  print(f"defaultConfig not in {path}")
-                  continue
-              insert_at = idx + len(marker)
-              if path.endswith(".kts"):
-                  block = """
-
-              ndk {
-                  abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-              }
-          """
-              else:
-                  block = """
-
-              ndk {
-                  abiFilters 'arm64-v8a', 'armeabi-v7a'
-              }
-          """
-              src = src[:insert_at] + block + src[insert_at:]
-              open(path, "w", encoding="utf-8").write(src)
-              print(f"updated {path}")
+              if idx != -1:
+                  insert_at = idx + len(marker)
+                  if path.endswith(".kts"):
+                      block = '\n    ndkVersion = "27.0.12077973"\n'
+                  else:
+                      block = '\n    ndkVersion "27.0.12077973"\n'
+                  src = src[:insert_at] + block + src[insert_at:]
+                  print("Added ndkVersion")
+          open(path, "w", encoding="utf-8").write(src)
           PYEOF
+
+          echo "=== Verifying ==="
+          grep -n "ndkVersion" android/app/build.gradle.kts || echo "NOT FOUND"
 
       - name: Add packaging options
         working-directory: client
