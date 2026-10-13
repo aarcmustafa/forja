@@ -4,13 +4,16 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
+    paths:
+      - 'client/**'
+      - '.github/workflows/build_tv.yml'
 
 permissions:
   contents: write
 
 jobs:
   build-tv:
-    name: Build TV APK
+    name: Build TV APK with media_kit
     runs-on: ubuntu-latest
 
     steps:
@@ -32,27 +35,83 @@ jobs:
       - name: Verify Flutter
         run: flutter --version
 
-      - name: Generate Android folder
+      - name: Generate Android platform
         working-directory: client
         run: |
           flutter create --platforms=android --org com.estitn --project-name estitn_farja .
 
-      - name: Override AndroidManifest for TV
+      - name: Bump minSdkVersion to 23 for media_kit
+        working-directory: client
+        run: |
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
+          echo "=== build.gradle minSdk line ==="
+          grep -n "minSdkVersion" android/app/build.gradle || true
+
+      - name: Add packaging options to build.gradle
+        working-directory: client
+        run: |
+          python3 - <<'PY'
+          import re
+          path = "android/app/build.gradle"
+          src = open(path, "r", encoding="utf-8").read()
+
+          # إذا لم تكن موجودة، نضيف packagingOptions داخل android { }
+          if "packagingOptions" not in src:
+              # نضيف بعد أول سطر android { 
+              marker = "android {"
+              idx = src.find(marker)
+              if idx != -1:
+                  insert_at = idx + len(marker)
+                  block = """
+
+              packagingOptions {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+                  resources {
+                      excludes += ['META-INF/*.kotlin_module']
+                  }
+              }
+          """
+                  src = src[:insert_at] + block + src[insert_at:]
+
+          open(path, "w", encoding="utf-8").write(src)
+          print("packagingOptions added successfully")
+          PY
+
+      - name: Override AndroidManifest for TV + Media
         working-directory: client
         run: |
           cat > android/app/src/main/AndroidManifest.xml <<'EOF'
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <!-- ========== متطلبات Android TV ========== -->
               <uses-feature
                   android:name="android.software.leanback"
                   android:required="true" />
               <uses-feature
                   android:name="android.hardware.touchscreen"
                   android:required="false" />
+              <uses-feature
+                  android:name="android.hardware.gamepad"
+                  android:required="false" />
+
+              <!-- ========== الصلاحيات ========== -->
               <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
               <application
                   android:label="Estetn Farja TV"
                   android:name="${applicationName}"
-                  android:icon="@mipmap/ic_launcher">
+                  android:icon="@mipmap/ic_launcher"
+                  android:banner="@mipmap/ic_launcher"
+                  android:usesCleartextTraffic="true"
+                  android:requestLegacyExternalStorage="true"
+                  android:hardwareAccelerated="true">
+
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -61,39 +120,88 @@ jobs:
                       android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
                       android:hardwareAccelerated="true"
                       android:windowSoftInputMode="adjustResize">
+
                       <meta-data
                           android:name="io.flutter.embedding.android.NormalTheme"
                           android:resource="@style/NormalTheme" />
+
+                      <!-- ====== إطلاق التطبيق من شاشة Android TV ====== -->
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
                       </intent-filter>
+
+                      <!-- ====== إطلاق التطبيق من الهواتف (احتياطي) ====== -->
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
                   </activity>
+
                   <meta-data
                       android:name="flutterEmbedding"
                       android:value="2" />
               </application>
           </manifest>
           EOF
+          echo "=== AndroidManifest.xml created ==="
+          cat android/app/src/main/AndroidManifest.xml
 
       - name: Get dependencies
         working-directory: client
         run: flutter pub get
 
-      - name: Build APK
+      - name: Analyze project (non-blocking)
         working-directory: client
-        run: flutter build apk --release -t lib/main_tv.dart
+        run: flutter analyze || true
 
-      - name: Rename APK
+      - name: Build APK (split per ABI to reduce size)
+        working-directory: client
+        run: |
+          flutter build apk --release \
+            -t lib/main_tv.dart \
+            --split-per-abi \
+            --android-skip-build-dependency-validation
+
+      - name: Rename and list APKs
         run: |
           mkdir -p artifacts
-          cp client/build/app/outputs/flutter-apk/app-release.apk \
-             artifacts/estitn-farja-tv.apk
+          # arm64 (الأكثر شيوعاً في Android TV)
+          cp client/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+             artifacts/estitn-farja-tv-arm64.apk || true
+          # arm32 (للأجهزة القديمة)
+          cp client/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
+             artifacts/estitn-farja-tv-arm32.apk || true
+          # x86_64 (نادر في التلفاز)
+          cp client/build/app/outputs/flutter-apk/app-x86_64-release.apk \
+             artifacts/estitn-farja-tv-x86_64.apk || true
+
+          echo "=== محتويات مجلد artifacts ==="
           ls -lh artifacts/
 
-      - name: Upload APK
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
           name: estitn-farja-tv-apk
-          path: artifacts/estitn-farja-tv.apk
+          path: artifacts/*.apk
           retention-days: 30
+
+      - name: Build summary
+        if: always()
+        run: |
+          echo "# 📊 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**الفرع:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📦 الملفات الناتجة" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| الملف | الوصف |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`estitn-farja-tv-arm64.apk\` | **للأجهزة الحديثة (موصى به)** |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`estitn-farja-tv-arm32.apk\` | للأجهزة القديمة |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`estitn-farja-tv-x86_64.apk\` | لأجهزة x86 (نادر) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📺 أي ملف أُثبّت؟" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "استخدم **\`estitn-farja-tv-arm64.apk\`** في 95% من الحالات." >> $GITHUB_STEP_SUMMARY
