@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/channel.dart';
@@ -6,7 +7,7 @@ import '../../data/providers/playlist_provider.dart';
 import '../live_tv/widgets/channel_card.dart';
 import '../player/player_screen.dart';
 
-/// شاشة الباقات - تعرض كل الباقات منظمة في بطاقات كبيرة
+/// شاشة الباقات الرياضية
 class PackagesScreen extends ConsumerStatefulWidget {
   const PackagesScreen({super.key});
 
@@ -15,7 +16,63 @@ class PackagesScreen extends ConsumerStatefulWidget {
 }
 
 class _PackagesScreenState extends ConsumerState<PackagesScreen> {
-  String? _selectedCategory;
+  /// الباقات الرياضية الرئيسية
+  static const List<Map<String, dynamic>> _sportsPackages = [
+    {
+      'name': 'beIN Sports',
+      'slug': 'bein',
+      'icon': Icons.sports_soccer_rounded,
+      'color': Color(0xFF00C8FF),
+    },
+    {
+      'name': 'SSC Sports',
+      'slug': 'ssc',
+      'icon': Icons.sports_soccer_rounded,
+      'color': Color(0xFF4CAF50),
+    },
+    {
+      'name': 'AD Sports',
+      'slug': 'ad sport',
+      'icon': Icons.sports_soccer_rounded,
+      'color': Color(0xFFFFB800),
+    },
+    {
+      'name': 'قنوات ألوان',
+      'slug': 'alwan',
+      'icon': Icons.sports_soccer_rounded,
+      'color': Color(0xFFE91E63),
+    },
+    {
+      'name': 'Al Kass',
+      'slug': 'alkass',
+      'icon': Icons.sports_soccer_rounded,
+      'color': Color(0xFF9C27B0),
+    },
+    {
+      'name': 'Dubai Sports',
+      'slug': 'dubai sport',
+      'icon': Icons.sports_soccer_rounded,
+      'color': Color(0xFF00BCD4),
+    },
+    {
+      'name': 'KSA Sports',
+      'slug': 'ksa sport',
+      'icon': Icons.sports_soccer_rounded,
+      'color': Color(0xFF4CAF50),
+    },
+    {
+      'name': 'Shahid Sports',
+      'slug': 'shahid',
+      'icon': Icons.sports_soccer_rounded,
+      'color': Color(0xFFFF5722),
+    },
+    {
+      'name': '1001 Sports',
+      'slug': '1001',
+      'icon': Icons.sports_soccer_rounded,
+      'color': Color(0xFF795548),
+    },
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +116,7 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
             Icon(Icons.list_rounded, color: Colors.white24, size: 80),
             SizedBox(height: 16),
             Text(
-              'لا توجد باقات',
+              'لا توجد باقات رياضية',
               style: TextStyle(color: Colors.white70, fontSize: 16),
             ),
           ],
@@ -67,92 +124,68 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
       );
     }
 
-    // تجميع حسب الباقة (group)
-    final grouped = _groupByCategory(all);
-    final categories = grouped.keys.toList();
-    categories.sort();
+    // احسب عدد القنوات لكل باقة
+    final packsWithCount = <_PackInfo>[];
+    for (final pack in _sportsPackages) {
+      final slug = pack['slug'] as String;
+      final channels = _findChannels(all, slug);
+      if (channels.isNotEmpty) {
+        packsWithCount.add(_PackInfo(
+          name: pack['name'] as String,
+          slug: slug,
+          icon: pack['icon'] as IconData,
+          color: pack['color'] as Color,
+          channels: channels,
+        ));
+      }
+    }
+
+    if (packsWithCount.isEmpty) {
+      return const Center(
+        child: Text(
+          'لا توجد باقات رياضية متاحة',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+
+    // رتّب حسب عدد القنوات (الأكثر أولاً)
+    packsWithCount.sort((a, b) => b.channels.length.compareTo(a.channels.length));
 
     return Column(
       children: [
-        _buildHeader(state, all.length, grouped.length),
-        const SizedBox(height: 16),
-        _buildCategoryChips(categories),
+        _buildHeader(all.length, packsWithCount.length),
         const SizedBox(height: 20),
-        Expanded(child: _buildGrid(grouped)),
+        Expanded(
+          child: GridView.builder(
+            padding: const EdgeInsets.fromLTRB(32, 0, 32, 32),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 340,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+              childAspectRatio: 2.2,
+            ),
+            itemCount: packsWithCount.length,
+            itemBuilder: (context, i) {
+              final pack = packsWithCount[i];
+              return _PackageCard(
+                name: pack.name,
+                count: pack.channels.length,
+                icon: pack.icon,
+                color: pack.color,
+                onTap: () => _openPackage(pack),
+              );
+            },
+          ),
+        ),
       ],
     );
-  }
-
-  // تجميع القنوات حسب التصنيف الرئيسي ثم الباقة
-  Map<String, List<Channel>> _groupByCategory(List<Channel> all) {
-    final map = <String, List<Channel>>{};
-    for (final c in all) {
-      final key = c.category;
-      map.putIfAbsent(key, () => []).add(c);
-    }
-    return map;
-  }
-
-  // تجميع القنوات حسب المجموعة (الباقة)
-  Map<String, List<Channel>> _groupByPackage(List<Channel> channels) {
-    final map = <String, List<Channel>>{};
-    for (final c in channels) {
-      final key = c.group.isEmpty ? 'غير مصنف' : c.group;
-      map.putIfAbsent(key, () => []).add(c);
-    }
-    return map;
-  }
-
-  String _categoryLabel(String slug) {
-    switch (slug) {
-      case 'sport':
-        return 'رياضة';
-      case 'movie':
-        return 'أفلام';
-      case 'series':
-        return 'مسلسلات';
-      case 'news':
-        return 'أخبار';
-      case 'kids':
-        return 'أطفال';
-      case 'documentary':
-        return 'وثائقي';
-      case 'music':
-        return 'موسيقى';
-      case 'religious':
-        return 'ديني';
-      default:
-        return 'عام';
-    }
-  }
-
-  IconData _categoryIcon(String slug) {
-    switch (slug) {
-      case 'sport':
-        return Icons.sports_soccer_rounded;
-      case 'movie':
-        return Icons.movie_rounded;
-      case 'series':
-        return Icons.tv_rounded;
-      case 'news':
-        return Icons.newspaper_rounded;
-      case 'kids':
-        return Icons.child_care_rounded;
-      case 'documentary':
-        return Icons.camera_roll_rounded;
-      case 'music':
-        return Icons.music_note_rounded;
-      case 'religious':
-        return Icons.mosque_rounded;
-      default:
-        return Icons.category_rounded;
-    }
   }
 
   // ==========================================================
   //  الشريط العلوي
   // ==========================================================
-  Widget _buildHeader(PlaylistState state, int totalChannels, int totalPacks) {
+  Widget _buildHeader(int totalChannels, int totalPacks) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
       child: Row(
@@ -174,7 +207,7 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'الباقات',
+                'الباقات الرياضية',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 28,
@@ -182,7 +215,7 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
                 ),
               ),
               Text(
-                'تصفح كل القنوات حسب الباقة',
+                'تصفح القنوات الرياضية حسب الباقة',
                 style: TextStyle(color: Colors.white54, fontSize: 13),
               ),
             ],
@@ -212,6 +245,21 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+                const SizedBox(width: 12),
+                Container(
+                  width: 1,
+                  height: 16,
+                  color: const Color(0xFF2A3350),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '$totalPacks باقة',
+                  style: const TextStyle(
+                    color: Color(0xFF00C8FF),
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               ],
             ),
           ),
@@ -221,93 +269,28 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
   }
 
   // ==========================================================
-  //  شرائح التصنيفات
+  //  البحث عن قنوات باقة
   // ==========================================================
-  Widget _buildCategoryChips(List<String> categories) {
-    return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        itemCount: categories.length + 1,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
-        itemBuilder: (context, i) {
-          if (i == 0) {
-            return _CategoryChip(
-              label: 'الكل',
-              icon: Icons.apps_rounded,
-              isSelected: _selectedCategory == null,
-              onTap: () => setState(() => _selectedCategory = null),
-            );
-          }
-          final cat = categories[i - 1];
-          return _CategoryChip(
-            label: _categoryLabel(cat),
-            icon: _categoryIcon(cat),
-            isSelected: _selectedCategory == cat,
-            onTap: () => setState(() => _selectedCategory = cat),
-          );
-        },
-      ),
-    );
-  }
-
-  // ==========================================================
-  //  شبكة الباقات
-  // ==========================================================
-  Widget _buildGrid(Map<String, List<Channel>> grouped) {
-    // تحديد القنوات المعروضة
-    final selectedChannels = _selectedCategory == null
-        ? grouped.values.expand((e) => e).toList()
-        : grouped[_selectedCategory] ?? [];
-
-    // تجميع حسب الباقة
-    final packs = _groupByPackage(selectedChannels);
-
-    if (packs.isEmpty) {
-      return const Center(
-        child: Text(
-          'لا توجد باقات في هذا التصنيف',
-          style: TextStyle(color: Colors.white70),
-        ),
-      );
-    }
-
-    // ترتيب الباقات حسب عدد القنوات (الأكثر أولاً)
-    final sortedPacks = packs.entries.toList()
-      ..sort((a, b) => b.value.length.compareTo(a.value.length));
-
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(32, 0, 32, 32),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 320,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
-        childAspectRatio: 2.2,
-      ),
-      itemCount: sortedPacks.length,
-      itemBuilder: (context, index) {
-        final pack = sortedPacks[index];
-        return _PackageCard(
-          name: pack.key,
-          count: pack.value.length,
-          channels: pack.value,
-          onTap: () => _openPackage(pack.key, pack.value),
-        );
-      },
-    );
+  List<Channel> _findChannels(List<Channel> all, String slug) {
+    final lowerSlug = slug.toLowerCase();
+    return all.where((c) {
+      final name = c.name.toLowerCase();
+      final group = c.group.toLowerCase();
+      return name.contains(lowerSlug) || group.contains(lowerSlug);
+    }).toList();
   }
 
   // ==========================================================
   //  فتح الباقة
   // ==========================================================
-  void _openPackage(String name, List<Channel> channels) {
+  void _openPackage(_PackInfo pack) {
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => _PackageDetailPage(
-          title: name,
-          channels: channels,
+          title: pack.name,
+          color: pack.color,
+          channels: pack.channels,
         ),
       ),
     );
@@ -315,94 +298,22 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
 }
 
 // ==========================================================
-//  شريحة تصنيف
+//  نموذج داخلي
 // ==========================================================
-class _CategoryChip extends StatefulWidget {
-  final String label;
+class _PackInfo {
+  final String name;
+  final String slug;
   final IconData icon;
-  final bool isSelected;
-  final VoidCallback onTap;
+  final Color color;
+  final List<Channel> channels;
 
-  const _CategoryChip({
-    required this.label,
+  const _PackInfo({
+    required this.name,
+    required this.slug,
     required this.icon,
-    required this.isSelected,
-    required this.onTap,
+    required this.color,
+    required this.channels,
   });
-
-  @override
-  State<_CategoryChip> createState() => _CategoryChipState();
-}
-
-class _CategoryChipState extends State<_CategoryChip> {
-  bool _isFocused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final active = widget.isSelected || _isFocused;
-
-    return Focus(
-      onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent) {
-          final key = event.logicalKey.keyLabel;
-          if (key == 'Select' || key == 'Enter' || key == 'Space') {
-            widget.onTap();
-          }
-        }
-        return KeyEventResult.ignored;
-      },
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: EdgeInsets.symmetric(
-            horizontal: _isFocused ? 20 : 16,
-            vertical: 10,
-          ),
-          decoration: BoxDecoration(
-            color: active ? const Color(0xFF00C8FF) : const Color(0xFF141A2E),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(
-              color: _isFocused
-                  ? Colors.white
-                  : active
-                      ? const Color(0xFF00C8FF)
-                      : const Color(0xFF2A3350),
-              width: _isFocused ? 2.5 : 1.5,
-            ),
-            boxShadow: _isFocused
-                ? [
-                    BoxShadow(
-                      color: const Color(0xFF00C8FF).withOpacity(0.5),
-                      blurRadius: 14,
-                    ),
-                  ]
-                : [],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                widget.icon,
-                color: active ? Colors.black : Colors.white70,
-                size: 18,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                widget.label,
-                style: TextStyle(
-                  color: active ? Colors.black : Colors.white70,
-                  fontSize: 13,
-                  fontWeight: active ? FontWeight.bold : FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 // ==========================================================
@@ -411,13 +322,15 @@ class _CategoryChipState extends State<_CategoryChip> {
 class _PackageCard extends StatefulWidget {
   final String name;
   final int count;
-  final List<Channel> channels;
+  final IconData icon;
+  final Color color;
   final VoidCallback onTap;
 
   const _PackageCard({
     required this.name,
     required this.count,
-    required this.channels,
+    required this.icon,
+    required this.color,
     required this.onTap,
   });
 
@@ -451,7 +364,7 @@ class _PackageCardState extends State<_PackageCard> {
               end: Alignment.bottomLeft,
               colors: _isFocused
                   ? [
-                      const Color(0xFF00C8FF).withOpacity(0.3),
+                      widget.color.withOpacity(0.3),
                       const Color(0xFF141A2E),
                     ]
                   : [
@@ -462,14 +375,14 @@ class _PackageCardState extends State<_PackageCard> {
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: _isFocused
-                  ? const Color(0xFF00C8FF)
+                  ? widget.color
                   : const Color(0xFF2A3350),
               width: _isFocused ? 3 : 1.5,
             ),
             boxShadow: _isFocused
                 ? [
                     BoxShadow(
-                      color: const Color(0xFF00C8FF).withOpacity(0.4),
+                      color: widget.color.withOpacity(0.4),
                       blurRadius: 20,
                       spreadRadius: 2,
                     ),
@@ -480,25 +393,22 @@ class _PackageCardState extends State<_PackageCard> {
             padding: const EdgeInsets.all(20),
             child: Row(
               children: [
-                // أيقونة
                 Container(
                   width: 56,
                   height: 56,
                   decoration: BoxDecoration(
                     color: _isFocused
-                        ? const Color(0xFF00C8FF)
-                        : const Color(0xFF00C8FF).withOpacity(0.15),
+                        ? widget.color
+                        : widget.color.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Icon(
-                    Icons.live_tv_rounded,
-                    color: _isFocused ? Colors.black : const Color(0xFF00C8FF),
+                    widget.icon,
+                    color: _isFocused ? Colors.black : widget.color,
                     size: 28,
                   ),
                 ),
                 const SizedBox(width: 16),
-
-                // الاسم والعدد
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -506,32 +416,32 @@ class _PackageCardState extends State<_PackageCard> {
                     children: [
                       Text(
                         widget.name,
-                        maxLines: 2,
+                        maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
+                        style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 16,
+                          fontSize: 17,
                           fontWeight: FontWeight.bold,
                           height: 1.2,
                         ),
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 8),
                       Row(
                         children: [
                           Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 3,
+                              horizontal: 10,
+                              vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFFFB800).withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(8),
+                              color: widget.color.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(10),
                             ),
                             child: Text(
                               '${widget.count} قناة',
-                              style: const TextStyle(
-                                color: Color(0xFFFFB800),
-                                fontSize: 11,
+                              style: TextStyle(
+                                color: widget.color,
+                                fontSize: 12,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -541,11 +451,9 @@ class _PackageCardState extends State<_PackageCard> {
                     ],
                   ),
                 ),
-
-                // سهم
                 Icon(
                   Icons.arrow_back_ios_rounded,
-                  color: _isFocused ? const Color(0xFF00C8FF) : Colors.white38,
+                  color: _isFocused ? widget.color : Colors.white38,
                   size: 18,
                 ),
               ],
@@ -562,9 +470,14 @@ class _PackageCardState extends State<_PackageCard> {
 // ==========================================================
 class _PackageDetailPage extends StatelessWidget {
   final String title;
+  final Color color;
   final List<Channel> channels;
 
-  const _PackageDetailPage({required this.title, required this.channels});
+  const _PackageDetailPage({
+    required this.title,
+    required this.color,
+    required this.channels,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -575,14 +488,28 @@ class _PackageDetailPage extends StatelessWidget {
         body: SafeArea(
           child: Column(
             children: [
-              // الشريط العلوي
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 16,
+                ),
                 child: Row(
                   children: [
                     _BackButton(onPressed: () => Navigator.pop(context)),
                     const SizedBox(width: 16),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        Icons.sports_soccer_rounded,
+                        color: color,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -611,8 +538,6 @@ class _PackageDetailPage extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-
-              // الشبكة
               Expanded(
                 child: GridView.builder(
                   padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -672,7 +597,7 @@ class _BackButtonState extends State<_BackButton> {
   @override
   Widget build(BuildContext context) {
     return Focus(
-      onFocusChange: (hasFocus) => setState(() => _isFocused = hasFocus),
+      onFocusChange: (h) => setState(() => _isFocused = h),
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent) {
           final key = event.logicalKey.keyLabel;
@@ -697,14 +622,6 @@ class _BackButtonState extends State<_BackButton> {
               color: _isFocused ? Colors.white : const Color(0xFF2A3350),
               width: _isFocused ? 2 : 1,
             ),
-            boxShadow: _isFocused
-                ? [
-                    BoxShadow(
-                      color: const Color(0xFF00C8FF).withOpacity(0.5),
-                      blurRadius: 12,
-                    ),
-                  ]
-                : [],
           ),
           child: Icon(
             Icons.arrow_forward_rounded,
