@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:media_kit/media_kit.dart';
 
 import 'features/live_tv/live_tv_screen.dart';
+import 'features/movies/movies_screen.dart';
+import 'features/movies/movie_detail_screen.dart';
+import 'features/series/series_screen.dart';
+import 'features/player/player_screen.dart';
 import 'data/models/channel.dart';
 import 'data/providers/playlist_provider.dart';
 
@@ -19,7 +24,7 @@ const List<String> kPlaylistUrls = [
   'https://m3uextractor.kiki10kkii.workers.dev/download/a3260edc-48d0-4696-aa1e-3fb6916b2d51/Live_AR%20_%20BEIN%20SPORTS%208K.m3u8',
   'https://m3uextractor.kiki10kkii.workers.dev/download/08cdf005-1a6f-48e4-8486-912afa4f918d/Live_BeIN%20SPORTS%20__%20BEE__%20.m3u8',
 
-  // ============ روابط Xtream (قنوات + أفلام + مسلسلات) ============
+  // ============ Xtream (قنوات + أفلام + مسلسلات) ============
   'http://dksipi.com:80/get.php?username=kirham2025&password=M0BfTl2CtK&type=m3u_plus&output=m3u8',
   'http://xtreamutv.org:80/get.php?username=7rFgH6sFwy&password=HSzDvxrCy6&type=m3u_plus&output=m3u8',
   'http://prod.dragonkey.net:2082/get.php?username=00228866&password=2pd974kh95&type=m3u_plus&output=m3u8',
@@ -30,6 +35,7 @@ const List<String> kPlaylistUrls = [
 // ==========================================================
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  MediaKit.ensureInitialized();
   runApp(
     const ProviderScope(
       child: EstetnFarjaTvApp(),
@@ -61,7 +67,7 @@ class EstetnFarjaTvApp extends StatelessWidget {
 }
 
 // ==========================================================
-//  الشاشة الرئيسية — ConsumerStatefulWidget
+//  الشاشة الرئيسية
 // ==========================================================
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -71,7 +77,6 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  // ← ابدأ على "البث المباشر" مباشرة
   int _selectedIndex = 1;
 
   static const int _idxHome = 0;
@@ -102,23 +107,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // 🚀 تحميل القنوات فور فتح التطبيق
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadPlaylistsIfNeeded();
     });
   }
 
-  /// تحميل القنوات (مرة واحدة فقط عند فتح التطبيق)
   Future<void> _loadPlaylistsIfNeeded() async {
     if (kPlaylistUrls.isEmpty) return;
-
     final state = ref.read(playlistProvider);
-    // لا نعيد التحميل إذا كانت هناك قنوات أو التحميل جارٍ
     if (state.allChannels.isNotEmpty || state.isLoading) return;
-
-    await ref
-        .read(playlistProvider.notifier)
-        .loadPlaylists(kPlaylistUrls);
+    await ref.read(playlistProvider.notifier).loadPlaylists(kPlaylistUrls);
   }
 
   @override
@@ -161,8 +159,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
           const Divider(color: Color(0xFF2A3350)),
           const SizedBox(height: 12),
-          for (int i = 0; i < _menuItems.length; i++)
-            _buildMenuItem(i),
+          for (int i = 0; i < _menuItems.length; i++) _buildMenuItem(i),
         ],
       ),
     );
@@ -191,9 +188,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   horizontal: 16,
                 ),
                 decoration: BoxDecoration(
-                  color: active
-                      ? const Color(0xFF00C8FF)
-                      : Colors.transparent,
+                  color: active ? const Color(0xFF00C8FF) : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(
@@ -231,12 +226,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       case _idxLive:
         return LiveTvScreen(
           playlistUrls: kPlaylistUrls,
-          onChannelTap: _onChannelTap,
+          onChannelTap: _openPlayer,
+        );
+
+      case _idxMovies:
+        return MoviesScreen(
+          onMovieTap: _openMovieDetail,
+        );
+
+      case _idxSeries:
+        return SeriesScreen(
+          onSeriesTap: _openPlayer,
         );
 
       case _idxHome:
-      case _idxMovies:
-      case _idxSeries:
       case _idxPackages:
       case _idxSettings:
       default:
@@ -245,41 +248,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   // ==========================================================
-  //  عند الضغط على قناة
+  //  فتح المشغل مباشرة
   // ==========================================================
-  void _onChannelTap(Channel channel) {
-    showDialog(
-      context: context,
-      builder: (_) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          backgroundColor: const Color(0xFF141A2E),
-          title: Text(
-            channel.name,
-            style: const TextStyle(color: Colors.white),
-          ),
-          content: SingleChildScrollView(
-            child: Text(
-              'الباقة: ${channel.group}\n'
-              'التصنيف: ${channel.categoryLabel}\n'
-              'اللغة: ${channel.languageLabel}\n'
-              'النوع: ${channel.contentType}\n'
-              'الحالة: ${channel.isWorking ? "تعمل" : "متوقفة"}\n'
-              '\nالرابط:\n${channel.streamUrl}',
-              style:
-                  const TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text(
-                'إغلاق',
-                style: TextStyle(color: Color(0xFF00C8FF)),
-              ),
-            ),
-          ],
+  void _openPlayer(Channel channel) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          streamUrl: channel.streamUrl,
+          channelName: channel.name,
+          channelLogo: channel.logo,
         ),
+      ),
+    );
+  }
+
+  // ==========================================================
+  //  فتح تفاصيل الفيلم
+  // ==========================================================
+  void _openMovieDetail(Channel movie) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MovieDetailScreen(movie: movie),
       ),
     );
   }
