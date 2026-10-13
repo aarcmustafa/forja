@@ -198,7 +198,7 @@ jobs:
           src = open(path, "r", encoding="utf-8").read()
           if "ndkVersion" in src:
               import re
-              src = re.sub(r'ndkVersion\s*=?\s*[^\n]+', 'ndkVersion = "27.0.12077973"', src)
+              src = re.sub(r'ndkVersion\s*=?\s*[^\n]+', 'ndkVersion = "28.2.13676358"', src)
               print("Replaced existing ndkVersion")
           else:
               marker = "android {"
@@ -206,9 +206,9 @@ jobs:
               if idx != -1:
                   insert_at = idx + len(marker)
                   if path.endswith(".kts"):
-                      block = '\n    ndkVersion = "27.0.12077973"\n'
+                      block = '\n    ndkVersion = "28.2.13676358"\n'
                   else:
-                      block = '\n    ndkVersion "27.0.12077973"\n'
+                      block = '\n    ndkVersion "28.2.13676358"\n'
                   src = src[:insert_at] + block + src[insert_at:]
                   print("Added ndkVersion")
           open(path, "w", encoding="utf-8").write(src)
