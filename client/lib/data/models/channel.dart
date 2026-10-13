@@ -1,23 +1,24 @@
-/// نموذج موحّد يمثل قناة أو فيلم أو مسلسل في تطبيق IPTV
+/// نموذج موحّد يمثل قناة أو فيلم أو مسلسل
 class Channel {
   final String id;
   final String name;
-  final String originalName; // الاسم الأصلي (بالإنجليزية مثلاً)
+  final String originalName;
   final String logo;
   final String streamUrl;
-  final String group;        // اسم الباقة (beIN, OSN, MBC...)
-  final String category;     // التصنيف الرئيسي: sport, movie, series, general
-  final String language;     // ara, tur, hin, eng, anime, asian
-  final String countryCode;  // SA, AE, EG, MA, DZ, IQ, KW, QA, JO, LB, SY
-  final String genre;        // action, drama, comedy, horror, kids, doc
-  final String contentType;  // live, movie, series
-  final String? translation; // dubbed, subtitled, original
-  final int? year;           // سنة الفيلم/المسلسل
-  final double? rating;      // التقييم
+  final String group;
+  final String category;
+  final String language;
+  final String countryCode;
+  final String genre;
+  final String contentType;
+  final String? translation;
+  final int? year;
+  final double? rating;
   final bool isWorking;
-  final int priority;        // كل ما زاد، كل ما كان أفضل
+  final int priority;
   final DateTime? expiresAt;
-  final String tvgId;        // للقضاء على التكرار
+  final String tvgId;
+  final bool isAdult;
   final Map<String, String> extras;
 
   const Channel({
@@ -39,16 +40,51 @@ class Channel {
     this.priority = 0,
     this.expiresAt,
     this.tvgId = '',
+    this.isAdult = false,
     this.extras = const {},
   });
 
-  /// هل الرابط من نوع HLS؟
+  // ==========================================================
+  //  كشف صيغة البث
+  // ==========================================================
   bool get isHls => streamUrl.contains('.m3u8');
+  bool get isM3u => streamUrl.endsWith('.m3u') && !streamUrl.contains('.m3u8');
+  bool get isTs => streamUrl.contains('.ts');
+  bool get isDash => streamUrl.contains('.mpd');
+  bool get isVideo =>
+      streamUrl.contains('.mp4') ||
+      streamUrl.contains('.mkv') ||
+      streamUrl.contains('.avi') ||
+      streamUrl.contains('.mov');
+  bool get isRtsp => streamUrl.startsWith('rtsp://');
+  bool get isRtmp => streamUrl.startsWith('rtmp://');
+  bool get isUdp =>
+      streamUrl.startsWith('udp://') || streamUrl.startsWith('rtp://');
+  bool get isMms => streamUrl.startsWith('mms://');
+  bool get isFlv => streamUrl.contains('.flv');
 
-  /// هل الرابط من نوع m3u عادي؟
-  bool get isM3u => streamUrl.contains('.m3u');
+  bool get isLiveStream =>
+      isHls || isTs || isRtsp || isRtmp || isUdp || isMms || isFlv;
 
-  /// التصنيف بالعربية
+  String get streamFormat {
+    if (isHls) return 'HLS';
+    if (isTs) return 'TS';
+    if (isDash) return 'DASH';
+    if (isRtsp) return 'RTSP';
+    if (isRtmp) return 'RTMP';
+    if (isUdp) return 'UDP';
+    if (isMms) return 'MMS';
+    if (isFlv) return 'FLV';
+    if (streamUrl.contains('.mp4')) return 'MP4';
+    if (streamUrl.contains('.mkv')) return 'MKV';
+    if (streamUrl.contains('.avi')) return 'AVI';
+    if (isM3u) return 'M3U';
+    return 'Unknown';
+  }
+
+  // ==========================================================
+  //  التسميات العربية
+  // ==========================================================
   String get categoryLabel {
     switch (category.toLowerCase()) {
       case 'sport':
@@ -74,7 +110,6 @@ class Channel {
     }
   }
 
-  /// اللغة بالعربية
   String get languageLabel {
     switch (language.toLowerCase()) {
       case 'ara':
@@ -100,7 +135,6 @@ class Channel {
     }
   }
 
-  /// اسم الدولة بالعربية
   String get countryLabel {
     switch (countryCode.toUpperCase()) {
       case 'SA':
@@ -141,18 +175,11 @@ class Channel {
         return 'فلسطين';
       case 'MR':
         return 'موريتانيا';
-      case 'SO':
-        return 'الصومال';
-      case 'DJ':
-        return 'جيبوتي';
-      case 'KM':
-        return 'جزر القمر';
       default:
         return '';
     }
   }
 
-  /// النوع بالعربية
   String get genreLabel {
     switch (genre.toLowerCase()) {
       case 'action':
@@ -194,7 +221,6 @@ class Channel {
     }
   }
 
-  /// نوع الترجمة
   String get translationLabel {
     switch (translation) {
       case 'dubbed':
@@ -208,7 +234,6 @@ class Channel {
     }
   }
 
-  /// هل هذه القناة/الفيلم مفضل؟
   bool matchesQuery(String q) {
     if (q.trim().isEmpty) return true;
     final query = q.trim().toLowerCase();
@@ -218,7 +243,6 @@ class Channel {
         genre.toLowerCase().contains(query);
   }
   
-  /// إنشاء نسخة معدّلة
   Channel copyWith({
     String? id,
     String? name,
@@ -238,6 +262,7 @@ class Channel {
     int? priority,
     DateTime? expiresAt,
     String? tvgId,
+    bool? isAdult,
     Map<String, String>? extras,
   }) {
     return Channel(
@@ -259,11 +284,11 @@ class Channel {
       priority: priority ?? this.priority,
       expiresAt: expiresAt ?? this.expiresAt,
       tvgId: tvgId ?? this.tvgId,
+      isAdult: isAdult ?? this.isAdult,
       extras: extras ?? this.extras,
     );
   }
 
-  /// من JSON
   factory Channel.fromJson(Map<String, dynamic> json) {
     return Channel(
       id: json['id'] as String? ?? '',
@@ -286,13 +311,13 @@ class Channel {
           ? DateTime.tryParse(json['expiresAt'] as String)
           : null,
       tvgId: json['tvgId'] as String? ?? '',
+      isAdult: json['isAdult'] as bool? ?? false,
       extras: (json['extras'] as Map<String, dynamic>?)
               ?.map((k, v) => MapEntry(k, v.toString())) ??
           const {},
     );
   }
 
-  /// إلى JSON
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -313,13 +338,14 @@ class Channel {
       'priority': priority,
       'expiresAt': expiresAt?.toIso8601String(),
       'tvgId': tvgId,
+      'isAdult': isAdult,
       'extras': extras,
     };
   }
 
   @override
   String toString() =>
-      'Channel($name | $group | $category | $language | $countryCode)';
+      'Channel($name | $group | $category | $language | $streamFormat)';
 
   @override
   bool operator ==(Object other) =>
