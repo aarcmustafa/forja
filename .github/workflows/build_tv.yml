@@ -33,18 +33,20 @@ jobs:
           cache: true
 
       - name: Generate Android platform
-        working-directory: client
         run: |
-          flutter create --platforms=android --org com.estitn --project-name estitn_farja --no-pub .
+          cd /tmp
+          flutter create --platforms=android --org com.estitn --project-name estitn_farja --no-pub temp_app
+          rm -rf "$GITHUB_WORKSPACE/client/android"
+          cp -r /tmp/temp_app/android "$GITHUB_WORKSPACE/client/android"
+          echo "=== Copied android folder ==="
+          ls -la "$GITHUB_WORKSPACE/client/android"
+          echo "=== app folder ==="
+          ls -la "$GITHUB_WORKSPACE/client/android/app"
 
       - name: Verify android created
-        working-directory: client
         run: |
-          ls -la
-          echo "---"
-          ls -la android || echo "android missing"
-          echo "---"
-          ls -la android/app || echo "android/app missing"
+          test -d "client/android" && echo "android exists"
+          test -f "client/android/app/build.gradle" && echo "build.gradle exists"
 
       - name: Install unrar and 7zip
         run: |
@@ -96,11 +98,11 @@ jobs:
           RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
           RES_DEST="client/android/app/src/main/res"
           if [ -z "$RES_SRC" ]; then
-            echo "no custom res, using default"
+            echo "no custom res"
             exit 0
           fi
           if [ ! -d "$RES_SRC" ]; then
-            echo "res path not a directory"
+            echo "not a directory"
             exit 0
           fi
           rm -rf "$RES_DEST"
