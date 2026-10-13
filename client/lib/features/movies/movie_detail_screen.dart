@@ -1,52 +1,48 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../data/models/channel.dart';
+import '../../data/providers/history_provider.dart';
+import '../../data/providers/favorites_provider.dart';
 import '../player/player_screen.dart';
 
 /// شاشة تفاصيل الفيلم — تعرض كل المعلومات قبل التشغيل
-class MovieDetailScreen extends StatefulWidget {
+class MovieDetailScreen extends ConsumerStatefulWidget {
   final Channel movie;
 
   const MovieDetailScreen({super.key, required this.movie});
 
   @override
-  State<MovieDetailScreen> createState() => _MovieDetailScreenState();
+  ConsumerState<MovieDetailScreen> createState() => _MovieDetailScreenState();
 }
 
-class _MovieDetailScreenState extends State<MovieDetailScreen> {
-  bool _isFavorite = false;
-  bool _inWatchLater = false;
-
+class _MovieDetailScreenState extends ConsumerState<MovieDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final movie = widget.movie;
+    final isFav = ref.watch(favoritesProvider).contains(movie.id);
 
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: const Color(0xFF0A0E1A),
         body: SafeArea(
-          child: Column(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildHeroSection(movie),
-                      const SizedBox(height: 24),
-                      _buildActionButtons(movie),
-                      const SizedBox(height: 28),
-                      _buildInfoSection(movie),
-                      const SizedBox(height: 24),
-                      _buildMetadataChips(movie),
-                      const SizedBox(height: 24),
-                      _buildStreamInfo(movie),
-                      const SizedBox(height: 40),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeroSection(movie),
+                const SizedBox(height: 24),
+                _buildActionButtons(movie, isFav),
+                const SizedBox(height: 28),
+                _buildInfoSection(movie),
+                const SizedBox(height: 24),
+                _buildMetadataChips(movie),
+                const SizedBox(height: 24),
+                _buildStreamInfo(movie),
+                const SizedBox(height: 40),
+              ],
+            ),
           ),
         ),
       ),
@@ -54,44 +50,34 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
   }
 
   // ==========================================================
-  //  القسم العلوي: الصورة + العنوان
+  //  القسم العلوي
   // ==========================================================
   Widget _buildHeroSection(Channel movie) {
     return Stack(
       children: [
-        // الخلفية المتدرجة
         Container(
           height: 380,
-          decoration: BoxDecoration(
+          decoration: const BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [
-                const Color(0xFF1A2238),
-                const Color(0xFF0A0E1A),
-              ],
+              colors: [Color(0xFF1A2238), Color(0xFF0A0E1A)],
             ),
           ),
         ),
-
-        // المحتوى
         Positioned.fill(
           child: Padding(
             padding: const EdgeInsets.all(32),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // الملصق
                 _buildPoster(movie),
                 const SizedBox(width: 32),
-
-                // المعلومات
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // اسم الفيلم
                       Text(
                         movie.name,
                         maxLines: 3,
@@ -103,8 +89,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                           height: 1.2,
                         ),
                       ),
-
-                      // الاسم الأصلي
                       if (movie.originalName.isNotEmpty &&
                           movie.originalName != movie.name) ...[
                         const SizedBox(height: 8),
@@ -119,10 +103,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                           ),
                         ),
                       ],
-
                       const SizedBox(height: 20),
-
-                      // السطر: سنة + نوع + تقييم
                       Wrap(
                         spacing: 12,
                         runSpacing: 8,
@@ -152,8 +133,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
             ),
           ),
         ),
-
-        // زر الرجوع
         Positioned(
           top: 24,
           right: 24,
@@ -166,9 +145,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     );
   }
 
-  // ==========================================================
-  //  الملصق (Poster)
-  // ==========================================================
   Widget _buildPoster(Channel movie) {
     return Container(
       width: 220,
@@ -230,10 +206,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                 textAlign: TextAlign.center,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 13,
-                ),
+                style: const TextStyle(color: Colors.white54, fontSize: 13),
               ),
             ),
           ],
@@ -250,9 +223,6 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     return Icons.movie_rounded;
   }
 
-  // ==========================================================
-  //  شارة معلومات صغيرة
-  // ==========================================================
   Widget _buildInfoBadge(IconData icon, String label, {Color? color}) {
     final c = color ?? Colors.white70;
     return Container(
@@ -281,9 +251,9 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
   }
   
   // ==========================================================
-  //  أزرار الإجراءات الرئيسية
+  //  أزرار الإجراءات
   // ==========================================================
-  Widget _buildActionButtons(Channel movie) {
+  Widget _buildActionButtons(Channel movie, bool isFav) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32),
       child: Row(
@@ -291,47 +261,55 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
           // زر تشغيل كبير
           Expanded(
             flex: 3,
-            child: _buildPlayButton(movie),
+            child: _FocusableButton(
+              onPressed: () => _openPlayer(movie),
+              icon: Icons.play_arrow_rounded,
+              label: 'تشغيل الآن',
+            ),
           ),
           const SizedBox(width: 12),
 
-          // مفضلة
+          // مفضلة (حقيقي)
           _ActionButton(
-            icon: _isFavorite
+            icon: isFav
                 ? Icons.favorite_rounded
                 : Icons.favorite_border_rounded,
-            label: 'مفضلة',
-            color: _isFavorite ? const Color(0xFFFF1744) : Colors.white70,
-            onPressed: () => setState(() => _isFavorite = !_isFavorite),
+            label: isFav ? 'في المفضلة' : 'مفضلة',
+            color: isFav ? const Color(0xFFFF1744) : Colors.white70,
+            onPressed: () {
+              ref.read(favoritesProvider.notifier).toggle(movie.id);
+            },
           ),
           const SizedBox(width: 12),
 
-          // مشاهدة لاحقاً
+          // مشاهدة لاحقاً (تجريبي)
           _ActionButton(
-            icon: _inWatchLater
-                ? Icons.bookmark_rounded
-                : Icons.bookmark_border_rounded,
+            icon: Icons.bookmark_border_rounded,
             label: 'لاحقاً',
-            color:
-                _inWatchLater ? const Color(0xFF00C8FF) : Colors.white70,
-            onPressed: () =>
-                setState(() => _inWatchLater = !_inWatchLater),
+            color: Colors.white70,
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('سيتم إضافة الميزة قريباً'),
+                  backgroundColor: Color(0xFF141A2E),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
           ),
         ],
       ),
     );
   }
 
-  Widget _buildPlayButton(Channel movie) {
-    return _FocusableButton(
-      onPressed: () => _openPlayer(movie),
-      icon: Icons.play_arrow_rounded,
-      label: 'تشغيل الآن',
-      isPrimary: true,
-    );
-  }
-
+  // ==========================================================
+  //  فتح المشغل (مع تسجيل في السجل)
+  // ==========================================================
   void _openPlayer(Channel movie) {
+    // ✅ تسجيل في السجل
+    ref.read(historyProvider.notifier).record(movie);
+
+    // فتح المشغل
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -345,7 +323,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
   }
 
   // ==========================================================
-  //  قسم المعلومات (القصة/الوصف)
+  //  المعلومات
   // ==========================================================
   Widget _buildInfoSection(Channel movie) {
     return Padding(
@@ -383,10 +361,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
                   _buildInfoRow('النوع', movie.genreLabel),
                 if (movie.year != null)
                   _buildInfoRow('سنة الإنتاج', '${movie.year}'),
-                _buildInfoRow(
-                  'نوع الملف',
-                  movie.isHls ? 'HLS (m3u8)' : 'M3U',
-                ),
+                _buildInfoRow('نوع الملف', movie.isHls ? 'HLS (m3u8)' : 'M3U'),
               ],
             ),
           ),
@@ -404,10 +379,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
             width: 120,
             child: Text(
               label,
-              style: const TextStyle(
-                color: Colors.white54,
-                fontSize: 14,
-              ),
+              style: const TextStyle(color: Colors.white54, fontSize: 14),
             ),
           ),
           Expanded(
@@ -426,7 +398,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
   }
 
   // ==========================================================
-  //  شرائح البيانات الوصفية
+  //  الشرائح
   // ==========================================================
   Widget _buildMetadataChips(Channel movie) {
     final chips = <Widget>[];
@@ -464,11 +436,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32),
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 10,
-        children: chips,
-      ),
+      child: Wrap(spacing: 10, runSpacing: 10, children: chips),
     );
   }
 
@@ -499,7 +467,7 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
   }
 
   // ==========================================================
-  //  معلومات الرابط (مخفية إلا للأغراض التطويرية)
+  //  معلومات الرابط
   // ==========================================================
   Widget _buildStreamInfo(Channel movie) {
     return Padding(
@@ -511,40 +479,32 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: const Color(0xFF2A3350)),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            Row(
-              children: [
-                Icon(
-                  movie.isWorking
-                      ? Icons.check_circle_rounded
-                      : Icons.error_rounded,
-                  color: movie.isWorking
-                      ? const Color(0xFF4CAF50)
-                      : const Color(0xFFFF5252),
-                  size: 18,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  movie.isWorking ? 'الرابط نشط' : 'الرابط غير نشط',
-                  style: TextStyle(
-                    color: movie.isWorking
-                        ? const Color(0xFF4CAF50)
-                        : const Color(0xFFFF5252),
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  'أولوية: ${movie.priority}',
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
+            Icon(
+              movie.isWorking
+                  ? Icons.check_circle_rounded
+                  : Icons.error_rounded,
+              color: movie.isWorking
+                  ? const Color(0xFF4CAF50)
+                  : const Color(0xFFFF5252),
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              movie.isWorking ? 'الرابط نشط' : 'الرابط غير نشط',
+              style: TextStyle(
+                color: movie.isWorking
+                    ? const Color(0xFF4CAF50)
+                    : const Color(0xFFFF5252),
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              'أولوية: ${movie.priority}',
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
             ),
           ],
         ),
@@ -554,19 +514,17 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
 }
 
 // ==========================================================
-//  زر قابل للتركيز (مع Focus)
+//  زر كبير للتشغيل
 // ==========================================================
 class _FocusableButton extends StatefulWidget {
   final VoidCallback onPressed;
   final IconData icon;
   final String label;
-  final bool isPrimary;
 
   const _FocusableButton({
     required this.onPressed,
     required this.icon,
     required this.label,
-    this.isPrimary = false,
   });
 
   @override
@@ -621,11 +579,7 @@ class _FocusableButtonState extends State<_FocusableButton> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                widget.icon,
-                color: Colors.black,
-                size: 28,
-              ),
+              Icon(widget.icon, color: Colors.black, size: 28),
               const SizedBox(width: 12),
               Text(
                 widget.label,
@@ -728,16 +682,13 @@ class _ActionButtonState extends State<_ActionButton> {
 }
 
 // ==========================================================
-//  زر دائري صغير (للرجوع)
+//  زر دائري للرجوع
 // ==========================================================
 class _CircleIconButton extends StatefulWidget {
   final IconData icon;
   final VoidCallback onPressed;
 
-  const _CircleIconButton({
-    required this.icon,
-    required this.onPressed,
-  });
+  const _CircleIconButton({required this.icon, required this.onPressed});
 
   @override
   State<_CircleIconButton> createState() => _CircleIconButtonState();
