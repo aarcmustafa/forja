@@ -1,0 +1,91 @@
+name: Build Android TV APK
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'client/**'
+      - '.github/workflows/build_tv_apk.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'client/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.0.0)'
+        required: false
+        default: 'latest'
+
+jobs:
+  build-tv:
+    name: Build TV Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        working-directory: client
+        run: flutter pub get
+
+      - name: Run analyzer
+        working-directory: client
+        run: flutter analyze || true
+
+      - name: Build TV APK (release)
+        working-directory: client
+        run: flutter build apk --flavor tv -t lib/main_tv.dart --release
+
+      - name: Build TV App Bundle (AAB)
+        working-directory: client
+        run: flutter build appbundle --flavor tv -t lib/main_tv.dart --release
+
+      - name: Rename APK
+        run: |
+          mkdir -p artifacts
+          cp client/build/app/outputs/flutter-apk/app-tv-release.apk \
+             artifacts/estitn-farja-tv-${{ github.sha }}.apk
+          cp client/build/app/outputs/bundle/tvRelease/app-tv-release.aab \
+             artifacts/estitn-farja-tv-${{ github.sha }}.aab
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: estitn-farja-tv-apk
+          path: artifacts/*.apk
+          retention-days: 30
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: estitn-farja-tv-aab
+          path: artifacts/*.aab
+          retention-days: 30
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.apk
+            artifacts/*.aab
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
