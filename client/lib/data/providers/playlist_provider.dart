@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/channel.dart';
 import '../models/category.dart';
 import '../repositories/m3u_repository.dart';
+import '../../features/settings/settings_screen.dart';
 
 // ==========================================================
 //  1) المستودع (Singleton)
@@ -13,15 +14,7 @@ final m3uRepositoryProvider = Provider<M3uRepository>((ref) {
 });
 
 // ==========================================================
-//  2) قائمة روابط M3U المُحمّلة (يمكن إضافة أكثر من رابط)
-// ==========================================================
-final playlistUrlsProvider = StateProvider<List<String>>((ref) => [
-      // ضع روابط M3U هنا
-      // مثال: 'https://example.com/playlist.m3u'
-    ]);
-
-// ==========================================================
-//  3) حالة القنوات (AsyncValue)
+//  2) حالة القنوات
 // ==========================================================
 class PlaylistState {
   final List<Channel> allChannels;
@@ -75,12 +68,20 @@ class PlaylistState {
 }
 
 // ==========================================================
-//  4) Notifier لإدارة الحالة
+//  3) Notifier
 // ==========================================================
 class PlaylistNotifier extends StateNotifier<PlaylistState> {
   final M3uRepository _repository;
+  bool _filterAdult = true; // ← فلتر البالغين (افتراضياً مفعّل)
 
   PlaylistNotifier(this._repository) : super(const PlaylistState());
+
+  /// تحديث فلتر البالغين
+  void setAdultFilter(bool value) {
+    if (_filterAdult == value) return;
+    _filterAdult = value;
+    _applyFilters();
+  }
 
   /// تحميل كل روابط M3U
   Future<void> loadPlaylists(List<String> urls) async {
@@ -102,24 +103,22 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
           final channels = await _repository.loadFromUrl(url);
           all.addAll(channels);
         } catch (e) {
-          // نتجاهل الرابط الفاشل ونكمل بالباقي
           // ignore: avoid_print
           print('فشل تحميل الرابط $url: $e');
         }
       }
 
-      // إزالة التكرار
       final unique = _removeDuplicates(all);
-
-      // بناء التصنيفات من القنوات
       final categories = _buildCategoriesFromChannels(unique);
 
       state = state.copyWith(
         allChannels: unique,
-        filteredChannels: unique,
         categories: categories,
         isLoading: false,
       );
+
+      // تطبيق الفلاتر (بما فيها فلتر البالغين)
+      _applyFilters();
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
@@ -128,19 +127,17 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     }
   }
 
-  /// إزالة التكرار — يبقي القناة ذات الأولوية الأعلى
+  /// إزالة التكرار
   List<Channel> _removeDuplicates(List<Channel> channels) {
     final Map<String, Channel> unique = {};
 
     for (final ch in channels) {
-      // المفتاح: اسم القناة (لأن tvgId ليس دائماً موجوداً)
       final key = _normalizeName(ch.name);
 
       if (!unique.containsKey(key)) {
         unique[key] = ch;
       } else {
         final existing = unique[key]!;
-        // نُبقي الرابط ذا الأولوية الأعلى
         if (ch.priority > existing.priority) {
           unique[key] = ch;
         }
@@ -150,7 +147,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     return unique.values.toList();
   }
 
-  /// تطبيع الاسم للمقارنة
   String _normalizeName(String name) {
     return name
         .toLowerCase()
@@ -159,27 +155,22 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
         .trim();
   }
 
-  /// بناء قائمة التصنيفات تلقائياً من القنوات
+  /// بناء التصنيفات
   List<Category> _buildCategoriesFromChannels(List<Channel> channels) {
-    // نبدأ بالقائمة الافتراضية
     final defaultCats = DefaultCategories.list;
     final result = <Category>[];
 
     for (final cat in defaultCats) {
-      // القنوات التي تنتمي لهذا التصنيف
       final catChannels =
           channels.where((c) => c.category == cat.slug).toList();
 
-      // نبني subCategories مع عدد القنوات
       final subs = <SubCategory>[];
       for (final sub in cat.subCategories) {
         final count = catChannels.where((c) {
           final g = c.group.toLowerCase();
           final s = sub.slug.toLowerCase();
           final n = sub.name.toLowerCase();
-          return g.contains(s) ||
-              g.contains(n) ||
-              c.name.toLowerCase().contains(n);
+          return g.contains(s) || g.contains(n) || c.name.toLowerCase().contains(n);
         }).length;
 
         if (count > 0) {
@@ -197,8 +188,10 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 
     return result;
   }
-
-  /// اختيار تصنيف رئيسي
+  
+  // ==========================================================
+  //  الفلاتر
+  // ==========================================================
   void selectCategory(String? slug) {
     if (slug == null) {
       state = state.copyWith(
@@ -216,7 +209,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     _applyFilters();
   }
 
-  /// اختيار باقة فرعية
   void selectSubCategory(String? slug) {
     if (slug == null) {
       state = state.copyWith(clearSelectedSubCategory: true);
@@ -226,7 +218,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     _applyFilters();
   }
 
-  /// البحث
   void search(String query) {
     state = state.copyWith(searchQuery: query);
     _applyFilters();
@@ -236,18 +227,30 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void _applyFilters() {
     List<Channel> filtered = List.from(state.allChannels);
 
-    // فلتر التصنيف الرئيسي
+    // ==========================================================
+    //  1) فلتر البالغين (الأولوية القصوى)
+    // ==========================================================
+    if (_filterAdult) {
+      filtered = filtered
+          .where((c) => !isAdultContent(c.name, c.group))
+          .toList();
+    }
+
+    // ==========================================================
+    //  2) فلتر التصنيف الرئيسي
+    // ==========================================================
     if (state.selectedCategorySlug != null) {
       filtered = filtered
           .where((c) => c.category == state.selectedCategorySlug)
           .toList();
     }
 
-    // فلتر الباقة الفرعية
+    // ==========================================================
+    //  3) فلتر الباقة الفرعية
+    // ==========================================================
     if (state.selectedSubCategorySlug != null) {
       final slug = state.selectedSubCategorySlug!.toLowerCase();
 
-      // نجد الـ SubCategory للحصول على الاسم أيضاً
       final selectedCat = state.categories.firstWhere(
         (cat) => cat.slug == state.selectedCategorySlug,
         orElse: () => const Category(id: '', name: '', slug: ''),
@@ -270,7 +273,9 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }).toList();
     }
 
-    // فلتر البحث
+    // ==========================================================
+    //  4) فلتر البحث
+    // ==========================================================
     if (state.searchQuery.trim().isNotEmpty) {
       final q = state.searchQuery.trim().toLowerCase();
       filtered = filtered
@@ -291,49 +296,54 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 }
 
 // ==========================================================
-//  5) Provider الرئيسي
+//  Provider الرئيسي — يستمع لتغييرات الإعدادات
 // ==========================================================
 final playlistProvider =
     StateNotifierProvider<PlaylistNotifier, PlaylistState>((ref) {
   final repo = ref.watch(m3uRepositoryProvider);
-  return PlaylistNotifier(repo);
+  final notifier = PlaylistNotifier(repo);
+
+  // تطبيق القيمة الابتدائية
+  final initialFilter = ref.read(settingsProvider).filterAdult;
+  notifier.setAdultFilter(initialFilter);
+
+  // الاستماع لأي تغيير في الإعدادات
+  ref.listen<SettingsState>(settingsProvider, (prev, next) {
+    if (prev == null || prev.filterAdult != next.filterAdult) {
+      notifier.setAdultFilter(next.filterAdult);
+    }
+  });
+
+  return notifier;
 });
 
 // ==========================================================
-//  6) Providers مساعدة
+//  Providers مساعدة
 // ==========================================================
-
-/// القنوات المعروضة حالياً
 final filteredChannelsProvider = Provider<List<Channel>>((ref) {
   return ref.watch(playlistProvider).filteredChannels;
 });
 
-/// كل التصنيفات
 final categoriesProvider = Provider<List<Category>>((ref) {
   return ref.watch(playlistProvider).categories;
 });
 
-/// حالة التحميل
 final isLoadingProvider = Provider<bool>((ref) {
   return ref.watch(playlistProvider).isLoading;
 });
 
-/// الخطأ
 final errorProvider = Provider<String?>((ref) {
   return ref.watch(playlistProvider).error;
 });
 
-/// التصنيف المختار
 final selectedCategoryProvider = Provider<String?>((ref) {
   return ref.watch(playlistProvider).selectedCategorySlug;
 });
 
-/// الباقة المختارة
 final selectedSubCategoryProvider = Provider<String?>((ref) {
   return ref.watch(playlistProvider).selectedSubCategorySlug;
 });
 
-/// البحث
 final searchQueryProvider = Provider<String>((ref) {
   return ref.watch(playlistProvider).searchQuery;
 });
