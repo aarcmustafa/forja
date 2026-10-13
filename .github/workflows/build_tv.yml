@@ -37,80 +37,66 @@ jobs:
         run: |
           flutter create --platforms=android --org com.estitn --project-name estitn_farja .
 
-      # ==========================================================
-      #  🎨 استبدال الأيقونة + Splash بالملفات المرفوعة
-      # ==========================================================
       - name: Check uploaded assets
         run: |
           echo "=== محتويات assets ==="
           ls -lh client/assets/ || true
           echo ""
-          echo "=== محتويات android_res (إن وُجد) ==="
+          echo "=== محتويات android_res ==="
           ls -lh client/assets/android_res/ || true
-          echo ""
-          echo "=== ملفات ZIP ==="
-          find client/assets -name "*.zip" 2>/dev/null || true
 
-      - name: Extract icons/splash ZIP (if exists)
+      - name: Extract res.zip
         run: |
-          RES_DIR="client/assets/android_res"
-          ZIP_FILE=$(find client/assets -maxdepth 2 -name "res.zip" 2>/dev/null | head -1)
+          ZIP_FILE="client/assets/android_res/res.zip"
 
-          if [ -n "$ZIP_FILE" ]; then
-            echo "✅ وجدت ملف ZIP: $ZIP_FILE"
-            mkdir -p "$RES_DIR"
-            cd "$RES_DIR"
-            unzip -o "../../../$ZIP_FILE" || unzip -o "$ZIP_FILE" || true
-            cd - > /dev/null
-          else
-            echo "⚠️ لا يوجد res.zip، سأبحث عن ملفات مباشرة"
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "❌ res.zip غير موجود!"
+            exit 1
           fi
 
-          echo ""
-          echo "=== محتويات android_res بعد الفك ==="
-          find "$RES_DIR" -type f | head -30
+          echo "✅ وجدت res.zip"
+          mkdir -p client/assets/android_res/extracted
+          cd client/assets/android_res/extracted
 
-      - name: Locate res folder in assets
+          unzip -o "../res.zip"
+
+          echo ""
+          echo "=== محتويات بعد الفك ==="
+          ls -la
+          find . -type d | head -20
+
+      - name: Locate res folder
         id: locate_res
         run: |
-          # ابحث عن أي مجلد res في assets
-          RES_CANDIDATE=$(find client/assets -type d -name "res" 2>/dev/null | head -1)
+          BASE="client/assets/android_res/extracted"
 
+          # ابحث عن مجلد res
+          RES_CANDIDATE=$(find "$BASE" -type d -name "res" 2>/dev/null | head -1)
+
+          # إذا لم يوجد، تحقق إذا كان المحتوى نفسه هو res
           if [ -z "$RES_CANDIDATE" ]; then
-            # ربما داخل android_res مباشرة
-            RES_CANDIDATE="client/assets/android_res"
+            if [ -d "$BASE/mipmap-hdpi" ] || [ -d "$BASE/drawable" ]; then
+              RES_CANDIDATE="$BASE"
+            fi
           fi
 
           echo "RES_PATH=$RES_CANDIDATE" >> $GITHUB_OUTPUT
-          echo "✅ مجلد res: $RES_CANDIDATE"
 
-          echo ""
-          echo "=== محتويات المجلد ==="
-          ls -la "$RES_CANDIDATE" || true
+          if [ -z "$RES_CANDIDATE" ]; then
+            echo "❌ لم أجد مجلد res"
+            exit 1
+          fi
+
+          echo "✅ مجلد res: $RES_CANDIDATE"
+          ls -la "$RES_CANDIDATE"
 
       - name: Replace Android res folder
         run: |
           RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
           RES_DEST="client/android/app/src/main/res"
 
-          if [ ! -d "$RES_SRC" ]; then
-            echo "❌ مجلد المصدر غير موجود: $RES_SRC"
-            echo "سيتم استخدام الأيقونات الافتراضية"
-            exit 0
-          fi
-
-          # تحقق من وجود الأيقونات
-          ICON_COUNT=$(find "$RES_SRC" -name "ic_launcher.png" | wc -l)
-          SPLASH_COUNT=$(find "$RES_SRC" -name "splash*" | wc -l)
-
-          echo "📊 إحصاءات:"
-          echo "   - ملفات ic_launcher.png: $ICON_COUNT"
-          echo "   - ملفات splash: $SPLASH_COUNT"
-
-          if [ "$ICON_COUNT" -lt 1 ]; then
-            echo "⚠️ لم أجد أيقونات. سأحتفظ بالافتراضية"
-            exit 0
-          fi
+          echo "📦 المصدر: $RES_SRC"
+          echo "📦 الهدف: $RES_DEST"
 
           # احذف الافتراضية
           rm -rf "$RES_DEST"
@@ -120,25 +106,27 @@ jobs:
           cp -r "$RES_SRC"/* "$RES_DEST/"
 
           echo ""
-          echo "=== محتويات res بعد الاستبدال ==="
+          echo "=== محتويات res النهائية ==="
           find "$RES_DEST" -type f | head -40
 
-      - name: Verify icon in res
+      - name: Verify icon exists
         run: |
           RES_DEST="client/android/app/src/main/res"
-          echo "=== الملفات في res ==="
-          ls -R "$RES_DEST" | head -60
 
           if [ -f "$RES_DEST/mipmap-xxxhdpi/ic_launcher.png" ]; then
             SIZE=$(stat -c%s "$RES_DEST/mipmap-xxxhdpi/ic_launcher.png")
-            echo "✓ ic_launcher.png موجود (${SIZE} bytes)"
+            echo "✅ ic_launcher.png موجود (${SIZE} bytes)"
           else
             echo "❌ ic_launcher.png غير موجود!"
+            exit 1
           fi
 
-      # ==========================================================
-      #  🔐 توليد secure_config من الأسرار
-      # ==========================================================
+          if ls "$RES_DEST"/drawable/splash* 1> /dev/null 2>&1; then
+            echo "✅ ملفات splash موجودة"
+          else
+            echo "⚠️ ملفات splash غير موجودة"
+          fi
+
       - name: Generate encrypted config
         env:
           PLAYLIST_URLS: ${{ secrets.PLAYLIST_URLS }}
@@ -227,9 +215,6 @@ jobs:
           echo "✓ عدد الروابط: $count"
           if [ "$count" -lt 1 ]; then exit 1; fi
 
-      # ==========================================================
-      #  تعديلات AndroidManifest
-      # ==========================================================
       - name: Bump minSdkVersion to 23
         working-directory: client
         run: |
