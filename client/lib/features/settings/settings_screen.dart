@@ -15,7 +15,6 @@ class AppInfo class AppInfo {
   static const String platform = 'Android TV / Mobile';
   static const String year = '2026';
 }
-}
 
 // ==========================================================
 //  حالة الإعدادات
