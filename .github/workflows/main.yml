@@ -1,0 +1,375 @@
+# ==========================================================
+#  Estetn Farja IPTV - Main CI/CD Pipeline
+#  Pipeline رئيسي يدير: البناء، الفحص، التحديث، والنشر
+# ==========================================================
+
+name: Main Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # تحديث تلقائي كل 6 ساعات
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'ما الذي تريد بناءه؟'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - tv
+          - mobile
+          - server
+          - playlist
+
+# صلاحيات مطلوبة
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
+# منع تشغيل أكثر من job في نفس الوقت على نفس الفرع
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 'stable'
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.11'
+  JAVA_VERSION: '17'
+
+# ==========================================================
+#  JOBS
+# ==========================================================
+jobs:
+
+  # --------------------------------------------------------
+  # 1) فحص جودة الكود لجميع المكونات
+  # --------------------------------------------------------
+  quality-check:
+    name: 🔍 Quality Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    outputs:
+      flutter-ok: ${{ steps.flutter-check.outcome }}
+      python-ok: ${{ steps.python-check.outcome }}
+      node-ok: ${{ steps.node-check.outcome }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 🔎 Python Lint
+        id: python-check
+        continue-on-error: true
+        working-directory: data-pipeline
+        run: |
+          pip install ruff
+          ruff check scripts/ || echo "::warning::Python lint issues found"
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 🔎 Node Lint
+        id: node-check
+        continue-on-error: true
+        working-directory: server
+        run: |
+          npm ci || npm install
+          npm run lint --if-present || echo "::warning::Node lint issues found"
+
+      - name: 🎯 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: 🔎 Flutter Analyze
+        id: flutter-check
+        continue-on-error: true
+        working-directory: client
+        run: |
+          flutter pub get
+          flutter analyze || echo "::warning::Flutter analyze issues found"
+
+  # --------------------------------------------------------
+  # 2) بناء تطبيق Android TV / Google TV
+  # --------------------------------------------------------
+  build-tv:
+    name: 📺 Build Android TV
+    runs-on: ubuntu-latest
+    needs: quality-check
+    if: |
+      always() && 
+      (needs.quality-check.result == 'success' || needs.quality-check.result == 'skipped')
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: 🎯 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: 📦 Dependencies
+        working-directory: client
+        run: flutter pub get
+
+      - name: 🏗️ Build TV APK
+        working-directory: client
+        run: flutter build apk --flavor tv -t lib/main_tv.dart --release
+
+      - name: 🏗️ Build TV Bundle
+        working-directory: client
+        run: flutter build appbundle --flavor tv -t lib/main_tv.dart --release
+
+      - name: 📤 Upload TV APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: estitn-farja-tv-${{ github.sha }}
+          path: |
+            client/build/app/outputs/flutter-apk/app-tv-release.apk
+            client/build/app/outputs/bundle/tvRelease/app-tv-release.aab
+          retention-days: 30
+
+  # --------------------------------------------------------
+  # 3) بناء تطبيق الجوال (Android + iOS)
+  # --------------------------------------------------------
+  build-mobile-android:
+    name: 📱 Build Mobile Android
+    runs-on: ubuntu-latest
+    needs: quality-check
+    if: |
+      always() && 
+      (needs.quality-check.result == 'success' || needs.quality-check.result == 'skipped')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - working-directory: client
+        run: flutter pub get
+
+      - name: 🏗️ Build Mobile APK
+        working-directory: client
+        run: flutter build apk --flavor mobile -t lib/main_mobile.dart --release
+
+      - name: 📤 Upload Mobile APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: estitn-farja-mobile-${{ github.sha }}
+          path: client/build/app/outputs/flutter-apk/app-mobile-release.apk
+          retention-days: 30
+
+  build-mobile-ios:
+    name: 🍎 Build Mobile iOS
+    runs-on: macos-latest
+    needs: quality-check
+    if: |
+      always() && 
+      (needs.quality-check.result == 'success' || needs.quality-check.result == 'skipped')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - working-directory: client
+        run: flutter pub get
+
+      - name: 🏗️ Build iOS (no codesign)
+        working-directory: client
+        run: flutter build ios --flavor mobile -t lib/main_mobile.dart --release --no-codesign
+
+      - name: 📤 Upload iOS Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: estitn-farja-ios-${{ github.sha }}
+          path: client/build/ios/iphoneos/Runner.app
+          retention-days: 30
+
+  # --------------------------------------------------------
+  # 4) تحديث قائمة القنوات (Playlist)
+  # --------------------------------------------------------
+  update-playlist:
+    name: 🔄 Update IPTV Playlist
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' || 
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.modified, 'data-pipeline/')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 📦 Install Python deps
+        working-directory: data-pipeline
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🌐 Fetch sources
+        working-directory: data-pipeline
+        run: python scripts/fetch_sources.py
+
+      - name: 🔎 Parse M3U
+        working-directory: data-pipeline
+        run: python scripts/parse_m3u.py
+
+      - name: ✅ Validate streams
+        working-directory: data-pipeline
+        timeout-minutes: 90
+        run: python scripts/validate_streams.py
+
+      - name: 🧹 Deduplicate
+        working-directory: data-pipeline
+        run: python scripts/deduplicate.py
+
+      - name: 💾 Export
+        working-directory: data-pipeline
+        run: python scripts/export_db.py
+
+      - name: 📤 Upload playlist
+        uses: actions/upload-artifact@v4
+        with:
+          name: playlist-${{ github.run_number }}
+          path: data-pipeline/output/
+          retention-days: 7
+
+      - name: 💾 Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data-pipeline/output/ shared/ || true
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(playlist): auto-update [skip ci]"
+            git push
+          else
+            echo "لا توجد تغييرات لرفعها"
+          fi
+
+  # --------------------------------------------------------
+  # 5) بناء ونشر الخادم
+  # --------------------------------------------------------
+  build-server:
+    name: 🖥️ Build & Push Server
+    runs-on: ubuntu-latest
+    needs: quality-check
+    if: |
+      always() && 
+      (needs.quality-check.result == 'success' || needs.quality-check.result == 'skipped') &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 🔐 Login to Docker Hub
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: 🏗️ Build & Push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/estitn-farja-server:latest
+            ${{ secrets.DOCKER_USERNAME }}/estitn-farja-server:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # --------------------------------------------------------
+  # 6) إنشاء Release عند وضع Tag
+  # --------------------------------------------------------
+  create-release:
+    name: 🚀 Create Release
+    runs-on: ubuntu-latest
+    needs: [build-tv, build-mobile-android]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: 📥 Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: 📋 List artifacts
+        run: ls -R ./artifacts
+
+      - name: 🚀 Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Estetn Farja ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            ./artifacts/**/*.apk
+            ./artifacts/**/*.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --------------------------------------------------------
+  # 7) ملخص النتائج النهائي
+  # --------------------------------------------------------
+  summary:
+    name: 📊 Pipeline Summary
+    runs-on: ubuntu-latest
+    needs: [quality-check, build-tv, build-mobile-android, build-mobile-ios, update-playlist, build-server]
+    if: always()
+    steps:
+      - name: 📝 Generate Summary
+        run: |
+          echo "# 📊 Estetn Farja Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| المهمة | النتيجة |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔍 Quality Check | ${{ needs.quality-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📺 Build TV | ${{ needs.build-tv.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📱 Build Mobile Android | ${{ needs.build-mobile-android.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🍎 Build Mobile iOS | ${{ needs.build-mobile-ios.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔄 Update Playlist | ${{ needs.update-playlist.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🖥️ Build Server | ${{ needs.build-server.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Actor:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
