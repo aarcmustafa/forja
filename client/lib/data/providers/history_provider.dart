@@ -3,14 +3,10 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
 /// مزود سجل المشاهدة
-/// يحفظ:
-/// - آخر 20 قناة مباشرة
-/// - آخر فيلم واحد
-/// - آخر مسلسل واحد
 class HistoryState {
-  final List<String> liveIds;   // آخر 20 قناة
-  final String? lastMovieId;    // آخر فيلم
-  final String? lastSeriesId;   // آخر مسلسل
+  final List<String> liveIds;
+  final String? lastMovieId;
+  final String? lastSeriesId;
   final bool isLoaded;
 
   const HistoryState({
@@ -25,13 +21,11 @@ class HistoryState {
     String? lastMovieId,
     String? lastSeriesId,
     bool? isLoaded,
-    bool clearMovie = false,
-    bool clearSeries = false,
   }) {
     return HistoryState(
       liveIds: liveIds ?? this.liveIds,
-      lastMovieId: clearMovie ? null : (lastMovieId ?? this.lastMovieId),
-      lastSeriesId: clearSeries ? null : (lastSeriesId ?? this.lastSeriesId),
+      lastMovieId: lastMovieId ?? this.lastMovieId,
+      lastSeriesId: lastSeriesId ?? this.lastSeriesId,
       isLoaded: isLoaded ?? this.isLoaded,
     );
   }
@@ -89,38 +83,27 @@ class HistoryNotifier extends StateNotifier<HistoryState> {
     }
   }
 
-  /// إضافة قناة مباشرة
   Future<void> _recordLive(String id) async {
     final list = [...state.liveIds];
-
-    // نُزيل التكرار
     list.remove(id);
-
-    // نُضيف في البداية
     list.insert(0, id);
-
-    // نحفظ آخر 20 فقط
     if (list.length > _maxLive) {
       list.removeRange(_maxLive, list.length);
     }
-
     state = state.copyWith(liveIds: list);
     await _save(_kLiveIds, list);
   }
 
-  /// حفظ آخر فيلم
   Future<void> _recordMovie(String id) async {
     state = state.copyWith(lastMovieId: id);
     await _save(_kMovieId, id);
   }
 
-  /// حفظ آخر مسلسل
   Future<void> _recordSeries(String id) async {
     state = state.copyWith(lastSeriesId: id);
     await _save(_kSeriesId, id);
   }
   
-  /// حفظ في Hive
   Future<void> _save(String key, dynamic value) async {
     if (!_initialized) {
       try {
@@ -133,18 +116,14 @@ class HistoryNotifier extends StateNotifier<HistoryState> {
     }
     try {
       await _box.put(key, value);
-    } catch (_) {
-      // ignore
-    }
+    } catch (_) {}
   }
 
-  /// مسح سجل القنوات المباشرة
   Future<void> clearLive() async {
     state = state.copyWith(liveIds: []);
     if (_initialized) await _box.delete(_kLiveIds);
   }
 
-  /// مسح كل السجل
   Future<void> clearAll() async {
     state = const HistoryState(isLoaded: true);
     if (_initialized) await _box.clear();
@@ -152,47 +131,9 @@ class HistoryNotifier extends StateNotifier<HistoryState> {
 }
 
 // ==========================================================
-//  Provider الرئيسي
+//  Provider
 // ==========================================================
 final historyProvider =
     StateNotifierProvider<HistoryNotifier, HistoryState>((ref) {
   return HistoryNotifier();
-});
-
-// ==========================================================
-//  قوائم السجل (كاملة)
-// ==========================================================
-final recentLiveProvider = Provider<List<Channel>>((ref) {
-  final ids = ref.watch(historyProvider).liveIds;
-  if (ids.isEmpty) return const [];
-
-  final all = ref.watch(playlistProvider).allChannels;
-  final map = {for (final c in all) c.id: c};
-
-  return ids
-      .map((id) => map[id])
-      .whereType<Channel>()
-      .toList();
-});
-
-final lastMovieProvider = Provider<Channel?>((ref) {
-  final id = ref.watch(historyProvider).lastMovieId;
-  if (id == null) return null;
-
-  final all = ref.watch(playlistProvider).allChannels;
-  for (final c in all) {
-    if (c.id == id && c.contentType == 'movie') return c;
-  }
-  return null;
-});
-
-final lastSeriesProvider = Provider<Channel?>((ref) {
-  final id = ref.watch(historyProvider).lastSeriesId;
-  if (id == null) return null;
-
-  final all = ref.watch(playlistProvider).allChannels;
-  for (final c in all) {
-    if (c.id == id && c.contentType == 'series') return c;
-  }
-  return null;
 });
