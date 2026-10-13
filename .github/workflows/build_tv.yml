@@ -38,7 +38,106 @@ jobs:
           flutter create --platforms=android --org com.estitn --project-name estitn_farja .
 
       # ==========================================================
-      #  توليد secure_config.dart مع XOR + Base64 + تقسيم
+      #  🎨 استبدال الأيقونة + Splash بالملفات المرفوعة
+      # ==========================================================
+      - name: Check uploaded assets
+        run: |
+          echo "=== محتويات assets ==="
+          ls -lh client/assets/ || true
+          echo ""
+          echo "=== محتويات android_res (إن وُجد) ==="
+          ls -lh client/assets/android_res/ || true
+          echo ""
+          echo "=== ملفات ZIP ==="
+          find client/assets -name "*.zip" 2>/dev/null || true
+
+      - name: Extract icons/splash ZIP (if exists)
+        run: |
+          RES_DIR="client/assets/android_res"
+          ZIP_FILE=$(find client/assets -maxdepth 2 -name "res.zip" 2>/dev/null | head -1)
+
+          if [ -n "$ZIP_FILE" ]; then
+            echo "✅ وجدت ملف ZIP: $ZIP_FILE"
+            mkdir -p "$RES_DIR"
+            cd "$RES_DIR"
+            unzip -o "../../../$ZIP_FILE" || unzip -o "$ZIP_FILE" || true
+            cd - > /dev/null
+          else
+            echo "⚠️ لا يوجد res.zip، سأبحث عن ملفات مباشرة"
+          fi
+
+          echo ""
+          echo "=== محتويات android_res بعد الفك ==="
+          find "$RES_DIR" -type f | head -30
+
+      - name: Locate res folder in assets
+        id: locate_res
+        run: |
+          # ابحث عن أي مجلد res في assets
+          RES_CANDIDATE=$(find client/assets -type d -name "res" 2>/dev/null | head -1)
+
+          if [ -z "$RES_CANDIDATE" ]; then
+            # ربما داخل android_res مباشرة
+            RES_CANDIDATE="client/assets/android_res"
+          fi
+
+          echo "RES_PATH=$RES_CANDIDATE" >> $GITHUB_OUTPUT
+          echo "✅ مجلد res: $RES_CANDIDATE"
+
+          echo ""
+          echo "=== محتويات المجلد ==="
+          ls -la "$RES_CANDIDATE" || true
+
+      - name: Replace Android res folder
+        run: |
+          RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
+          RES_DEST="client/android/app/src/main/res"
+
+          if [ ! -d "$RES_SRC" ]; then
+            echo "❌ مجلد المصدر غير موجود: $RES_SRC"
+            echo "سيتم استخدام الأيقونات الافتراضية"
+            exit 0
+          fi
+
+          # تحقق من وجود الأيقونات
+          ICON_COUNT=$(find "$RES_SRC" -name "ic_launcher.png" | wc -l)
+          SPLASH_COUNT=$(find "$RES_SRC" -name "splash*" | wc -l)
+
+          echo "📊 إحصاءات:"
+          echo "   - ملفات ic_launcher.png: $ICON_COUNT"
+          echo "   - ملفات splash: $SPLASH_COUNT"
+
+          if [ "$ICON_COUNT" -lt 1 ]; then
+            echo "⚠️ لم أجد أيقونات. سأحتفظ بالافتراضية"
+            exit 0
+          fi
+
+          # احذف الافتراضية
+          rm -rf "$RES_DEST"
+          mkdir -p "$RES_DEST"
+
+          # انسخ ملفات المستخدم
+          cp -r "$RES_SRC"/* "$RES_DEST/"
+
+          echo ""
+          echo "=== محتويات res بعد الاستبدال ==="
+          find "$RES_DEST" -type f | head -40
+
+      - name: Verify icon in res
+        run: |
+          RES_DEST="client/android/app/src/main/res"
+          echo "=== الملفات في res ==="
+          ls -R "$RES_DEST" | head -60
+
+          if [ -f "$RES_DEST/mipmap-xxxhdpi/ic_launcher.png" ]; then
+            SIZE=$(stat -c%s "$RES_DEST/mipmap-xxxhdpi/ic_launcher.png")
+            echo "✓ ic_launcher.png موجود (${SIZE} bytes)"
+          else
+            echo "❌ ic_launcher.png غير موجود!"
+          fi
+
+      # ==========================================================
+      #  🔐 توليد secure_config من الأسرار
       # ==========================================================
       - name: Generate encrypted config
         env:
@@ -50,7 +149,6 @@ jobs:
           import os
           import base64
 
-          # المفتاح السري (XOR) — يمكنك تغييره لاحقاً
           key = bytes([
               0x7A, 0x3F, 0x91, 0x2C, 0xE5, 0x88, 0x4B, 0xD6,
               0x13, 0x6A, 0xBF, 0x50, 0x27, 0x9E, 0xC4, 0x71,
@@ -61,14 +159,13 @@ jobs:
           urls = [u.strip() for u in urls_raw.split('\n') if u.strip()]
 
           if not urls:
-              print('❌ لا توجد روابط في PLAYLIST_URLS')
+              print('❌ لا توجد روابط')
               exit(1)
 
           lines = []
           lines.append("import 'dart:convert';")
           lines.append('')
-          lines.append('/// بيانات مشفّرة — تُفكّ في الذاكرة فقط')
-          lines.append('/// ⚠️ مُولّد تلقائياً — لا تعدّله يدوياً')
+          lines.append('/// بيانات مشفّرة')
           lines.append('class SecureConfig {')
           lines.append('  static const List<int> _k = [')
           lines.append('    ' + ', '.join(f'0x{b:02X}' for b in key) + ',')
@@ -124,27 +221,15 @@ jobs:
           print(f'✓ تم توليد {len(urls)} روابط مشفّرة')
           PY
 
-          echo "=== Check ==="
-          grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo "0"
-
-      - name: Verify encrypted config
+      - name: Verify URLs
         run: |
-          if [ ! -f "client/lib/data/local/secure_config.dart" ]; then
-            echo "❌ ملف secure_config.dart غير موجود"
-            exit 1
-          fi
+          count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo 0)
+          echo "✓ عدد الروابط: $count"
+          if [ "$count" -lt 1 ]; then exit 1; fi
 
-          count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart)
-          echo "✓ عدد الروابط المشفّرة: $count"
-
-          if [ "$count" -lt 1 ]; then
-            echo "❌ لم يتم العثور على روابط"
-            exit 1
-          fi
-
-          echo "=== نموذج من الملف (بدون محتوى حقيقي) ==="
-          head -20 client/lib/data/local/secure_config.dart
-
+      # ==========================================================
+      #  تعديلات AndroidManifest
+      # ==========================================================
       - name: Bump minSdkVersion to 23
         working-directory: client
         run: |
@@ -192,6 +277,7 @@ jobs:
                   android:label="استيتن فرجة"
                   android:name="${applicationName}"
                   android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
                   android:banner="@mipmap/ic_launcher"
                   android:usesCleartextTraffic="true"
                   android:requestLegacyExternalStorage="true"
@@ -223,7 +309,7 @@ jobs:
         working-directory: client
         run: flutter pub get
 
-      - name: Build APK (split per ABI)
+      - name: Build APK
         working-directory: client
         run: |
           flutter build apk --release \
@@ -231,7 +317,7 @@ jobs:
             --split-per-abi \
             --android-skip-build-dependency-validation
 
-      - name: Rename and list APKs
+      - name: Rename APKs
         run: |
           mkdir -p artifacts
           cp client/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk artifacts/estitn-farja-tv-arm64.apk || true
@@ -239,15 +325,14 @@ jobs:
           cp client/build/app/outputs/flutter-apk/app-x86_64-release.apk artifacts/estitn-farja-tv-x86_64.apk || true
           ls -lh artifacts/
 
-      - name: Upload APK artifacts
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: estitn-farja-tv-apk
           path: artifacts/*.apk
           retention-days: 30
 
-      - name: Cleanup generated file
+      - name: Cleanup
         if: always()
         run: |
           rm -f client/lib/data/local/secure_config.dart
-          echo "✓ تم تنظيف الملف المُولّد"
