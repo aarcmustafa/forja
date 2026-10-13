@@ -3,10 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/channel.dart';
 import '../../data/providers/playlist_provider.dart';
+import '../../data/providers/history_provider.dart';
 import '../live_tv/widgets/channel_card.dart';
 import '../player/player_screen.dart';
 
-/// شاشة المسلسلات بنمط Netflix
+/// شاشة المسلسلات بنمط Netflix + سجل المشاهدة
 class SeriesNetflixScreen extends ConsumerStatefulWidget {
   const SeriesNetflixScreen({super.key});
 
@@ -41,33 +42,54 @@ class _SeriesNetflixScreenState extends ConsumerState<SeriesNetflixScreen> {
     final state = ref.watch(playlistProvider);
     final allSeries =
         state.allChannels.where((c) => c.contentType == 'series').toList();
+    final lastSeriesId = ref.watch(historyProvider).lastSeriesId;
 
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
         backgroundColor: const Color(0xFF0A0E1A),
         body: SafeArea(
-          child: _buildBody(state, allSeries),
+          child: _buildBody(state, allSeries, lastSeriesId),
         ),
       ),
     );
   }
 
-  Widget _buildBody(PlaylistState state, List<Channel> series) {
+  Widget _buildBody(
+    PlaylistState state,
+    List<Channel> series,
+    String? lastSeriesId,
+  ) {
     if (state.isLoading && state.allChannels.isEmpty) {
       return _buildLoading();
     }
+
     if (series.isEmpty) {
       return _buildEmpty();
     }
 
     final grouped = _groupByLanguage(series);
 
+    // ابحث عن آخر مسلسل
+    Channel? lastSeries;
+    if (lastSeriesId != null) {
+      try {
+        lastSeries = series.firstWhere((s) => s.id == lastSeriesId);
+      } catch (_) {
+        lastSeries = null;
+      }
+    }
+
     return CustomScrollView(
       controller: _verticalController,
       slivers: [
+        // قسم شوهد حديثاً
+        if (lastSeries != null)
+          SliverToBoxAdapter(child: _buildRecentSeries(lastSeries)),
+
         SliverToBoxAdapter(child: _buildHeader(state, series.length)),
         const SliverToBoxAdapter(child: SizedBox(height: 24)),
+
         for (final lang in _languagesOrder)
           if ((grouped[lang['code']] ?? []).isNotEmpty)
             SliverToBoxAdapter(
@@ -76,6 +98,7 @@ class _SeriesNetflixScreenState extends ConsumerState<SeriesNetflixScreen> {
                 series: grouped[lang['code']]!,
               ),
             ),
+
         const SliverToBoxAdapter(child: SizedBox(height: 40)),
       ],
     );
@@ -96,6 +119,63 @@ class _SeriesNetflixScreenState extends ConsumerState<SeriesNetflixScreen> {
     return map;
   }
 
+  // ==========================================================
+  //  قسم شوهد حديثاً (آخر مسلسل)
+  // ==========================================================
+  Widget _buildRecentSeries(Channel series) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20, bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Row(
+              children: [
+                Container(
+                  width: 5,
+                  height: 26,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFB800),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Icon(
+                  Icons.history_rounded,
+                  color: Color(0xFFFFB800),
+                  size: 22,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'شوهد حديثاً',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: ChannelCard(
+              channel: series,
+              width: 180,
+              height: 270,
+              onTap: () => _openSeries(series),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================
+  //  الشريط العلوي
+  // ==========================================================
   Widget _buildHeader(PlaylistState state, int total) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
@@ -164,6 +244,9 @@ class _SeriesNetflixScreenState extends ConsumerState<SeriesNetflixScreen> {
     );
   }
 
+  // ==========================================================
+  //  صف أفقى
+  // ==========================================================
   Widget _buildRow({
     required String title,
     required List<Channel> series,
@@ -219,6 +302,7 @@ class _SeriesNetflixScreenState extends ConsumerState<SeriesNetflixScreen> {
             ),
           ),
           const SizedBox(height: 16),
+
           SizedBox(
             height: 300,
             child: ListView.separated(
@@ -242,7 +326,14 @@ class _SeriesNetflixScreenState extends ConsumerState<SeriesNetflixScreen> {
     );
   }
 
+  // ==========================================================
+  //  الفتح
+  // ==========================================================
   void _openSeries(Channel series) {
+    // ✅ تسجيل في السجل
+    ref.read(historyProvider.notifier).record(series);
+
+    // فتح المشغل
     Navigator.push(
       context,
       MaterialPageRoute(
