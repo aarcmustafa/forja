@@ -2,7 +2,6 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
 /// خدمة التخزين المحلي باستخدام Hive
-/// تحفظ القنوات لتسريع فتح التطبيق
 class LocalStorage {
   static const String _boxName = 'channels_cache';
   static const String _kChannels = 'channels_list';
@@ -14,20 +13,21 @@ class LocalStorage {
   /// مدة صلاحية الذاكرة المؤقتة (24 ساعة)
   static const Duration cacheValidity = Duration(hours: 24);
 
+  /// ✅ الحد الأقصى لعدد القنوات المحفوظة
+  static const int maxSavedChannels = 100000;
+
   late Box _box;
   bool _initialized = false;
 
-  /// تهيئة التخزين - تُستدعى مرة واحدة عند بدء التطبيق
+  /// تهيئة التخزين
   Future<void> init() async {
     if (_initialized) return;
 
     await Hive.initFlutter();
     _box = await Hive.openBox(_boxName);
 
-    // التحقق من إصدار الـ schema
     final savedVersion = _box.get(_kVersion, defaultValue: 0);
     if (savedVersion != _currentVersion) {
-      // إصدار قديم → نحذف البيانات
       await _box.clear();
       await _box.put(_kVersion, _currentVersion);
     }
@@ -35,7 +35,6 @@ class LocalStorage {
     _initialized = true;
   }
 
-  /// هل التخزين جاهز؟
   bool get isReady => _initialized;
 
   /// حفظ القنوات محلياً
@@ -43,11 +42,9 @@ class LocalStorage {
     if (!_initialized) await init();
 
     try {
-      // تحويل القنوات إلى JSON
       final List<Map<String, dynamic>> jsonList =
           channels.map((c) => c.toJson()).toList();
 
-      // حفظ + timestamp
       await _box.put(_kChannels, jsonList);
       await _box.put(_kTimestamp, DateTime.now().millisecondsSinceEpoch);
     } catch (e) {
@@ -61,7 +58,6 @@ class LocalStorage {
     if (!_initialized) return null;
 
     try {
-      // التحقق من الصلاحية
       if (checkValidity && !_isCacheValid()) {
         return null;
       }
@@ -69,7 +65,6 @@ class LocalStorage {
       final raw = _box.get(_kChannels);
       if (raw == null) return null;
 
-      // تحويل من JSON إلى Channel
       final List<dynamic> list = raw as List<dynamic>;
       final channels = <Channel>[];
 
@@ -77,9 +72,7 @@ class LocalStorage {
         try {
           final map = Map<String, dynamic>.from(item as Map);
           channels.add(Channel.fromJson(map));
-        } catch (_) {
-          // تجاهل العناصر المعطوبة
-        }
+        } catch (_) {}
       }
 
       return channels.isEmpty ? null : channels;
@@ -105,20 +98,18 @@ class LocalStorage {
     }
   }
 
-  /// هل توجد بيانات محفوظة؟
   bool hasSavedData() {
     if (!_initialized) return false;
     return _box.containsKey(_kChannels);
   }
 
-  /// وقت آخر حفظ
   DateTime? getLastSaveTime() {
     if (!_initialized) return null;
     final ts = _box.get(_kTimestamp);
     if (ts == null) return null;
     return DateTime.fromMillisecondsSinceEpoch(ts as int);
   }
-  
+
   /// عدد القنوات المحفوظة
   int getSavedCount() {
     if (!_initialized) return 0;
@@ -146,6 +137,28 @@ class LocalStorage {
       'count': getSavedCount(),
       'lastSave': getLastSaveTime()?.toIso8601String(),
       'valid': _isCacheValid(),
+      'limit': maxSavedChannels,
     };
+  }
+
+  // ==========================================================
+  //  ✅ صيانة تلقائية
+  // ==========================================================
+  /// صيانة التخزين — تُستدعى عند بدء التطبيق
+  Future<void> maintain() async {
+    if (!_initialized) await init();
+    try {
+      final count = getSavedCount();
+      if (count > maxSavedChannels) {
+        // ignore: avoid_print
+        print('🧹 التخزين كبير جداً ($count)، سيُعاد التعيين');
+        await clear();
+      }
+    } catch (_) {}
+  }
+
+  /// إعادة تعيين كاملة
+  Future<void> reset() async {
+    await clear();
   }
 }
