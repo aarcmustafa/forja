@@ -1,0 +1,325 @@
+name: Build Android Mobile APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'client/**'
+      - '.github/workflows/build_mobile.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-mobile:
+    name: Build Mobile APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Generate Android platform
+        run: |
+          cd /tmp
+          flutter create --platforms=android --org com.estitn --project-name estitn_farja --no-pub temp_app
+          rm -rf "$GITHUB_WORKSPACE/client/android"
+          cp -r /tmp/temp_app/android "$GITHUB_WORKSPACE/client/android"
+
+      - name: Auto-fix Dart files
+        run: |
+          find client/lib -name "*.dart" | while read f; do
+            if grep -q "KeyDownEvent" "$f"; then
+              if ! grep -q "package:flutter/services.dart" "$f"; then
+                sed -i "1i import 'package:flutter/services.dart';" "$f"
+              fi
+            fi
+          done
+
+          find client/lib -name "*.dart" | while read f; do
+            if grep -q "controller.value.size" "$f"; then
+              sed -i "s|controller.value.size.width|(player.state.width ?? 1920).toDouble()|g" "$f"
+              sed -i "s|controller.value.size.height|(player.state.height ?? 1080).toDouble()|g" "$f"
+            fi
+          done
+
+      - name: Download real Cairo fonts
+        working-directory: client
+        run: |
+          mkdir -p assets/fonts
+          cd assets/fonts
+          curl -sL -o cairo-var.ttf "https://github.com/google/fonts/raw/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf"
+          if [ -f cairo-var.ttf ] && [ -s cairo-var.ttf ]; then
+            cp cairo-var.ttf main_font.ttf
+            cp cairo-var.ttf main_font_bold.ttf
+            cp cairo-var.ttf Cairo-SemiBold.ttf
+            cp cairo-var.ttf Cairo-Black.ttf
+          else
+            touch main_font.ttf main_font_bold.ttf Cairo-SemiBold.ttf Cairo-Black.ttf
+          fi
+          ls -lh *.ttf
+
+      - name: Install unrar and 7zip
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y unrar-free p7zip-full || true
+
+      - name: Extract archive
+        run: |
+          BASE="client/assets/android_res"
+          mkdir -p "$BASE/extracted"
+          ARCHIVE=$(find "$BASE" -maxdepth 1 \( -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) 2>/dev/null | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            exit 0
+          fi
+          if [ "${ARCHIVE##*.}" = "zip" ]; then
+            unzip -o "$ARCHIVE" -d "$BASE/extracted"
+          elif [ "${ARCHIVE##*.}" = "rar" ]; then
+            unrar x -o+ "$ARCHIVE" "$BASE/extracted/" || 7z x "$ARCHIVE" -o"$BASE/extracted" -y
+          else
+            7z x "$ARCHIVE" -o"$BASE/extracted" -y
+          fi
+          find "$BASE/extracted" -type f | head -40 || true
+
+      - name: Detect res folder
+        id: locate_res
+        run: |
+          BASE="client/assets/android_res"
+          RES_PATH=""
+          if [ -d "$BASE/extracted/res" ]; then
+            RES_PATH="$BASE/extracted/res"
+          elif [ -d "$BASE/extracted/mipmap-hdpi" ]; then
+            RES_PATH="$BASE/extracted"
+          elif [ -d "$BASE/res" ]; then
+            RES_PATH="$BASE/res"
+          elif [ -d "$BASE/mipmap-hdpi" ]; then
+            RES_PATH="$BASE"
+          fi
+          echo "RES_PATH=$RES_PATH" >> $GITHUB_OUTPUT
+
+      - name: Replace Android res folder
+        run: |
+          RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
+          RES_DEST="client/android/app/src/main/res"
+          if [ -z "$RES_SRC" ]; then
+            exit 0
+          fi
+          if [ ! -d "$RES_SRC" ]; then
+            exit 0
+          fi
+          rm -rf "$RES_DEST"
+          mkdir -p "$RES_DEST"
+          cp -r "$RES_SRC"/* "$RES_DEST/"
+
+      - name: Create styles.xml
+        working-directory: client
+        run: |
+          mkdir -p android/app/src/main/res/values
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">\n        <item name="android:windowBackground">@drawable/launch_background</item>\n    </style>\n    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">\n        <item name="android:windowBackground">?android:colorBackground</item>\n    </style>\n</resources>\n' > android/app/src/main/res/values/styles.xml
+
+      - name: Create launch_background.xml
+        working-directory: client
+        run: |
+          mkdir -p android/app/src/main/res/drawable
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<layer-list xmlns:android="http://schemas.android.com/apk/res/android">\n    <item android:drawable="@android:color/white" />\n</layer-list>\n' > android/app/src/main/res/drawable/launch_background.xml
+
+      - name: Generate encrypted config
+        env:
+          PLAYLIST_URLS: ${{ secrets.PLAYLIST_URLS }}
+        run: |
+          mkdir -p client/lib/data/local
+          python3 client/scripts/gen_config.py > client/lib/data/local/secure_config.dart
+
+      - name: Verify URLs
+        run: |
+          count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo 0)
+          if [ "$count" -lt 1 ]; then
+            exit 1
+          fi
+
+      - name: Bump minSdkVersion to 23
+        working-directory: client
+        run: |
+          if [ -f android/app/build.gradle ]; then
+            sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
+          fi
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 23/' android/app/build.gradle.kts
+          fi
+
+      - name: Fix NDK version
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          import re
+          path = "android/app/build.gradle.kts"
+          if not os.path.exists(path):
+              path = "android/app/build.gradle"
+          if not os.path.exists(path):
+              exit(0)
+          src = open(path, "r", encoding="utf-8").read()
+          if "ndkVersion" in src:
+              src = re.sub(r'ndkVersion\s*=?\s*[^\n]+', 'ndkVersion = "28.2.13676358"', src)
+          else:
+              marker = "android {"
+              idx = src.find(marker)
+              if idx != -1:
+                  insert_at = idx + len(marker)
+                  block = '\n    ndkVersion = "28.2.13676358"\n'
+                  src = src[:insert_at] + block + src[insert_at:]
+          open(path, "w", encoding="utf-8").write(src)
+          PYEOF
+
+      - name: Change applicationId for mobile
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          import re
+          path = "android/app/build.gradle.kts"
+          if not os.path.exists(path):
+              path = "android/app/build.gradle"
+          if not os.path.exists(path):
+              exit(0)
+          src = open(path, "r", encoding="utf-8").read()
+          src = re.sub(
+              r'applicationId\s*=?\s*"[^"]*"',
+              'applicationId = "com.estitn.farja.mobile"',
+              src
+          )
+          open(path, "w", encoding="utf-8").write(src)
+          PYEOF
+
+      - name: Add core-splashscreen dependency
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          path = "android/app/build.gradle.kts"
+          if not os.path.exists(path):
+              path = "android/app/build.gradle"
+          if not os.path.exists(path):
+              exit(0)
+          src = open(path, "r", encoding="utf-8").read()
+          if "core-splashscreen" in src:
+              exit(0)
+          marker = "dependencies {"
+          idx = src.find(marker)
+          if idx == -1:
+              src += '\n\ndependencies {\n    implementation("androidx.core:core-splashscreen:1.0.1")\n}\n'
+          else:
+              insert_at = idx + len(marker)
+              block = '\n    implementation("androidx.core:core-splashscreen:1.0.1")'
+              src = src[:insert_at] + block + src[insert_at:]
+          open(path, "w", encoding="utf-8").write(src)
+          PYEOF
+
+      - name: Add packaging options
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
+          for path in candidates:
+              if not os.path.exists(path):
+                  continue
+              src = open(path, "r", encoding="utf-8").read()
+              if "packagingOptions" in src or "packaging {" in src:
+                  continue
+              marker = "android {"
+              idx = src.find(marker)
+              if idx == -1:
+                  continue
+              insert_at = idx + len(marker)
+              block = """
+
+              packaging {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+                  resources {
+                      excludes += setOf("META-INF/*.kotlin_module")
+                  }
+              }
+          """
+              src = src[:insert_at] + block + src[insert_at:]
+              open(path, "w", encoding="utf-8").write(src)
+          PYEOF
+
+      - name: Override AndroidManifest for Mobile
+        working-directory: client
+        run: |
+          cat > android/app/src/main/AndroidManifest.xml <<'XMLEOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <application
+                  android:label="استيتن فرجة"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:usesCleartextTraffic="true"
+                  android:requestLegacyExternalStorage="true"
+                  android:hardwareAccelerated="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <meta-data android:name="flutterEmbedding" android:value="2" />
+              </application>
+          </manifest>
+          XMLEOF
+
+      - name: Get dependencies
+        working-directory: client
+        run: flutter pub get
+
+      - name: Build Mobile APK
+        working-directory: client
+        run: |
+          flutter build apk --release -t lib/main_mobile.dart --android-skip-build-dependency-validation
+
+      - name: Rename APK
+        run: |
+          mkdir -p artifacts
+          cp client/build/app/outputs/flutter-apk/app-release.apk artifacts/estitn-farja-mobile.apk || true
+          ls -lh artifacts/
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: estitn-farja-mobile-apk
+          path: artifacts/*.apk
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f "$GITHUB_WORKSPACE/client/lib/data/local/secure_config.dart" || true
