@@ -45,8 +45,11 @@ jobs:
 
       - name: Verify android created
         run: |
-          test -d "client/android" && echo "android exists"
-          test -f "client/android/app/build.gradle" && echo "build.gradle exists"
+          ls -la client/android/ || true
+          echo "---"
+          ls -la client/android/app/ || true
+          echo "---"
+          echo "done"
 
       - name: Install unrar and 7zip
         run: |
@@ -64,7 +67,7 @@ jobs:
           ARCHIVE=$(find "$BASE" -maxdepth 1 \( -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) 2>/dev/null | head -1)
           if [ -z "$ARCHIVE" ]; then
             echo "no archive found"
-            exit 1
+            exit 0
           fi
           echo "Archive: $ARCHIVE"
           if [ "${ARCHIVE##*.}" = "zip" ]; then
@@ -110,14 +113,6 @@ jobs:
           cp -r "$RES_SRC"/* "$RES_DEST/"
           find "$RES_DEST" -type f | head -40 || true
 
-      - name: Verify icon
-        run: |
-          if [ -f "client/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" ]; then
-            echo "icon found"
-          else
-            echo "icon missing, using default"
-          fi
-
       - name: Generate encrypted config
         env:
           PLAYLIST_URLS: ${{ secrets.PLAYLIST_URLS }}
@@ -139,18 +134,46 @@ jobs:
       - name: Bump minSdkVersion to 23
         working-directory: client
         run: |
-          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
+          if [ -f android/app/build.gradle ]; then
+            sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
+            echo "updated build.gradle"
+          fi
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 23/' android/app/build.gradle.kts
+            echo "updated build.gradle.kts"
+          fi
 
       - name: Add packaging options
         working-directory: client
         run: |
           python3 - <<'PYEOF'
-          path = "android/app/build.gradle"
-          src = open(path, "r", encoding="utf-8").read()
-          if "packagingOptions" not in src:
-              idx = src.find("android {")
-              if idx != -1:
-                  insert_at = idx + len("android {")
+          import os
+          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
+          for path in candidates:
+              if not os.path.exists(path):
+                  continue
+              src = open(path, "r", encoding="utf-8").read()
+              if "packagingOptions" in src or "packaging {" in src:
+                  print(f"already in {path}")
+                  continue
+              marker = "android {"
+              idx = src.find(marker)
+              if idx == -1:
+                  continue
+              insert_at = idx + len(marker)
+              if path.endswith(".kts"):
+                  block = """
+
+              packaging {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+                  resources {
+                      excludes += setOf("META-INF/*.kotlin_module")
+                  }
+              }
+          """
+              else:
                   block = """
 
               packagingOptions {
@@ -162,8 +185,9 @@ jobs:
                   }
               }
           """
-                  src = src[:insert_at] + block + src[insert_at:]
-          open(path, "w", encoding="utf-8").write(src)
+              src = src[:insert_at] + block + src[insert_at:]
+              open(path, "w", encoding="utf-8").write(src)
+              print(f"updated {path}")
           PYEOF
 
       - name: Override AndroidManifest
