@@ -6,14 +6,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 // ==========================================================
 //  معلومات التطبيق
 // ==========================================================
-class AppInfo {
-  static const String appName = 'استيتن فرجة';
-  static const String appSubtitle = 'الرياضية';
+class AppInfo class AppInfo {
+  static const String appName = 'STTITEN FOOT';
+  static const String appSubtitle = '';
   static const String version = '1.0.0';
   static const String buildNumber = '1';
-  static const String developer = 'جلولي مصطفى';
-  static const String platform = 'Android TV / Google TV';
+  static const String developer = 'J. Mustapha';
+  static const String platform = 'Android TV / Mobile';
   static const String year = '2026';
+}
 }
 
 // ==========================================================
