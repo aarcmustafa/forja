@@ -3,26 +3,26 @@ import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
-/// خدمة فحص القنوات - تعمل في الخلفية بدون أن يراها المستخدم
+/// خدمة فحص القنوات - تعمل في الخلفية
 class StreamChecker {
   static const String _boxName = 'stream_checks';
   static const String _kResults = 'results';
   static const String _kTimestamp = 'checked_at';
 
-  /// مهلة قصيرة (للفحص الخلفي)
   static const Duration timeout = Duration(seconds: 4);
-
-  /// عدد الفحوصات المتوازية
   static const int concurrency = 15;
-
-  /// عدد الفحوصات في الدفعة الخلفية
   static const int backgroundBatchSize = 10;
-
-  /// التأخير بين الدفعات (لتقليل الحِمل)
   static const Duration backgroundDelay = Duration(seconds: 8);
 
+  /// ✅ VLC UA — مقبول من 99% من السيرفرات
+  static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
+
   static const List<int> okStatusCodes = [
-    200, 206, 301, 302, 303, 307, 308,
+    200, // OK
+    206, // Partial Content
+    301, 302, 303, 307, 308, // إعادة التوجيه
+    401, // Unauthorized (محتمل)
+    403, // Forbidden (بعض السيرفرات ترفض HEAD فقط)
   ];
 
   final Dio _dio;
@@ -38,9 +38,9 @@ class StreamChecker {
           followRedirects: true,
           validateStatus: (_) => true,
           headers: {
-            'User-Agent':
-                'Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36',
+            'User-Agent': vlcUserAgent,
             'Accept': '*/*',
+            'Connection': 'keep-alive',
           },
         ));
 
@@ -57,15 +57,37 @@ class StreamChecker {
   // ==========================================================
   Future<bool> checkOne(Channel channel) async {
     try {
+      // Referer تلقائي
+      final headers = <String, String>{
+        'User-Agent': vlcUserAgent,
+        'Accept': '*/*',
+      };
+      try {
+        final uri = Uri.parse(channel.streamUrl);
+        headers['Referer'] = '${uri.scheme}://${uri.host}/';
+      } catch (_) {}
+
+      // استخدام Referer المخصص إن وُجد
+      final customReferer = channel.extras['referer'];
+      if (customReferer != null && customReferer.isNotEmpty) {
+        headers['Referer'] = customReferer;
+      }
+
       Response response;
       try {
-        response = await _dio.head(channel.streamUrl);
+        response = await _dio.head(
+          channel.streamUrl,
+          options: Options(headers: headers),
+        );
       } catch (_) {
         response = await _dio.get(
           channel.streamUrl,
           options: Options(
             responseType: ResponseType.stream,
-            headers: {'Range': 'bytes=0-512'},
+            headers: {
+              ...headers,
+              'Range': 'bytes=0-512',
+            },
           ),
         );
       }
@@ -78,13 +100,8 @@ class StreamChecker {
   }
 
   // ==========================================================
-  //  الفحص الخلفي التلقائي
+  //  الفحص الخلفي
   // ==========================================================
-
-  /// تشغيل الفحص في الخلفية
-  /// - يفحص الدفعات واحدة تلو الأخرى
-  /// - يتوقف مؤقتاً إذا كانت القناة تُشغّل فيديو
-  /// - يعيد فقط القنوات غير المفصولة مسبقاً
   Future<void> startBackgroundCheck(
     List<Channel> channels, {
     required void Function(String channelId, bool isWorking) onResult,
@@ -93,36 +110,29 @@ class StreamChecker {
     if (_isRunning) return;
     _isRunning = true;
 
-    // فلترة: نتجاوز القنوات المفحوصة سابقاً
     final checkedIds = alreadyChecked?.keys.toSet() ?? <String>{};
-    final toCheck = channels
-        .where((c) => !checkedIds.contains(c.id))
-        .toList();
+    final toCheck =
+        channels.where((c) => !checkedIds.contains(c.id)).toList();
 
     if (toCheck.isEmpty) {
       _isRunning = false;
       return;
     }
 
-    // فحص صامت في الخلفية
     for (int i = 0; i < toCheck.length; i += backgroundBatchSize) {
-      // إيقاف مؤقت إذا كان الفيديو يعمل
       while (_isPaused) {
         await Future.delayed(const Duration(seconds: 2));
       }
-
       if (!_isRunning) break;
 
       final batch = toCheck.skip(i).take(backgroundBatchSize).toList();
       final results = await Future.wait(batch.map((c) => checkOne(c)));
 
-      // إرسال النتائج + حفظ فوري
       for (int j = 0; j < batch.length; j++) {
         onResult(batch[j].id, results[j]);
       }
       await _savePartialResults(batch, results);
 
-      // تأخير بين الدفعات (لتقليل الحِمل)
       if (i + backgroundBatchSize < toCheck.length) {
         await Future.delayed(backgroundDelay);
       }
@@ -131,27 +141,18 @@ class StreamChecker {
     _isRunning = false;
   }
 
-  /// إيقاف الفحص مؤقتاً (عند فتح فيديو)
-  void pause() {
-    _isPaused = true;
-  }
+  void pause() => _isPaused = true;
+  void resume() => _isPaused = false;
 
-  /// استئناف الفحص
-  void resume() {
-    _isPaused = false;
-  }
-
-  /// إيقاف الفحص نهائياً
   void stop() {
     _isRunning = false;
     _backgroundTimer?.cancel();
   }
 
-  /// هل الفحص يعمل؟
   bool get isRunning => _isRunning;
 
   // ==========================================================
-  //  حفظ + قراءة
+  //  الحفظ والقراءة
   // ==========================================================
   Future<void> _savePartialResults(
     List<Channel> channels,
@@ -177,7 +178,6 @@ class StreamChecker {
     } catch (_) {}
   }
 
-  /// قراءة النتائج المحفوظة
   Future<Map<String, bool>> loadResults() async {
     if (_box == null) await init();
     if (_box == null) return {};
@@ -199,13 +199,11 @@ class StreamChecker {
     }
   }
 
-  /// هل فُحصت هذه القناة؟
   Future<bool> hasBeenChecked(String channelId) async {
     final results = await loadResults();
     return results.containsKey(channelId);
   }
-  
-  /// وقت آخر فحص
+
   DateTime? getLastCheckTime() {
     if (_box == null) return null;
     final ts = _box!.get(_kTimestamp);
@@ -213,13 +211,11 @@ class StreamChecker {
     return DateTime.fromMillisecondsSinceEpoch(ts as int);
   }
 
-  /// عدد القنوات المفحوصة
   Future<int> getCheckedCount() async {
     final results = await loadResults();
     return results.length;
   }
 
-  /// مسح النتائج
   Future<void> clear() async {
     if (_box == null) await init();
     if (_box == null) return;
