@@ -8,12 +8,13 @@ class LocalStorage {
   static const String _kTimestamp = 'saved_at';
   static const String _kVersion = 'schema_version';
 
-  static const int _currentVersion = 1;
+  // ✅ رفعنا الإصدار → يمسح الكاش القديم مرة واحدة
+  static const int _currentVersion = 2;
 
-  /// مدة صلاحية الذاكرة المؤقتة (7 أيام)
-  static const Duration cacheValidity = Duration(days: 7);
+  // ✅ مدة صلاحية 30 يوماً
+  static const Duration cacheValidity = Duration(days: 30);
 
-  /// ✅ الحد الأقصى الكبير جداً (لن يُمسح)
+  // ✅ حد أقصى كبير جداً (لن يُمسح)
   static const int maxSavedChannels = 500000;
 
   late Box _box;
@@ -29,6 +30,7 @@ class LocalStorage {
     if (savedVersion != _currentVersion) {
       await _box.clear();
       await _box.put(_kVersion, _currentVersion);
+      await _box.flush();
     }
 
     _initialized = true;
@@ -36,6 +38,9 @@ class LocalStorage {
 
   bool get isReady => _initialized;
 
+  // ==========================================================
+  //  ✅ حفظ + إجبار الكتابة على القرص
+  // ==========================================================
   Future<void> saveChannels(List<Channel> channels) async {
     if (!_initialized) await init();
 
@@ -45,12 +50,18 @@ class LocalStorage {
 
       await _box.put(_kChannels, jsonList);
       await _box.put(_kTimestamp, DateTime.now().millisecondsSinceEpoch);
+
+      // ✅ الأهم: إجبار الكتابة على القرص فوراً
+      await _box.flush();
     } catch (e) {
       // ignore: avoid_print
       print('فشل حفظ القنوات محلياً: $e');
     }
   }
 
+  // ==========================================================
+  //  قراءة القنوات من الذاكرة
+  // ==========================================================
   List<Channel>? loadChannels({bool checkValidity = true}) {
     if (!_initialized) return null;
 
@@ -117,12 +128,19 @@ class LocalStorage {
     }
   }
 
+  // ==========================================================
+  //  حذف كل البيانات (يدوي فقط)
+  // ==========================================================
   Future<void> clear() async {
     if (!_initialized) await init();
     await _box.clear();
     await _box.put(_kVersion, _currentVersion);
+    await _box.flush();
   }
 
+  // ==========================================================
+  //  معلومات التخزين
+  // ==========================================================
   Map<String, dynamic> getInfo() {
     return {
       'ready': _initialized,
@@ -134,12 +152,17 @@ class LocalStorage {
     };
   }
 
-  /// ✅ صيانة التخزين — لا تمسح الكاش أبداً
+  // ==========================================================
+  //  ✅ صيانة — لا تمسح الكاش
+  // ==========================================================
   Future<void> maintain() async {
     // لا تفعل شيئاً — اترك الكاش كما هو
     // سيُحدَّث تلقائياً في الخلفية
   }
 
+  // ==========================================================
+  //  إعادة تعيين كاملة (يدوي فقط)
+  // ==========================================================
   Future<void> reset() async {
     await clear();
   }
