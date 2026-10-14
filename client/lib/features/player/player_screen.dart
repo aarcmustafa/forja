@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
-/// شاشة المشغل — محسّنة للتلفاز مع دعم كل صيغ IPTV
-/// يدعم: HLS, TS, DASH, RTSP, RTMP, UDP, MMS, FLV, MP4, MKV...
+import '../../data/local/playback_position_service.dart';
+
+/// شاشة المشغل — Retry مع Exponential Backoff + استئناف الموضع
 class PlayerScreen extends StatefulWidget {
   final String streamUrl;
   final String channelName;
@@ -37,17 +39,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _isPlaying = false;
   bool _isBuffering = false;
 
-  // تحسينات المشغل
   double _volume = 100.0;
   bool _isMuted = false;
   double _playbackSpeed = 1.0;
   int _aspectMode = 0;
   bool _showVolumeBar = false;
 
-  // إعادة المحاولة التلقائية
+  // ✅ إعادة المحاولة
   int _retryCount = 0;
-  static const int _maxRetries = 3;
+  static const int _maxRetries = 5;   // ⬆️ زيادة إلى 5
   bool _isReconnecting = false;
+  DateTime? _lastErrorTime;
+
+  // ✅ حفظ موضع التشغيل
+  final PlaybackPositionService _positionService = PlaybackPositionService();
+  DateTime _lastPositionSave = DateTime.now();
+  bool _hasRestoredPosition = false;
 
   final List<double> _speedOptions = const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
@@ -59,6 +66,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    _saveCurrentPosition();
     _hideControlsTimer?.cancel();
     _retryTimer?.cancel();
     _volumeBarTimer?.cancel();
@@ -73,30 +81,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     try {
       player = Player(
         configuration: const PlayerConfiguration(
-          // 96MB لتقليل التقطيع في البث عالي الجودة
           bufferSize: 96 * 1024 * 1024,
           logLevel: MPVLogLevel.error,
-          // ✅ قائمة بروتوكولات شاملة لكل صيغ IPTV
           protocolWhitelist: [
-            // HTTP/HTTPS (HLS, TS, MP4...)
-            'http', 'https',
-            // HLS
-            'hls', 'm3u8',
-            // Transport Stream
-            'mpegts', 'ts',
-            // MPEG-DASH
-            'dash', 'mpd',
-            // RTSP (كاميرات و IPTV)
-            'rtsp', 'rtsps',
-            // RTMP (Flash)
-            'rtmp', 'rtmps', 'rtmpt', 'rtmpe',
-            // UDP/RTP Multicast
+            'http', 'https', 'hls', 'm3u8',
+            'mpegts', 'ts', 'dash', 'mpd',
+            'rtsp', 'rtsps', 'rtmp', 'rtmps', 'rtmpt', 'rtmpe',
             'udp', 'rtp', 'mms', 'mmsh', 'mmst',
-            // منافذ آمنة
-            'tcp', 'tls', 'crypto',
-            // ملفات محلية
-            'file', 'concat', 'data',
-            // بروتوكولات حديثة
+            'tcp', 'tls', 'crypto', 'file', 'concat', 'data',
             'srt', 'rist',
           ],
         ),
@@ -120,6 +112,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       player.stream.position.listen((pos) {
         if (!mounted) return;
         setState(() => _position = pos);
+
+        final now = DateTime.now();
+        if (now.difference(_lastPositionSave).inSeconds >= 10) {
+          _lastPositionSave = now;
+          _saveCurrentPosition();
+        }
       });
 
       player.stream.duration.listen((dur) {
@@ -134,6 +132,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       await _openStream();
       _startHideControlsTimer();
+      await _restoreSavedPosition();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -144,10 +143,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   // ==========================================================
-  //  فتح البث مع VLC UA + Referer
+  //  فتح البث
   // ==========================================================
   Future<void> _openStream() async {
-    // ✅ بناء Headers مع VLC UA + Referer تلقائي
     final headers = _buildHeaders(widget.streamUrl);
 
     await player.open(
@@ -158,27 +156,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
       play: true,
     );
 
-    // إخفاء شاشة التحميل بعد 3 ثوانٍ كحد أقصى
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted && _isLoading) {
         setState(() => _isLoading = false);
       }
     });
-
-    _retryCount = 0;
   }
 
-  /// بناء Headers مع VLC User Agent + Referer تلقائي
   Map<String, String> _buildHeaders(String url) {
     final headers = <String, String>{
-      // ✅ VLC User Agent — مقبول من 99% من السيرفرات
       'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
       'Accept': '*/*',
       'Connection': 'keep-alive',
       'Icy-MetaData': '1',
     };
 
-    // استخراج Referer و Origin تلقائياً
     try {
       final uri = Uri.parse(url);
       final origin = '${uri.scheme}://${uri.host}';
@@ -190,24 +182,45 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   // ==========================================================
-  //  معالج الأخطاء مع إعادة المحاولة
+  //  إعادة المحاولة مع Exponential Backoff
   // ==========================================================
   void _handleError(String error) {
     if (!mounted) return;
 
+    // ✅ إعادة تعيين العدّاد إذا مضى أكثر من 30 ثانية على آخر خطأ
+    final now = DateTime.now();
+    if (_lastErrorTime != null &&
+        now.difference(_lastErrorTime!).inSeconds > 30) {
+      _retryCount = 0;
+    }
+    _lastErrorTime = now;
+
     if (_retryCount < _maxRetries) {
       _retryCount++;
+
       setState(() {
         _isReconnecting = true;
         _error = null;
       });
 
+      // ✅ تأخير متزايد (300ms, 600ms, 900ms, 1200ms, 1500ms)
+      final delayMs = 300 * _retryCount;
+
       _retryTimer?.cancel();
-      _retryTimer = Timer(const Duration(seconds: 3), () async {
+      _retryTimer = Timer(Duration(milliseconds: delayMs), () async {
         if (!mounted) return;
         try {
+          final savedPos = _position;
           await _openStream();
-          if (mounted) setState(() => _isReconnecting = false);
+
+          // ✅ استئناف من الموضع السابق
+          if (savedPos > Duration.zero && _duration > Duration.zero) {
+            await player.seek(savedPos);
+          }
+
+          if (mounted) {
+            setState(() => _isReconnecting = false);
+          }
         } catch (_) {
           if (mounted && _retryCount >= _maxRetries) {
             setState(() {
@@ -323,260 +336,270 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   // ==========================================================
-  //  BUILD
+  //  حفظ/استئناف الموضع
   // ==========================================================
-  @override
-  Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Focus(
-          autofocus: true,
-          onKeyEvent: (node, event) {
-            if (event is KeyDownEvent) {
-              final key = event.logicalKey.keyLabel;
-              if (key == 'Select' ||
-                  key == 'Enter' ||
-                  key == 'Media Play Pause') {
-                _togglePlayPause();
-                return KeyEventResult.handled;
-              }
-              if (key == 'Escape' || key == 'Go Back') {
-                Navigator.pop(context);
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Right') {
-                _seekForward();
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Left') {
-                _seekBackward();
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Up') {
-                _setVolume((_volume + 10).clamp(0, 100));
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Down') {
-                _setVolume((_volume - 10).clamp(0, 100));
-                return KeyEventResult.handled;
-              }
+  Future<void> _saveCurrentPosition() async {
+    try {
+      if (_duration == Duration.zero) return;
+      if (_position < const Duration(seconds: 30)) return;
+
+      await _positionService.save(
+        itemId: widget.streamUrl,
+        position: _position,
+        duration: _duration,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _restoreSavedPosition() async {
+    if (_hasRestoredPosition) return;
+    _hasRestoredPosition = true;
+
+    try {
+      final saved = await _positionService.load(widget.streamUrl);
+      if (saved == null) return;
+      if (saved < const Duration(seconds: 30)) return;
+
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+
+      await player.seek(saved);
+    } catch (_) {}
+  }
+  
+// ==========================================================
+//  BUILD
+// ==========================================================
+@override
+Widget build(BuildContext context) {
+  return Directionality(
+    textDirection: TextDirection.rtl,
+    child: Scaffold(
+      backgroundColor: Colors.black,
+      body: Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent) {
+            final key = event.logicalKey.keyLabel;
+            if (key == 'Select' || key == 'Enter' ||
+                key == 'Media Play Pause') {
+              _togglePlayPause();
+              return KeyEventResult.handled;
             }
-            return KeyEventResult.ignored;
-          },
-          child: GestureDetector(
-            onTap: _toggleControls,
-            child: Stack(
-              children: [
-                Center(
-                  child: _error != null
-                      ? _buildError()
-                      : SizedBox.expand(
-                          child: FittedBox(
-                            fit: _getBoxFit(),
-                            child: SizedBox(
-                              width: controller.value.size.width,
-                              height: controller.value.size.height,
-                              child: Video(
-                                controller: controller,
-                                controls: NoVideoControls,
-                              ),
+            if (key == 'Escape' || key == 'Go Back') {
+              Navigator.pop(context);
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Right') {
+              _seekForward();
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Left') {
+              _seekBackward();
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Up') {
+              _setVolume((_volume + 10).clamp(0, 100));
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Down') {
+              _setVolume((_volume - 10).clamp(0, 100));
+              return KeyEventResult.handled;
+            }
+          }
+          return KeyEventResult.ignored;
+        },
+        child: GestureDetector(
+          onTap: _toggleControls,
+          child: Stack(
+            children: [
+              Center(
+                child: _error != null
+                    ? _buildError()
+                    : SizedBox.expand(
+                        child: FittedBox(
+                          fit: _getBoxFit(),
+                          child: SizedBox(
+                            width: (player.state.width ?? 1920).toDouble(),
+                            height: (player.state.height ?? 1080).toDouble(),
+                            child: Video(
+                              controller: controller,
+                              controls: NoVideoControls,
                             ),
                           ),
                         ),
-                ),
-                if (_isLoading && _error == null) _buildLoading(),
-                if (_isReconnecting) _buildReconnecting(),
-                if (_isBuffering && !_isLoading && !_isReconnecting)
-                  _buildBuffering(),
-                if (_showVolumeBar) _buildVolumeOverlay(),
-                if (_showControls && _error == null) ...[
-                  _buildTopBar(context),
-                  _buildBottomBar(context),
-                ],
+                      ),
+              ),
+              if (_isLoading && _error == null) _buildLoading(),
+              if (_isReconnecting) _buildReconnecting(),
+              if (_isBuffering && !_isLoading && !_isReconnecting)
+                _buildBuffering(),
+              if (_showVolumeBar) _buildVolumeOverlay(),
+              if (_showControls && _error == null) ...[
+                _buildTopBar(context),
+                _buildBottomBar(context),
               ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-  
-  // ==========================================================
-  //  شاشة التحميل
-  // ==========================================================
-  Widget _buildLoading() {
-    return Container(
-      color: Colors.black.withOpacity(0.85),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const SizedBox(
-              width: 70,
-              height: 70,
-              child: CircularProgressIndicator(
-                color: Color(0xFF00C8FF),
-                strokeWidth: 4,
-              ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'جارٍ التحميل...',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 60),
-              child: Text(
-                widget.channelName,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 14,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================
-  //  إشعار إعادة الاتصال
-  // ==========================================================
-  Widget _buildReconnecting() {
-    return Positioned(
-      top: 100,
-      left: 0,
-      right: 0,
-      child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFF9800).withOpacity(0.95),
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.4),
-                blurRadius: 20,
-              ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2.5,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Text(
-                'جارٍ إعادة الاتصال ($_retryCount/$_maxRetries)',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
             ],
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
-  // ==========================================================
-  //  التخزين المؤقت
-  // ==========================================================
-  Widget _buildBuffering() {
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: Container(
-          color: Colors.black.withOpacity(0.4),
-          child: const Center(
-            child: SizedBox(
-              width: 55,
-              height: 55,
-              child: CircularProgressIndicator(
-                color: Color(0xFF00C8FF),
-                strokeWidth: 3,
+Widget _buildLoading() {
+  return Container(
+    color: Colors.black.withOpacity(0.85),
+    child: Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 70,
+            height: 70,
+            child: CircularProgressIndicator(
+              color: Color(0xFF00C8FF),
+              strokeWidth: 4,
+            ),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'جارٍ التحميل...',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 60),
+            child: Text(
+              widget.channelName,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white54,
+                fontSize: 14,
               ),
             ),
           ),
-        ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 
-  // ==========================================================
-  //  مؤشر الصوت
-  // ==========================================================
-  Widget _buildVolumeOverlay() {
-    return Positioned(
-      top: 40,
-      left: 40,
+Widget _buildReconnecting() {
+  return Positioned(
+    top: 100,
+    left: 0,
+    right: 0,
+    child: Center(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.75),
-          borderRadius: BorderRadius.circular(12),
+          color: const Color(0xFFFF9800).withOpacity(0.95),
+          borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              _isMuted || _volume == 0
-                  ? Icons.volume_off_rounded
-                  : _volume < 50
-                      ? Icons.volume_down_rounded
-                      : Icons.volume_up_rounded,
-              color: Colors.white,
-              size: 22,
-            ),
-            const SizedBox(width: 10),
-            SizedBox(
-              width: 100,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: _volume / 100,
-                  minHeight: 6,
-                  backgroundColor: Colors.white24,
-                  valueColor: const AlwaysStoppedAnimation(
-                    Color(0xFF00C8FF),
-                  ),
-                ),
+            const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(
+                color: Colors.white,
+                strokeWidth: 2.5,
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 14),
             Text(
-              '${_volume.toInt()}%',
+              'إعادة الاتصال ($_retryCount/$_maxRetries)',
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 13,
+                fontSize: 15,
                 fontWeight: FontWeight.bold,
               ),
             ),
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
-  // ==========================================================
-  //  الشريط العلوي
-  // ==========================================================
+Widget _buildBuffering() {
+  return Positioned.fill(
+    child: IgnorePointer(
+      child: Container(
+        color: Colors.black.withOpacity(0.4),
+        child: const Center(
+          child: SizedBox(
+            width: 55,
+            height: 55,
+            child: CircularProgressIndicator(
+              color: Color(0xFF00C8FF),
+              strokeWidth: 3,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+Widget _buildVolumeOverlay() {
+  return Positioned(
+    top: 40,
+    left: 40,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.75),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            _isMuted || _volume == 0
+                ? Icons.volume_off_rounded
+                : _volume < 50
+                    ? Icons.volume_down_rounded
+                    : Icons.volume_up_rounded,
+            color: Colors.white,
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 100,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: _volume / 100,
+                minHeight: 6,
+                backgroundColor: Colors.white24,
+                valueColor: const AlwaysStoppedAnimation(
+                  Color(0xFF00C8FF),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '${_volume.toInt()}%',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+  
   Widget _buildTopBar(BuildContext context) {
     return Positioned(
       top: 0,
@@ -690,9 +713,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  // ==========================================================
-  //  الشريط السفلي
-  // ==========================================================
   Widget _buildBottomBar(BuildContext context) {
     return Positioned(
       bottom: 0,
@@ -786,13 +806,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
           size: 40,
           onPressed: _toggleMute,
         ),
-        const SizedBox(width: 18),
+        const SizedBox(width: 14),
         _CircleButton(
           icon: Icons.replay_10,
           size: 40,
           onPressed: _seekBackward,
         ),
-        const SizedBox(width: 18),
+        const SizedBox(width: 14),
         _CircleButton(
           icon: _isPlaying
               ? Icons.pause_rounded
@@ -801,19 +821,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
           filled: true,
           onPressed: _togglePlayPause,
         ),
-        const SizedBox(width: 18),
+        const SizedBox(width: 14),
         _CircleButton(
           icon: Icons.forward_10,
           size: 40,
           onPressed: _seekForward,
         ),
-        const SizedBox(width: 18),
+        const SizedBox(width: 14),
         _CircleButton(
           icon: Icons.speed_rounded,
           size: 40,
           onPressed: _changeSpeed,
         ),
-        const SizedBox(width: 18),
+        const SizedBox(width: 14),
         _CircleButton(
           icon: Icons.aspect_ratio_rounded,
           size: 40,
@@ -823,9 +843,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
-  // ==========================================================
-  //  شاشة الخطأ
-  // ==========================================================
   Widget _buildError() {
     return Center(
       child: Padding(
@@ -908,9 +925,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 }
 
-// ==========================================================
-//  زر دائري قابل للتركيز
-// ==========================================================
 class _CircleButton extends StatefulWidget {
   final IconData icon;
   final VoidCallback onPressed;
@@ -940,8 +954,7 @@ class _CircleButtonState extends State<_CircleButton> {
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent) {
           final key = event.logicalKey.keyLabel;
-          if (key == 'Select' ||
-              key == 'Enter' ||
+          if (key == 'Select' || key == 'Enter' ||
               key == 'Media Play Pause') {
             widget.onPressed();
             return KeyEventResult.handled;
