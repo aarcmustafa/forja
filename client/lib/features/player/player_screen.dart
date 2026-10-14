@@ -4,8 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
-import '../../data/local/playback_position_service.dart';
-
+/// شاشة المشغل — مع 6 استراتيجيات Retry
 class PlayerScreen extends StatefulWidget {
   final String streamUrl;
   final String channelName;
@@ -44,14 +43,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   int _aspectMode = 0;
   bool _showVolumeBar = false;
 
+  // ✅ نظام Retry متعدد الاستراتيجيات
   int _retryCount = 0;
-  static const int _maxRetries = 5;
+  static const int _maxRetries = 6;
+  static const int maxRetriesStrategy = 6;
   bool _isReconnecting = false;
-  DateTime? _lastErrorTime;
-
-  final PlaybackPositionService _positionService = PlaybackPositionService();
-  DateTime _lastPositionSave = DateTime.now();
-  bool _hasRestoredPosition = false;
 
   final List<double> _speedOptions = const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
@@ -63,7 +59,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
-    _saveCurrentPosition();
     _hideControlsTimer?.cancel();
     _retryTimer?.cancel();
     _volumeBarTimer?.cancel();
@@ -71,6 +66,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     super.dispose();
   }
 
+  // ==========================================================
+  //  التهيئة
+  // ==========================================================
   Future<void> _initializePlayer() async {
     try {
       player = Player(
@@ -106,12 +104,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
       player.stream.position.listen((pos) {
         if (!mounted) return;
         setState(() => _position = pos);
-
-        final now = DateTime.now();
-        if (now.difference(_lastPositionSave).inSeconds >= 10) {
-          _lastPositionSave = now;
-          _saveCurrentPosition();
-        }
       });
 
       player.stream.duration.listen((dur) {
@@ -126,7 +118,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
       await _openStream();
       _startHideControlsTimer();
-      await _restoreSavedPosition();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -136,10 +127,65 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
+  // ==========================================================
+  //  ✅ 6 استراتيجيات مختلفة
+  // ==========================================================
+  List<Map<String, String>> _buildStrategies(String url) {
+    String origin = '';
+    try {
+      final uri = Uri.parse(url);
+      origin = '${uri.scheme}://${uri.host}';
+    } catch (_) {}
+
+    return [
+      // 1) VLC + Referer + Origin (الافتراضي)
+      {
+        'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+        'Accept': '*/*',
+        'Connection': 'keep-alive',
+        if (origin.isNotEmpty) 'Referer': '$origin/',
+        if (origin.isNotEmpty) 'Origin': origin,
+      },
+      // 2) okhttp فقط (لا Referer — يتجنب 511)
+      {
+        'User-Agent': 'okhttp/4.9.0',
+        'Accept': '*/*',
+        'Connection': 'keep-alive',
+      },
+      // 3) IPTV Smarters + Referer
+      {
+        'User-Agent': 'IPTV Smarters Pro',
+        'Accept': '*/*',
+        'Connection': 'keep-alive',
+        if (origin.isNotEmpty) 'Referer': '$origin/',
+      },
+      // 4) TiviMate فقط
+      {
+        'User-Agent': 'TiviMate/4.7.0',
+        'Accept': '*/*',
+      },
+      // 5) Mozilla + Referer (يتجاوز بعض الحماية)
+      {
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        if (origin.isNotEmpty) 'Referer': '$origin/',
+      },
+      // 6) بدون Headers إطلاقاً (آخر حل)
+      <String, String>{},
+    ];
+  }
+
   Future<void> _openStream() async {
-    final headers = _buildHeaders();
+    final strategies = _buildStrategies(widget.streamUrl);
+    final idx = _retryCount.clamp(0, strategies.length - 1);
+    final strategy = strategies[idx];
+
     await player.open(
-      Media(widget.streamUrl, httpHeaders: headers),
+      Media(
+        widget.streamUrl,
+        httpHeaders: strategy,
+      ),
       play: true,
     );
 
@@ -150,69 +196,46 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
-  /// ✅ لا Referer/Origin — يتجنب 511 من Cloudflare
-  Map<String, String> _buildHeaders() {
-    return {
-      'User-Agent': 'okhttp/4.9.0',
-      'Accept': '*/*',
-      'Connection': 'keep-alive',
-      'Icy-MetaData': '1',
-    };
-  }
-
+  // ==========================================================
+  //  معالج الأخطاء — Retry متزايد
+  // ==========================================================
   void _handleError(String error) {
     if (!mounted) return;
 
-    final now = DateTime.now();
-    if (_lastErrorTime != null &&
-        now.difference(_lastErrorTime!).inSeconds > 30) {
-      _retryCount = 0;
-    }
-    _lastErrorTime = now;
-
     if (_retryCount < _maxRetries) {
       _retryCount++;
+
+      // تأخير متزايد: 2s → 4s → 6s → 8s → 10s → 12s
+      final delaySeconds = _retryCount * 2;
 
       setState(() {
         _isReconnecting = true;
         _error = null;
       });
 
-      final delayMs = 300 * _retryCount;
-
       _retryTimer?.cancel();
-      _retryTimer = Timer(Duration(milliseconds: delayMs), () async {
+      _retryTimer = Timer(Duration(seconds: delaySeconds), () async {
         if (!mounted) return;
         try {
-          final savedPos = _position;
           await _openStream();
-
-          if (savedPos > Duration.zero && _duration > Duration.zero) {
-            await player.seek(savedPos);
-          }
-
-          if (mounted) {
-            setState(() => _isReconnecting = false);
-          }
+          if (mounted) setState(() => _isReconnecting = false);
         } catch (_) {
-          if (mounted && _retryCount >= _maxRetries) {
-            setState(() {
-              _error = error;
-              _isLoading = false;
-              _isReconnecting = false;
-            });
-          }
+          if (mounted) _handleError(error);
         }
       });
     } else {
       setState(() {
-        _error = error;
+        _error = 'فشل تشغيل القناة بعد $maxRetriesStrategy محاولات'
+            '\nجرّب قناة أخرى';
         _isLoading = false;
         _isReconnecting = false;
       });
     }
   }
 
+  // ==========================================================
+  //  دوال التحكم
+  // ==========================================================
   void _startHideControlsTimer() {
     _hideControlsTimer?.cancel();
     _hideControlsTimer = Timer(const Duration(seconds: 5), () {
@@ -304,36 +327,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     return '${d.inMinutes.toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
   }
-
-  Future<void> _saveCurrentPosition() async {
-    try {
-      if (_duration == Duration.zero) return;
-      if (_position < const Duration(seconds: 30)) return;
-
-      await _positionService.save(
-        itemId: widget.streamUrl,
-        position: _position,
-        duration: _duration,
-      );
-    } catch (_) {}
-  }
-
-  Future<void> _restoreSavedPosition() async {
-    if (_hasRestoredPosition) return;
-    _hasRestoredPosition = true;
-
-    try {
-      final saved = await _positionService.load(widget.streamUrl);
-      if (saved == null) return;
-      if (saved < const Duration(seconds: 30)) return;
-
-      await Future.delayed(const Duration(seconds: 2));
-      if (!mounted) return;
-
-      await player.seek(saved);
-    } catch (_) {}
-  }
   
+  // ==========================================================
+  //  BUILD
+  // ==========================================================
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -345,7 +342,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           onKeyEvent: (node, event) {
             if (event is KeyDownEvent) {
               final key = event.logicalKey.keyLabel;
-              if (key == 'Select' || key == 'Enter' ||
+              if (key == 'Select' ||
+                  key == 'Enter' ||
                   key == 'Media Play Pause') {
                 _togglePlayPause();
                 return KeyEventResult.handled;
@@ -385,8 +383,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             fit: _getBoxFit(),
                             child: SizedBox(
                               width: (player.state.width ?? 1920).toDouble(),
-                              height:
-                                  (player.state.height ?? 1080).toDouble(),
+                              height: (player.state.height ?? 1080).toDouble(),
                               child: Video(
                                 controller: controller,
                                 controls: NoVideoControls,
@@ -465,6 +462,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
           decoration: BoxDecoration(
             color: const Color(0xFFFF9800).withOpacity(0.95),
             borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.4),
+                blurRadius: 20,
+              ),
+            ],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -478,13 +481,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
               ),
               const SizedBox(width: 14),
-              Text(
-                'إعادة الاتصال ($_retryCount/$_maxRetries)',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'جارٍ إعادة الاتصال ($_retryCount/$maxRetriesStrategy)',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    'بطريقة مختلفة...',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -731,10 +747,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
               activeTrackColor: const Color(0xFF00C8FF),
               inactiveTrackColor: Colors.white24,
               thumbColor: const Color(0xFF00C8FF),
-              thumbShape:
-                  const RoundSliderThumbShape(enabledThumbRadius: 8),
-              overlayShape:
-                  const RoundSliderOverlayShape(overlayRadius: 16),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
               overlayColor: const Color(0xFF00C8FF).withOpacity(0.2),
             ),
             child: Slider(
@@ -771,13 +785,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
           size: 40,
           onPressed: _toggleMute,
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 18),
         _CircleButton(
           icon: Icons.replay_10,
           size: 40,
           onPressed: _seekBackward,
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 18),
         _CircleButton(
           icon: _isPlaying
               ? Icons.pause_rounded
@@ -786,19 +800,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
           filled: true,
           onPressed: _togglePlayPause,
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 18),
         _CircleButton(
           icon: Icons.forward_10,
           size: 40,
           onPressed: _seekForward,
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 18),
         _CircleButton(
           icon: Icons.speed_rounded,
           size: 40,
           onPressed: _changeSpeed,
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 18),
         _CircleButton(
           icon: Icons.aspect_ratio_rounded,
           size: 40,
@@ -890,6 +904,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 }
 
+// ==========================================================
+//  زر دائري
+// ==========================================================
 class _CircleButton extends StatefulWidget {
   final IconData icon;
   final VoidCallback onPressed;
@@ -919,7 +936,8 @@ class _CircleButtonState extends State<_CircleButton> {
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent) {
           final key = event.logicalKey.keyLabel;
-          if (key == 'Select' || key == 'Enter' ||
+          if (key == 'Select' ||
+              key == 'Enter' ||
               key == 'Media Play Pause') {
             widget.onPressed();
             return KeyEventResult.handled;
