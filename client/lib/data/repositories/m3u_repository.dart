@@ -4,15 +4,16 @@ import '../models/channel.dart';
 import 'xtream_client.dart';
 
 /// مستودع رياضي — Xtream Live + M3U + Fallback UA + Retry 5xx
-/// ✅ يدعم التحويلات عبر البروتوكولات (HTTP ↔ HTTPS)
+/// ✅ لا يرسل Referer/Origin (يتجنب 511 من Cloudflare)
 class M3uRepository {
   static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
 
+  /// ✅ okhttp أولاً — يقبله Xtream
   static const List<String> fallbackUserAgents = [
-    'VLC/3.0.20 LibVLC/3.0.20',
-    'IPTV Smarters Pro',
     'okhttp/4.9.0',
+    'IPTV Smarters Pro',
     'TiviMate/4.7.0',
+    'VLC/3.0.20 LibVLC/3.0.20',
     'Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   ];
 
@@ -88,15 +89,12 @@ class M3uRepository {
   M3uRepository({Dio? dio})
       : _dio = dio ??
             Dio(BaseOptions(
-              connectTimeout: const Duration(seconds: 30),
+              connectTimeout: const Duration(seconds: 15),
               receiveTimeout: const Duration(seconds: 180),
-              sendTimeout: const Duration(seconds: 30),
-              // ✅ متابعة كل التحويلات تلقائياً
+              sendTimeout: const Duration(seconds: 15),
               followRedirects: true,
-              // ✅ زيادة الحد الأقصى (302 → 302 → 200)
               maxRedirects: 10,
               persistentConnection: true,
-              // ✅ قبول كل رموز الحالة (حتى 4xx و5xx)
               validateStatus: (_) => true,
               headers: {
                 'User-Agent': vlcUserAgent,
@@ -106,13 +104,9 @@ class M3uRepository {
                 'Icy-MetaData': '1',
               },
             )) {
-    // ✅ interceptor لمتابعة التحويلات عبر البروتوكولات
     _dio.interceptors.add(_CrossProtocolRedirectInterceptor(_dio));
   }
 
-  // ==========================================================
-  //  الدالة الرئيسية
-  // ==========================================================
   Future<List<Channel>> loadFromUrl(
     String url, {
     bool forceRefresh = false,
@@ -137,9 +131,6 @@ class M3uRepository {
     return channels;
   }
 
-  // ==========================================================
-  //  إدارة الكاش
-  // ==========================================================
   void _trimInMemoryCache() {
     if (_cache.length <= maxInMemoryEntries) return;
     final toRemove = _cache.length - maxInMemoryEntries;
@@ -193,9 +184,6 @@ class M3uRepository {
     };
   }
   
-// ==========================================================
-//  تحميل من Xtream — Live فقط
-// ==========================================================
 Future<List<Channel>> _loadFromXtream(
   XtreamCredentials credentials,
 ) async {
@@ -242,9 +230,6 @@ bool _isSportChannel(Channel c) {
   return false;
 }
 
-// ==========================================================
-//  تحميل من M3U
-// ==========================================================
 Future<List<Channel>> _loadFromM3u(String url) async {
   final data = await _fetchWithFallback(url);
   if (data == null || data.isEmpty) {
@@ -254,18 +239,13 @@ Future<List<Channel>> _loadFromM3u(String url) async {
   return all.where((c) => _isSportChannel(c)).toList();
 }
 
-// ==========================================================
-//  Retry with Fallback UA + Exponential Backoff
-// ==========================================================
 Future<String?> _fetchWithFallback(String url) async {
-  // 1) جرّب أفضل UA محفوظ أولاً
   final bestUa = await _getBestUa(url);
   if (bestUa != null) {
     final data = await _tryFetch(url, bestUa);
     if (data != null) return data;
   }
 
-  // 2) جرّب كل UAs بالتتابع
   for (int i = 0; i < fallbackUserAgents.length; i++) {
     final ua = fallbackUserAgents[i];
     final data = await _tryFetch(url, ua);
@@ -275,16 +255,13 @@ Future<String?> _fetchWithFallback(String url) async {
       return data;
     }
 
-    // تأخير متزايد (Exponential Backoff)
     final delayMs = 500 * (i + 1);
     await Future.delayed(Duration(milliseconds: delayMs));
   }
   return null;
 }
 
-// ==========================================================
-//  محاولة واحدة مع Retry on 5xx + 429
-// ==========================================================
+/// ✅ لا Referer/Origin — يتجنب 511 من Cloudflare
 Future<String?> _tryFetch(String url, String ua) async {
   const maxAttempts = 3;
 
@@ -297,12 +274,6 @@ Future<String?> _tryFetch(String url, String ua) async {
         'Connection': 'keep-alive',
         'Icy-MetaData': '1',
       };
-
-      final referer = extractReferer(url);
-      if (referer.isNotEmpty) {
-        headers['Referer'] = referer;
-        headers['Origin'] = extractOrigin(url);
-      }
 
       final response = await _dio.get<String>(
         url,
@@ -317,20 +288,19 @@ Future<String?> _tryFetch(String url, String ua) async {
 
       final code = response.statusCode ?? 0;
 
-      // ✅ نجاح
-      if (code == 200 && response.data != null &&
+      if (code == 200 &&
+          response.data != null &&
           response.data!.isNotEmpty) {
         return response.data;
       }
 
-      // ✅ 3xx لم تُتابع — جرّب يدوياً
+      // 3xx
       if (code >= 300 && code < 400) {
         final location = response.headers.value('location');
         if (location != null && location.isNotEmpty) {
           try {
             final redirectUri =
                 Uri.parse(url).resolve(location).toString();
-            // جرّب الرابط الجديد مباشرة
             final redirectResponse = await _dio.get<String>(
               redirectUri,
               options: Options(
@@ -350,7 +320,7 @@ Future<String?> _tryFetch(String url, String ua) async {
         }
       }
 
-      // ✅ إعادة المحاولة على 5xx
+      // 5xx — retry
       if (code >= 500 && code < 600) {
         await Future.delayed(
           Duration(milliseconds: 800 * (attempt + 1)),
@@ -358,7 +328,7 @@ Future<String?> _tryFetch(String url, String ua) async {
         continue;
       }
 
-      // ✅ إعادة المحاولة على 429
+      // 429 — retry
       if (code == 429) {
         await Future.delayed(
           Duration(milliseconds: 1500 * (attempt + 1)),
@@ -366,6 +336,7 @@ Future<String?> _tryFetch(String url, String ua) async {
         continue;
       }
 
+      // 511 / 403 — لا نعيد المحاولة
       return null;
     } catch (_) {
       if (attempt < maxAttempts - 1) {
@@ -378,9 +349,6 @@ Future<String?> _tryFetch(String url, String ua) async {
   return null;
 }
   
-  // ==========================================================
-  //  تحليل M3U
-  // ==========================================================
   List<Channel> parseM3uContent(String content) {
     final lines = content.split('\n');
     final channels = <Channel>[];
@@ -441,7 +409,6 @@ Future<String?> _tryFetch(String url, String ua) async {
     final tvgId = info['tvg-id'] ?? '';
     final logo = info['tvg-logo'] ?? '';
 
-    final customReferer = info['referer'] ?? info['http-referrer'] ?? '';
     final customUA = info['user-agent'] ?? info['http-user-agent'] ?? '';
 
     final category = _inferCategory(name, group);
@@ -449,7 +416,6 @@ Future<String?> _tryFetch(String url, String ua) async {
     final priority = _calculatePriority(url);
 
     final extras = <String, String>{};
-    if (customReferer.isNotEmpty) extras['referer'] = customReferer;
     if (customUA.isNotEmpty) extras['user_agent'] = customUA;
 
     return Channel(
@@ -534,9 +500,6 @@ Future<String?> _tryFetch(String url, String ua) async {
   void dispose() => _dio.close();
 }
 
-// ==========================================================
-//  Interceptor للتحويلات عبر البروتوكولات
-// ==========================================================
 class _CrossProtocolRedirectInterceptor extends Interceptor {
   final Dio _dio;
 
