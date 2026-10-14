@@ -10,16 +10,15 @@ class LocalStorage {
 
   static const int _currentVersion = 1;
 
-  /// مدة صلاحية الذاكرة المؤقتة (24 ساعة)
-  static const Duration cacheValidity = Duration(hours: 24);
+  /// مدة صلاحية الذاكرة المؤقتة (7 أيام)
+  static const Duration cacheValidity = Duration(days: 7);
 
-  /// ✅ الحد الأقصى لعدد القنوات المحفوظة
-  static const int maxSavedChannels = 100000;
+  /// ✅ الحد الأقصى الكبير جداً (لن يُمسح)
+  static const int maxSavedChannels = 500000;
 
   late Box _box;
   bool _initialized = false;
 
-  /// تهيئة التخزين
   Future<void> init() async {
     if (_initialized) return;
 
@@ -37,7 +36,6 @@ class LocalStorage {
 
   bool get isReady => _initialized;
 
-  /// حفظ القنوات محلياً
   Future<void> saveChannels(List<Channel> channels) async {
     if (!_initialized) await init();
 
@@ -53,7 +51,6 @@ class LocalStorage {
     }
   }
 
-  /// قراءة القنوات من الذاكرة المحلية
   List<Channel>? loadChannels({bool checkValidity = true}) {
     if (!_initialized) return null;
 
@@ -83,7 +80,6 @@ class LocalStorage {
     }
   }
 
-  /// هل الذاكرة المؤقتة صالحة؟
   bool _isCacheValid() {
     try {
       final timestamp = _box.get(_kTimestamp);
@@ -110,7 +106,6 @@ class LocalStorage {
     return DateTime.fromMillisecondsSinceEpoch(ts as int);
   }
 
-  /// عدد القنوات المحفوظة
   int getSavedCount() {
     if (!_initialized) return 0;
     final raw = _box.get(_kChannels);
@@ -122,14 +117,12 @@ class LocalStorage {
     }
   }
 
-  /// حذف كل البيانات
   Future<void> clear() async {
     if (!_initialized) await init();
     await _box.clear();
     await _box.put(_kVersion, _currentVersion);
   }
 
-  /// معلومات التخزين
   Map<String, dynamic> getInfo() {
     return {
       'ready': _initialized,
@@ -141,23 +134,12 @@ class LocalStorage {
     };
   }
 
-  // ==========================================================
-  //  ✅ صيانة تلقائية
-  // ==========================================================
-  /// صيانة التخزين — تُستدعى عند بدء التطبيق
+  /// ✅ صيانة التخزين — لا تمسح الكاش أبداً
   Future<void> maintain() async {
-    if (!_initialized) await init();
-    try {
-      final count = getSavedCount();
-      if (count > maxSavedChannels) {
-        // ignore: avoid_print
-        print('🧹 التخزين كبير جداً ($count)، سيُعاد التعيين');
-        await clear();
-      }
-    } catch (_) {}
+    // لا تفعل شيئاً — اترك الكاش كما هو
+    // سيُحدَّث تلقائياً في الخلفية
   }
 
-  /// إعادة تعيين كاملة
   Future<void> reset() async {
     await clear();
   }
