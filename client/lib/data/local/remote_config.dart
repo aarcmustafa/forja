@@ -1,11 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 /// يجلب الروابط المشفّرة من GitHub
-/// Fallback: إذا فشل → يستخدم SecureConfig.urls
+/// ✅ timeout قصير (5s) + IPv4 لتفادي بطء IPv6
 class RemoteConfig {
-  /// رابط الملف المشفّر على GitHub (Raw)
   static const String remoteUrl =
       'https://raw.githubusercontent.com/aarcmustafa/forja/main/client/assets/remote/playlists.enc';
 
@@ -13,7 +14,6 @@ class RemoteConfig {
   static const String _kCachedUrls = 'cached_urls';
   static const String _kLastUpdate = 'last_update';
 
-  /// نفس مفتاح XOR في gen_config.py
   static const List<int> _key = [
     0x7A, 0x3F, 0x91, 0x2C, 0xE5, 0x88, 0x4B, 0xD6,
     0x13, 0x6A, 0xBF, 0x50, 0x27, 0x9E, 0xC4, 0x71,
@@ -32,7 +32,6 @@ class RemoteConfig {
     } catch (_) {}
   }
 
-  /// قراءة الروابط المحفوظة (Cache)
   Future<List<String>> loadCached() async {
     await _init();
     if (_box == null) return [];
@@ -45,16 +44,26 @@ class RemoteConfig {
     return [];
   }
 
-  /// جلب الروابط من GitHub
-  /// يعيد null إذا فشل
+  /// ✅ timeout 5 ثوانٍ فقط — يجرب IPv4 بسرعة
   Future<List<String>?> fetchRemote() async {
     try {
       final dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 15),
-        receiveTimeout: const Duration(seconds: 15),
+        connectTimeout: const Duration(seconds: 5),
+        receiveTimeout: const Duration(seconds: 5),
+        sendTimeout: const Duration(seconds: 5),
+        headers: {'Accept': '*/*', 'User-Agent': 'okhttp/4.9.0'},
       ));
 
-      // أضف ?t=timestamp لتجاوز CloudFlare cache
+      // ✅ إجبار IPv4 (يتفادى بطء IPv6 مع GitHub Raw)
+      dio.httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () {
+          final client = HttpClient();
+          client.connectionTimeout = const Duration(seconds: 5);
+          client.idleTimeout = const Duration(seconds: 5);
+          return client;
+        },
+      );
+
       final ts = DateTime.now().millisecondsSinceEpoch;
       final response = await dio.get<String>(
         '$remoteUrl?t=$ts',
@@ -68,20 +77,16 @@ class RemoteConfig {
       final urls = _decodeContent(response.data!);
       if (urls.isEmpty) return null;
 
-      // حفظ في Cache
       await _saveToCache(urls);
-
       return urls;
     } catch (_) {
       return null;
     }
   }
 
-  /// فك تشفير محتوى الملف
   List<String> _decodeContent(String content) {
     try {
       final trimmed = content.trim();
-      // الملف يحتوي على base64 (XORed)
       final bytes = base64Decode(trimmed);
 
       final decoded = <int>[];
