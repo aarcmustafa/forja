@@ -16,27 +16,32 @@ import 'data/providers/favorites_provider.dart';
 import 'data/providers/history_provider.dart';
 import 'data/local/secure_config.dart';
 import 'data/local/remote_config.dart';
-import 'core/animations/app_animations.dart';
 
+// ==========================================================
+//  روابط M3U
+// ==========================================================
 List<String> kPlaylistUrls = SecureConfig.urls;
 
+// ==========================================================
+//  نقطة انطلاق التطبيق
+// ==========================================================
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
   runApp(
     const ProviderScope(
-      child: SttitenFootTvApp(),
+      child: EstetnFarjaTvApp(),
     ),
   );
 }
 
-class SttitenFootTvApp extends StatelessWidget {
-  const SttitenFootTvApp({super.key});
+class EstetnFarjaTvApp extends StatelessWidget {
+  const EstetnFarjaTvApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'STTITEN FOOT',
+      title: 'استيتن فرجة الرياضية',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -53,6 +58,9 @@ class SttitenFootTvApp extends StatelessWidget {
   }
 }
 
+// ==========================================================
+//  الشاشة الرئيسية
+// ==========================================================
 class MainShell extends ConsumerStatefulWidget {
   const MainShell({super.key});
 
@@ -96,31 +104,38 @@ class _MainShellState extends ConsumerState<MainShell> {
     });
   }
 
+  // ==========================================================
+  //  ✅ تحميل القنوات — الكاش أولاً
+  // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
+    // ✅ صيانة خفيفة فقط (لا تمسح الكاش)
     try {
       final repo = ref.read(m3uRepositoryProvider);
       await repo.maintainCache();
-      final storage = ref.read(localStorageProvider);
-      await storage.maintain();
-    } catch (_) {}
-
-    try {
-      final remote = RemoteConfig();
-      final cached = await remote.loadCached();
-      if (cached.isNotEmpty) {
-        kPlaylistUrls = cached;
-      }
-      remote.fetchRemote().then((remoteUrls) {
-        if (remoteUrls != null && remoteUrls.isNotEmpty) {
-          kPlaylistUrls = remoteUrls;
-        }
-      });
     } catch (_) {}
 
     if (kPlaylistUrls.isEmpty) return;
+
     final state = ref.read(playlistProvider);
     if (state.allChannels.isNotEmpty || state.isLoading) return;
+
+    // ✅ حمّل الكاش فوراً
     await ref.read(playlistProvider.notifier).loadPlaylists(kPlaylistUrls);
+
+    // ✅ بعد 5 ثوانٍ، جلب الروابط عن بعد
+    Future.delayed(const Duration(seconds: 5), () async {
+      try {
+        final remote = RemoteConfig();
+        final cached = await remote.loadCached();
+        if (cached.isNotEmpty) {
+          kPlaylistUrls = cached;
+        }
+        final remoteUrls = await remote.fetchRemote();
+        if (remoteUrls != null && remoteUrls.isNotEmpty) {
+          kPlaylistUrls = remoteUrls;
+        }
+      } catch (_) {}
+    });
   }
 
   @override
@@ -138,6 +153,9 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
+  // ==========================================================
+  //  الشريط الجانبي
+  // ==========================================================
   Widget _buildSidebar() {
     final favCount = ref.watch(favoritesProvider).length;
 
@@ -154,28 +172,25 @@ class _MainShellState extends ConsumerState<MainShell> {
               children: [
                 Icon(
                   Icons.sports_soccer_rounded,
-                  color: Color(0xFF4CAF50),
+                  color: Color(0xFF00C8FF),
                   size: 40,
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'STTITEN',
+                  'استيتن فرجة',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 22,
+                    fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF4CAF50),
-                    letterSpacing: 2,
+                    color: Color(0xFF00C8FF),
                   ),
                 ),
                 Text(
-                  'FOOT',
+                  'الرياضية',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.white70,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 5,
+                    fontSize: 13,
+                    color: Colors.white54,
                   ),
                 ),
               ],
@@ -183,13 +198,10 @@ class _MainShellState extends ConsumerState<MainShell> {
           ),
           const Divider(color: Color(0xFF2A3350)),
           const SizedBox(height: 8),
-
           _buildSearchButton(),
           const SizedBox(height: 8),
-
           for (int i = 0; i < _menuItems.length; i++)
             _buildMenuItem(i, badge: i == _idxFavorites ? favCount : 0),
-
           const Spacer(),
           const Divider(color: Color(0xFF2A3350)),
           const SizedBox(height: 12),
@@ -199,12 +211,12 @@ class _MainShellState extends ConsumerState<MainShell> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Version 1.0.0',
+                  'الإصدار 1.0.0',
                   style: TextStyle(color: Colors.white38, fontSize: 11),
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'Developer: J. Mustapha',
+                  'المطور: جلولي مصطفى',
                   style: TextStyle(
                     color: Colors.white54,
                     fontSize: 12,
@@ -237,8 +249,8 @@ class _MainShellState extends ConsumerState<MainShell> {
               onTap: () {
                 Navigator.push(
                   context,
-                  FadeSlideRoute(
-                    page: const UnifiedSearchScreen(),
+                  MaterialPageRoute(
+                    builder: (_) => const UnifiedSearchScreen(),
                   ),
                 );
               },
@@ -271,7 +283,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      'Search',
+                      'بحث',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight:
@@ -314,14 +326,14 @@ class _MainShellState extends ConsumerState<MainShell> {
                   horizontal: 16,
                 ),
                 decoration: BoxDecoration(
-                  color: active ? const Color(0xFF4CAF50) : Colors.transparent,
+                  color: active ? const Color(0xFF00C8FF) : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(
                   children: [
                     Icon(
                       _menuIcons[index],
-                      color: active ? Colors.white : Colors.white70,
+                      color: active ? Colors.black : Colors.white70,
                       size: 22,
                     ),
                     const SizedBox(width: 12),
@@ -332,7 +344,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                           fontSize: 16,
                           fontWeight:
                               active ? FontWeight.bold : FontWeight.normal,
-                          color: active ? Colors.white : Colors.white70,
+                          color: active ? Colors.black : Colors.white70,
                         ),
                       ),
                     ),
@@ -344,7 +356,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                         ),
                         decoration: BoxDecoration(
                           color: active
-                              ? Colors.white
+                              ? Colors.black
                               : const Color(0xFFFF1744),
                           borderRadius: BorderRadius.circular(10),
                         ),
@@ -352,7 +364,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                           '$badge',
                           style: TextStyle(
                             color: active
-                                ? const Color(0xFF4CAF50)
+                                ? const Color(0xFF00C8FF)
                                 : Colors.white,
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
@@ -369,6 +381,9 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
   
+  // ==========================================================
+  //  المحتوى
+  // ==========================================================
   Widget _buildContent() {
     switch (_selectedIndex) {
       case _idxHome:
@@ -397,6 +412,9 @@ class _MainShellState extends ConsumerState<MainShell> {
     }
   }
 
+  // ==========================================================
+  //  شاشة المباريات
+  // ==========================================================
   Widget _buildMatchesScreen() {
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -419,13 +437,16 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
+  // ==========================================================
+  //  فتح القناة
+  // ==========================================================
   void _openChannel(Channel channel) {
     ref.read(historyProvider.notifier).record(channel);
 
     Navigator.push(
       context,
-      FadeSlideRoute(
-        page: PlayerScreen(
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
           streamUrl: channel.streamUrl,
           channelName: channel.name,
           channelLogo: channel.logo,
