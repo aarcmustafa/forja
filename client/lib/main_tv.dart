@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 
@@ -17,14 +18,8 @@ import 'data/providers/history_provider.dart';
 import 'data/local/secure_config.dart';
 import 'data/local/remote_config.dart';
 
-// ==========================================================
-//  روابط M3U
-// ==========================================================
 List<String> kPlaylistUrls = SecureConfig.urls;
 
-// ==========================================================
-//  نقطة انطلاق التطبيق
-// ==========================================================
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
@@ -58,9 +53,6 @@ class EstetnFarjaTvApp extends StatelessWidget {
   }
 }
 
-// ==========================================================
-//  الشاشة الرئيسية
-// ==========================================================
 class MainShell extends ConsumerStatefulWidget {
   const MainShell({super.key});
 
@@ -70,6 +62,9 @@ class MainShell extends ConsumerStatefulWidget {
 
 class _MainShellState extends ConsumerState<MainShell> {
   int _selectedIndex = 0;
+
+  // ✅ للخروج المزدوج
+  DateTime? _lastBackPress;
 
   static const int _idxHome = 0;
   static const int _idxLive = 1;
@@ -104,11 +99,7 @@ class _MainShellState extends ConsumerState<MainShell> {
     });
   }
 
-  // ==========================================================
-  //  ✅ تحميل القنوات — الكاش أولاً
-  // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
-    // ✅ صيانة خفيفة فقط (لا تمسح الكاش)
     try {
       final repo = ref.read(m3uRepositoryProvider);
       await repo.maintainCache();
@@ -119,10 +110,8 @@ class _MainShellState extends ConsumerState<MainShell> {
     final state = ref.read(playlistProvider);
     if (state.allChannels.isNotEmpty || state.isLoading) return;
 
-    // ✅ حمّل الكاش فوراً
     await ref.read(playlistProvider.notifier).loadPlaylists(kPlaylistUrls);
 
-    // ✅ بعد 5 ثوانٍ، جلب الروابط عن بعد
     Future.delayed(const Duration(seconds: 5), () async {
       try {
         final remote = RemoteConfig();
@@ -138,24 +127,77 @@ class _MainShellState extends ConsumerState<MainShell> {
     });
   }
 
+  // ==========================================================
+  //  ✅ BUILD مع PopScope
+  // ==========================================================
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        body: Row(
-          children: [
-            _buildSidebar(),
-            Expanded(child: _buildContent()),
-          ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBackPress();
+      },
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          body: Row(
+            children: [
+              _buildSidebar(),
+              Expanded(child: _buildContent()),
+            ],
+          ),
         ),
       ),
     );
   }
 
   // ==========================================================
-  //  الشريط الجانبي
+  //  ✅ خروج مزدوج الضغط
   // ==========================================================
+  void _handleBackPress() {
+    // إذا لم نكن على الرئيسية → ارجع للرئيسية
+    if (_selectedIndex != _idxHome) {
+      setState(() => _selectedIndex = _idxHome);
+      return;
+    }
+
+    // نحن على الرئيسية → خروج مزدوج
+    final now = DateTime.now();
+
+    if (_lastBackPress == null ||
+        now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
+      _lastBackPress = now;
+      _showExitMessage();
+      return;
+    }
+
+    // الضغط الثاني خلال ثانيتين → خروج
+    SystemNavigator.pop();
+  }
+
+  void _showExitMessage() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Directionality(
+          textDirection: TextDirection.rtl,
+          child: Text(
+            'اضغط مرة أخرى للخروج',
+            style: TextStyle(color: Colors.white, fontSize: 14),
+          ),
+        ),
+        backgroundColor: const Color(0xFF141A2E),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+        margin: const EdgeInsets.all(20),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: Color(0xFF00C8FF), width: 1.5),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSidebar() {
     final favCount = ref.watch(favoritesProvider).length;
 
@@ -381,9 +423,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
   
-  // ==========================================================
-  //  المحتوى
-  // ==========================================================
   Widget _buildContent() {
     switch (_selectedIndex) {
       case _idxHome:
@@ -412,9 +451,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     }
   }
 
-  // ==========================================================
-  //  شاشة المباريات
-  // ==========================================================
   Widget _buildMatchesScreen() {
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -437,9 +473,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
-  // ==========================================================
-  //  فتح القناة
-  // ==========================================================
   void _openChannel(Channel channel) {
     ref.read(historyProvider.notifier).record(channel);
 
