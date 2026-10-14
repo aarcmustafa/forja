@@ -145,3 +145,132 @@ class StreamChecker {
   }
 
   bool get isRunning => _isRunning;
+  
+  Future<void> _savePartialResults(
+    List<Channel> channels,
+    List<bool> results,
+  ) async {
+    if (_box == null) await init();
+    if (_box == null) return;
+
+    try {
+      final raw = _box!.get(_kResults);
+      Map<String, dynamic> map =
+          raw != null ? Map<String, dynamic>.from(raw as Map) : {};
+
+      for (int i = 0; i < channels.length; i++) {
+        map[channels[i].id] = {
+          'ok': results[i],
+          'at': DateTime.now().millisecondsSinceEpoch,
+        };
+      }
+
+      if (map.length > maxSavedResults) {
+        final entries = map.entries.toList()
+          ..sort((a, b) {
+            final ta = (a.value['at'] as int?) ?? 0;
+            final tb = (b.value['at'] as int?) ?? 0;
+            return tb.compareTo(ta);
+          });
+
+        map = Map.fromEntries(entries.take(maxSavedResults));
+      }
+
+      await _box!.put(_kResults, map);
+      await _box!.put(_kTimestamp, DateTime.now().millisecondsSinceEpoch);
+    } catch (_) {}
+  }
+
+  Future<Map<String, bool>> loadResults() async {
+    if (_box == null) await init();
+    if (_box == null) return {};
+
+    try {
+      final raw = _box!.get(_kResults);
+      if (raw == null) return {};
+
+      final map = Map<String, dynamic>.from(raw as Map);
+      final result = <String, bool>{};
+      map.forEach((k, v) {
+        if (v is Map && v['ok'] is bool) {
+          result[k] = v['ok'] as bool;
+        }
+      });
+      return result;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<bool> hasBeenChecked(String channelId) async {
+    final results = await loadResults();
+    return results.containsKey(channelId);
+  }
+
+  DateTime? getLastCheckTime() {
+    if (_box == null) return null;
+    final ts = _box!.get(_kTimestamp);
+    if (ts == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ts as int);
+  }
+
+  Future<int> getCheckedCount() async {
+    final results = await loadResults();
+    return results.length;
+  }
+
+  Future<void> maintainCache() async {
+    if (_box == null) await init();
+    if (_box == null) return;
+
+    try {
+      final raw = _box!.get(_kResults);
+      if (raw is! Map) return;
+
+      final map = Map<String, dynamic>.from(raw);
+      if (map.length <= maxSavedResults) return;
+
+      final entries = map.entries.toList()
+        ..sort((a, b) {
+          final ta = (a.value['at'] as int?) ?? 0;
+          final tb = (b.value['at'] as int?) ?? 0;
+          return tb.compareTo(ta);
+        });
+
+      final trimmed = Map.fromEntries(entries.take(maxSavedResults));
+      await _box!.put(_kResults, trimmed);
+    } catch (_) {}
+  }
+
+  Future<Map<String, dynamic>> getCacheInfo() async {
+    if (_box == null) await init();
+    if (_box == null) {
+      return {'ready': false, 'count': 0, 'limit': maxSavedResults};
+    }
+
+    try {
+      final raw = _box!.get(_kResults);
+      final count = raw is Map ? raw.length : 0;
+      return {
+        'ready': true,
+        'count': count,
+        'limit': maxSavedResults,
+        'lastCheck': getLastCheckTime()?.toIso8601String(),
+      };
+    } catch (_) {
+      return {'ready': false, 'count': 0, 'limit': maxSavedResults};
+    }
+  }
+
+  Future<void> clear() async {
+    if (_box == null) await init();
+    if (_box == null) return;
+    await _box!.delete(_kResults);
+    await _box!.delete(_kTimestamp);
+  }
+
+  void dispose() {
+    stop();
+    _dio.close();
+  }
+}
