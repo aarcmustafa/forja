@@ -100,6 +100,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   final StreamChecker _checker;
   bool _filterAdult = true;
   bool _backgroundCheckStarted = false;
+  bool _refreshInProgress = false;
 
   PlaylistNotifier(this._repository, this._storage, this._checker)
       : super(const PlaylistState());
@@ -114,7 +115,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void resumeBackgroundCheck() => _checker.resume();
 
   // ==========================================================
-  //  التحميل
+  //  التحميل — الكاش أولاً
   // ==========================================================
   Future<void> loadPlaylists(
     List<String> urls, {
@@ -133,6 +134,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 
     final saved = await _checker.loadResults();
 
+    // ✅ 1) اعرض الكاش فوراً
     if (!forceRefresh) {
       final cached = _storage.loadChannels();
       if (cached != null && cached.isNotEmpty) {
@@ -141,12 +143,22 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
           isLoading: false,
           lastUpdate: _storage.getLastSaveTime(),
         );
-        _startBackgroundCheckIfNeeded();
-        _refreshInBackground(urls);
+
+        // ✅ 2) أجّل التحديث الخلفي 5 ثوانٍ
+        Future.delayed(const Duration(seconds: 5), () {
+          _refreshInBackground(urls);
+        });
+
+        // ✅ 3) أجّل الفحص الخلفي 45 ثانية
+        Future.delayed(const Duration(seconds: 45), () {
+          _startBackgroundCheckIfNeeded();
+        });
+
         return;
       }
     }
 
+    // لا يوجد كاش → تحميل كامل
     state = state.copyWith(isLoading: true, clearError: true);
 
     final channels = await _fetchAll(urls);
@@ -171,6 +183,8 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   }
 
   Future<void> _refreshInBackground(List<String> urls) async {
+    if (_refreshInProgress) return;
+    _refreshInProgress = true;
     state = state.copyWith(isRefreshing: true);
 
     try {
@@ -187,32 +201,47 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }
     } catch (_) {
       state = state.copyWith(isRefreshing: false);
+    } finally {
+      _refreshInProgress = false;
     }
   }
 
+  // ==========================================================
+  //  ✅ التحميل المتوازي (4 روابط معاً)
+  // ==========================================================
   Future<List<Channel>?> _fetchAll(
     List<String> urls, {
     bool refreshCache = false,
   }) async {
     try {
-      final List<Channel> all = [];
-      for (final url in urls) {
-        try {
-          final channels = await _repository.loadFromUrl(
-            url,
-            forceRefresh: refreshCache,
-          );
-          all.addAll(channels);
-        } catch (e) {
-          // ignore: avoid_print
-          print('فشل تحميل $url: $e');
+      final all = <Channel>[];
+      const batchSize = 4;
+
+      for (int i = 0; i < urls.length; i += batchSize) {
+        final batch = urls.skip(i).take(batchSize).toList();
+        final results = await Future.wait(
+          batch.map((url) async {
+            try {
+              return await _repository.loadFromUrl(
+                url,
+                forceRefresh: refreshCache,
+              );
+            } catch (e) {
+              // ignore: avoid_print
+              print('فشل تحميل $url: $e');
+              return <Channel>[];
+            }
+          }),
+        );
+
+        for (final list in results) {
+          all.addAll(list);
         }
       }
+
       if (all.isEmpty) return null;
 
-      // ✅ فلترة الرياضة فقط
       final sportOnly = all.where((c) => _isSportChannel(c)).toList();
-
       return _removeDuplicates(sportOnly);
     } catch (e) {
       // ignore: avoid_print
@@ -221,7 +250,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     }
   }
 
-  /// ✅ هل القناة رياضية؟
   bool _isSportChannel(Channel c) {
     if (c.category == 'sport') return true;
 
@@ -266,9 +294,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 
     _backgroundCheckStarted = true;
 
-    Future.delayed(const Duration(seconds: 5), () {
-      _runBackgroundCheck();
-    });
+    _runBackgroundCheck();
   }
 
   Future<void> _runBackgroundCheck() async {
@@ -329,7 +355,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void _applyFilters() {
     List<Channel> filtered = List.from(state.allChannels);
 
-    // 1) الرياضة فقط (تم بالفعل في _fetchAll، لكن للأمان)
+    // 1) الرياضة فقط
     filtered = filtered.where((c) => _isSportChannel(c)).toList();
 
     // 2) فلتر البالغين
@@ -410,7 +436,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   }
 
   List<Category> _buildCategoriesFromChannels(List<Channel> channels) {
-    // ✅ قائمة باقات رياضية جاهزة
     const defaultSubs = [
       SubCategory(id: '1', name: 'beIN Sports', slug: 'bein', order: 1),
       SubCategory(id: '2', name: 'SSC', slug: 'ssc', order: 2),
