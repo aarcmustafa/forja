@@ -3,30 +3,29 @@ import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
-/// خدمة فحص القنوات - تعمل في الخلفية مع إدارة كاش ذكية
+/// ✅ فحص بطيء وآمن — لا يستفز Cloudflare
 class StreamChecker {
   static const String _boxName = 'stream_checks';
   static const String _kResults = 'results';
   static const String _kTimestamp = 'checked_at';
 
-  static const Duration timeout = Duration(seconds: 4);
-  static const int concurrency = 15;
-  static const int backgroundBatchSize = 10;
-  static const Duration backgroundDelay = Duration(seconds: 8);
+  static const Duration timeout = Duration(seconds: 5);
 
-  /// ✅ الحد الأقصى لنتائج الفحص المحفوظة
+  /// ✅ تقليل التوازي (10 → 3)
+  static const int concurrency = 3;
+  static const int backgroundBatchSize = 3;
+
+  /// ✅ زيادة التأخير (8s → 15s)
+  static const Duration backgroundDelay = Duration(seconds: 15);
+
+  /// ✅ نتيجة صالحة 7 أيام (بدل كل مرة)
+  static const Duration resultValidity = Duration(days: 7);
+
   static const int maxSavedResults = 30000;
 
-  /// ✅ VLC UA — مقبول من 99% من السيرفرات
-  static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
+  static const String vlcUserAgent = 'okhttp/4.9.0';
 
-  static const List<int> okStatusCodes = [
-    200, // OK
-    206, // Partial Content
-    301, 302, 303, 307, 308, // إعادة التوجيه
-    401, // Unauthorized (محتمل)
-    403, // Forbidden (بعض السيرفرات ترفض HEAD فقط)
-  ];
+  static const List<int> okStatusCodes = [200, 206, 301, 302, 303, 307, 308];
 
   final Dio _dio;
   Box? _box;
@@ -55,45 +54,41 @@ class StreamChecker {
     } catch (_) {}
   }
 
-  // ==========================================================
-  //  فحص قناة واحدة
-  // ==========================================================
+  /// ✅ GET مع Range بدل HEAD (HEAD محظور من بعض السيرفرات)
+  /// ✅ فحص 7 أيام أولاً قبل إعادة الفحص
   Future<bool> checkOne(Channel channel) async {
     try {
-      // Referer تلقائي
+      if (_box == null) await init();
+
+      // فحص النتيجة السابقة
+      if (_box != null) {
+        final raw = _box!.get(_kResults);
+        if (raw is Map) {
+          final data = raw[channel.id];
+          if (data is Map && data['at'] is int) {
+            final savedAt =
+                DateTime.fromMillisecondsSinceEpoch(data['at'] as int);
+            if (DateTime.now().difference(savedAt) < resultValidity) {
+              return data['ok'] as bool? ?? false;
+            }
+          }
+        }
+      }
+
       final headers = <String, String>{
         'User-Agent': vlcUserAgent,
         'Accept': '*/*',
+        'Range': 'bytes=0-512',
       };
-      try {
-        final uri = Uri.parse(channel.streamUrl);
-        headers['Referer'] = '${uri.scheme}://${uri.host}/';
-      } catch (_) {}
 
-      // استخدام Referer المخصص إن وُجد
-      final customReferer = channel.extras['referer'];
-      if (customReferer != null && customReferer.isNotEmpty) {
-        headers['Referer'] = customReferer;
-      }
-
-      Response response;
-      try {
-        response = await _dio.head(
-          channel.streamUrl,
-          options: Options(headers: headers),
-        );
-      } catch (_) {
-        response = await _dio.get(
-          channel.streamUrl,
-          options: Options(
-            responseType: ResponseType.stream,
-            headers: {
-              ...headers,
-              'Range': 'bytes=0-512',
-            },
-          ),
-        );
-      }
+      // ✅ GET بدل HEAD
+      final response = await _dio.get(
+        channel.streamUrl,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: headers,
+        ),
+      );
 
       final code = response.statusCode ?? 0;
       return okStatusCodes.contains(code);
@@ -102,9 +97,6 @@ class StreamChecker {
     }
   }
 
-  // ==========================================================
-  //  الفحص الخلفي التلقائي
-  // ==========================================================
   Future<void> startBackgroundCheck(
     List<Channel> channels, {
     required void Function(String channelId, bool isWorking) onResult,
@@ -153,152 +145,3 @@ class StreamChecker {
   }
 
   bool get isRunning => _isRunning;
-
-  // ==========================================================
-  //  الحفظ والقراءة
-  // ==========================================================
-  Future<void> _savePartialResults(
-    List<Channel> channels,
-    List<bool> results,
-  ) async {
-    if (_box == null) await init();
-    if (_box == null) return;
-
-    try {
-      final raw = _box!.get(_kResults);
-      Map<String, dynamic> map =
-          raw != null ? Map<String, dynamic>.from(raw as Map) : {};
-
-      for (int i = 0; i < channels.length; i++) {
-        map[channels[i].id] = {
-          'ok': results[i],
-          'at': DateTime.now().millisecondsSinceEpoch,
-        };
-      }
-
-      // ✅ إذا كبر الكاش → احتفظ بأحدث maxSavedResults فقط
-      if (map.length > maxSavedResults) {
-        final entries = map.entries.toList()
-          ..sort((a, b) {
-            final ta = (a.value['at'] as int?) ?? 0;
-            final tb = (b.value['at'] as int?) ?? 0;
-            return tb.compareTo(ta);
-          });
-
-        map = Map.fromEntries(
-          entries.take(maxSavedResults),
-        );
-
-        // ignore: avoid_print
-        print('🧹 تم تنظيف نتائج الفحص القديمة');
-      }
-
-      await _box!.put(_kResults, map);
-      await _box!.put(_kTimestamp, DateTime.now().millisecondsSinceEpoch);
-    } catch (_) {}
-  }
-
-  Future<Map<String, bool>> loadResults() async {
-    if (_box == null) await init();
-    if (_box == null) return {};
-
-    try {
-      final raw = _box!.get(_kResults);
-      if (raw == null) return {};
-
-      final map = Map<String, dynamic>.from(raw as Map);
-      final result = <String, bool>{};
-      map.forEach((k, v) {
-        if (v is Map && v['ok'] is bool) {
-          result[k] = v['ok'] as bool;
-        }
-      });
-      return result;
-    } catch (_) {
-      return {};
-    }
-  }
-
-  Future<bool> hasBeenChecked(String channelId) async {
-    final results = await loadResults();
-    return results.containsKey(channelId);
-  }
-
-  DateTime? getLastCheckTime() {
-    if (_box == null) return null;
-    final ts = _box!.get(_kTimestamp);
-    if (ts == null) return null;
-    return DateTime.fromMillisecondsSinceEpoch(ts as int);
-  }
-
-  Future<int> getCheckedCount() async {
-    final results = await loadResults();
-    return results.length;
-  }
-
-  // ==========================================================
-  //  إدارة الكاش — صيانة تلقائية
-  // ==========================================================
-  /// ✅ صيانة الكاش — تُستدعى عند بدء التطبيق
-  Future<void> maintainCache() async {
-    if (_box == null) await init();
-    if (_box == null) return;
-
-    try {
-      final raw = _box!.get(_kResults);
-      if (raw is! Map) return;
-
-      final map = Map<String, dynamic>.from(raw);
-      if (map.length <= maxSavedResults) return;
-
-      // ترتيب حسب الوقت (الأحدث أولاً)
-      final entries = map.entries.toList()
-        ..sort((a, b) {
-          final ta = (a.value['at'] as int?) ?? 0;
-          final tb = (b.value['at'] as int?) ?? 0;
-          return tb.compareTo(ta);
-        });
-
-      final trimmed = Map.fromEntries(
-        entries.take(maxSavedResults),
-      );
-
-      await _box!.put(_kResults, trimmed);
-      // ignore: avoid_print
-      print('🧹 تم تقليم نتائج الفحص: ${map.length} → ${trimmed.length}');
-    } catch (_) {}
-  }
-
-  /// ✅ معلومات الكاش
-  Future<Map<String, dynamic>> getCacheInfo() async {
-    if (_box == null) await init();
-    if (_box == null) {
-      return {'ready': false, 'count': 0, 'limit': maxSavedResults};
-    }
-
-    try {
-      final raw = _box!.get(_kResults);
-      final count = raw is Map ? raw.length : 0;
-      return {
-        'ready': true,
-        'count': count,
-        'limit': maxSavedResults,
-        'lastCheck': getLastCheckTime()?.toIso8601String(),
-      };
-    } catch (_) {
-      return {'ready': false, 'count': 0, 'limit': maxSavedResults};
-    }
-  }
-
-  Future<void> clear() async {
-    if (_box == null) await init();
-    if (_box == null) return;
-    await _box!.delete(_kResults);
-    await _box!.delete(_kTimestamp);
-  }
-
-  void dispose() {
-    stop();
-    _dio.close();
-  }
-}
