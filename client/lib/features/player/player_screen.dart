@@ -137,13 +137,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _openStream() async {
-    final headers = _buildHeaders(widget.streamUrl);
-
+    final headers = _buildHeaders();
     await player.open(
-      Media(
-        widget.streamUrl,
-        httpHeaders: headers,
-      ),
+      Media(widget.streamUrl, httpHeaders: headers),
       play: true,
     );
 
@@ -154,22 +150,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
-  Map<String, String> _buildHeaders(String url) {
-    final headers = <String, String>{
-      'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+  /// ✅ لا Referer/Origin — يتجنب 511 من Cloudflare
+  Map<String, String> _buildHeaders() {
+    return {
+      'User-Agent': 'okhttp/4.9.0',
       'Accept': '*/*',
       'Connection': 'keep-alive',
       'Icy-MetaData': '1',
     };
-
-    try {
-      final uri = Uri.parse(url);
-      final origin = '${uri.scheme}://${uri.host}';
-      headers['Referer'] = '$origin/';
-      headers['Origin'] = origin;
-    } catch (_) {}
-
-    return headers;
   }
 
   void _handleError(String error) {
