@@ -120,7 +120,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     await _storage.init();
     await _checker.init();
 
-    // ✅ 1) اقرأ الكاش فوراً
     if (!forceRefresh) {
       final cached = _storage.loadChannels();
       if (cached != null && cached.isNotEmpty) {
@@ -131,12 +130,10 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
           lastUpdate: _storage.getLastSaveTime(),
         );
 
-        // تحديث في الخلفية
         Future.delayed(const Duration(seconds: 5), () {
           _refreshInBackground(urls);
         });
 
-        // ✅ 2) ابدأ الفحص بعد 15 ثانية (بدل 45)
         Future.delayed(const Duration(seconds: 15), () {
           _startBackgroundCheckIfNeeded();
         });
@@ -145,7 +142,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }
     }
 
-    // لا يوجد كاش → تحميل كامل
     state = state.copyWith(isLoading: true, clearError: true);
 
     final channels = await _fetchAll(urls);
@@ -158,7 +154,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       return;
     }
 
-    // ✅ 3) احفظ فوراً + إجبار الكتابة
     await _storage.saveChannels(channels);
 
     final saved = await _checker.loadResults();
@@ -234,61 +229,95 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   }
 
   // ==========================================================
-  //  ✅ فلتر صارم — رياضة فقط
+  //  ✅ التصنيف السياقي — يفحص المجموعة أولاً
   // ==========================================================
   bool _isSportChannel(Channel c) {
     final name = c.name.toLowerCase();
     final group = c.group.toLowerCase();
-    final text = '$name $group';
 
-    // ✅ 1) كلمات ممنوعة (غير رياضية)
-    const excludeKeywords = [
-      'quran', 'قرآن', 'إسلام', 'دين', 'religious', 'prayer',
-      'movie', 'cinema', 'فيلم', 'أفلام', 'film',
-      'series', 'مسلسل', 'drama', 'دراما',
-      'kids', 'أطفال', 'cartoon', 'كرتون',
-      'music', 'أغاني', 'موسيقى',
-      'news', 'أخبار', 'إخبارية',
-      'cooking', 'طبخ', 'food',
+    // 🚫 المرحلة 1: استبعاد قاطع
+    const nonSportKeywords = [
+      'movie', 'movies', 'film', 'films', 'cinema', 'vod',
+      'فيلم', 'أفلام', 'سينما', 'افلام',
+      'series', 'serie', 'drama', 'soap',
+      'مسلسل', 'مسلسلات', 'دراما',
+      'kids', 'kid', 'cartoon', 'children', 'baby',
+      'أطفال', 'اطفال', 'كرتون',
+      'music', 'mtv', 'أغاني', 'موسيقى',
+      'news', 'أخبار',
+      'documentary', 'وثائقي',
+      'religious', 'quran', 'قرآن', 'دين', 'islamic',
+      'cooking', 'food', 'طبخ',
       'fashion', 'أزياء',
       'shopping', 'تسوق',
-      'general', 'عامة',
+      'adult', 'xxx', 'porn', '+18', '18+',
     ];
 
-    for (final k in excludeKeywords) {
-      if (text.contains(k)) return false;
+    for (final k in nonSportKeywords) {
+      if (group.contains(k)) return false;
     }
 
-    // ✅ 2) كلمات رياضية مطلوبة
-    const sportKeywords = [
-      // علامات رياضية
-      'bein', 'ssc', 'alkass', 'alwan', 'shahid sport',
-      'ad sport', 'adsport', 'abu dhabi sport',
-      'dubai sport', 'ksa sport', 'saudi sport',
-      'al kass', 'shasha sport', '1001 sport',
-      'sportv', 'sport tv', 'sky sport', 'espn',
-      'dazn', 'nba', 'nfl', 'ufc', 'wwe',
-      'fifa', 'uefa', 'caf', 'afc', 'f1',
-      'formula', 'moto gp', 'motogp',
-      // كلمات عربية
-      'رياض', 'رياضية', 'كورة', 'كرة',
-      'الدوري', 'دوري',
+    const nameStrictRejects = [
+      'movie', 'movies', 'film', 'series', 'drama',
+      'kid', 'kids', 'cartoon', 'music', 'news',
+      'adult', 'xxx', 'porn', 'quran',
+      'فيلم', 'أفلام', 'سينما',
+      'مسلسل', 'دراما', 'أطفال', 'كرتون',
+      'أخبار', 'أغاني', 'قرآن',
+    ];
+
+    for (final k in nameStrictRejects) {
+      if (name.contains(k)) {
+        if (!name.contains('sport') && !name.contains('رياض')) {
+          return false;
+        }
+      }
+    }
+
+    // ✅ المرحلة 2: قبول قاطع
+    const sportGroupKeywords = [
+      'sport', 'sports', 'رياض', 'رياضة', 'كورة',
+      'bein sport', 'ssc', 'alkass', 'al kass',
+      'dazn', 'espn', 'ufc', 'wwe', 'nba', 'nfl',
+    ];
+
+    for (final k in sportGroupKeywords) {
+      if (group.contains(k)) return true;
+    }
+
+    const sportNameKeywords = [
+      'bein sport', 'bein sports', 'beinsport',
+      'ssc sport', 'ssc ', 'alkass', 'shahid sport',
+      'alwan sport', 'alwan sp', 'ad sport', 'adsport',
+      'abu dhabi sport', 'dubai sport', 'ksa sport',
+      'shasha sport', '1001 sport',
+      'sky sport', 'espn', 'dazn', 'sportv',
+      'premier league', 'premierleague',
+      'laliga', 'la liga',
+      'bundesliga',
+      'ligue 1', 'ligue1',
+      'serie a',
+      'world cup', 'euro 20',
+      'f1 ', 'formula 1', 'formula1', 'motogp', 'moto gp',
+      'fifa', 'uefa', 'caf ', 'afc ',
+      'الدوري', 'دوري ',
       'مباريات', 'مباراة',
-      // الدوريات
-      'premier', 'laliga', 'bundesliga', 'ligue',
-      'serie a', 'world cup', 'euro',
+      'كورة', 'رياض',
     ];
 
-    for (final k in sportKeywords) {
-      if (text.contains(k)) return true;
+    for (final k in sportNameKeywords) {
+      if (name.contains(k)) return true;
     }
+
+    // ⚠️ المرحلة 3: beIN مع رقم → رياضة
+    final beinNumberPattern = RegExp(r'\bbein\s*(\d+)');
+    if (beinNumberPattern.hasMatch(name)) return true;
+
+    if (name.contains('bein') && name.contains('sport')) return true;
 
     return false;
   }
 
-  // ==========================================================
-  //  ✅ ترتيب القنوات — الشغالة أولاً + الباقات + الجودة
-  // ==========================================================
   void _setChannels(
     List<Channel> channels, {
     Map<String, bool>? workingStatus,
@@ -341,28 +370,20 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 
     final sorted = List<Channel>.from(channels);
     sorted.sort((a, b) {
-      // ✅ 1) الشغالة أولاً (الأهم!)
       final wa = state.workingStatus[a.id];
       final wb = state.workingStatus[b.id];
-
-      // working=true → rank 0
-      // unknown → rank 1
-      // working=false → rank 2 (سيبقى في النهاية)
       final ra = wa == true ? 0 : (wa == false ? 2 : 1);
       final rb = wb == true ? 0 : (wb == false ? 2 : 1);
       if (ra != rb) return ra.compareTo(rb);
 
-      // ✅ 2) الباقة
       final pa = packageRank(a);
       final pb = packageRank(b);
       if (pa != pb) return pa.compareTo(pb);
 
-      // ✅ 3) الجودة
       final qa = qualityRank(a.name);
       final qb = qualityRank(b.name);
       if (qa != qb) return qa.compareTo(qb);
 
-      // ✅ 4) الرقم
       final na = extractNumber(a.name);
       final nb = extractNumber(b.name);
       if (na != nb) return na.compareTo(nb);
@@ -393,7 +414,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
         newWorkingStatus[channelId] = isWorking;
         state = state.copyWith(workingStatus: newWorkingStatus);
 
-        // ✅ إعادة الترتيب كل 20 نتيجة
         if (newWorkingStatus.length % 20 == 0) {
           final reSorted = _sortSportsChannels(state.allChannels);
           state = state.copyWith(allChannels: reSorted);
@@ -402,7 +422,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       },
     );
 
-    // إعادة الترتيب النهائية
     final finalSorted = _sortSportsChannels(state.allChannels);
     state = state.copyWith(allChannels: finalSorted);
     _applyFilters();
@@ -447,7 +466,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
           .toList();
     }
 
-    // ✅ لا نخفي الميتة تلقائياً، فقط نرتبها في النهاية
     if (state.selectedSubCategorySlug != null) {
       final slug = state.selectedSubCategorySlug!.toLowerCase();
       final selectedCat = state.categories.firstWhere(
