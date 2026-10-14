@@ -3,29 +3,29 @@ import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
-/// ✅ فحص بطيء وآمن — لا يستفز Cloudflare
+/// خدمة فحص القنوات — تعمل في الخلفية بتأخير
 class StreamChecker {
   static const String _boxName = 'stream_checks';
   static const String _kResults = 'results';
   static const String _kTimestamp = 'checked_at';
 
   static const Duration timeout = Duration(seconds: 5);
-
-  /// ✅ تقليل التوازي (10 → 3)
-  static const int concurrency = 3;
-  static const int backgroundBatchSize = 3;
-
-  /// ✅ زيادة التأخير (8s → 15s)
+  static const int concurrency = 10;
+  static const int backgroundBatchSize = 8;
   static const Duration backgroundDelay = Duration(seconds: 15);
 
-  /// ✅ نتيجة صالحة 7 أيام (بدل كل مرة)
-  static const Duration resultValidity = Duration(days: 7);
+  /// ✅ تأخير أولي قبل بدء الفحص
+  static const Duration initialDelay = Duration(seconds: 30);
 
   static const int maxSavedResults = 30000;
 
-  static const String vlcUserAgent = 'okhttp/4.9.0';
+  static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
 
-  static const List<int> okStatusCodes = [200, 206, 301, 302, 303, 307, 308];
+  static const List<int> okStatusCodes = [
+    200, 206,
+    301, 302, 303, 307, 308,
+    401, 403,
+  ];
 
   final Dio _dio;
   Box? _box;
@@ -54,41 +54,40 @@ class StreamChecker {
     } catch (_) {}
   }
 
-  /// ✅ GET مع Range بدل HEAD (HEAD محظور من بعض السيرفرات)
-  /// ✅ فحص 7 أيام أولاً قبل إعادة الفحص
   Future<bool> checkOne(Channel channel) async {
     try {
-      if (_box == null) await init();
-
-      // فحص النتيجة السابقة
-      if (_box != null) {
-        final raw = _box!.get(_kResults);
-        if (raw is Map) {
-          final data = raw[channel.id];
-          if (data is Map && data['at'] is int) {
-            final savedAt =
-                DateTime.fromMillisecondsSinceEpoch(data['at'] as int);
-            if (DateTime.now().difference(savedAt) < resultValidity) {
-              return data['ok'] as bool? ?? false;
-            }
-          }
-        }
-      }
-
       final headers = <String, String>{
         'User-Agent': vlcUserAgent,
         'Accept': '*/*',
-        'Range': 'bytes=0-512',
       };
+      try {
+        final uri = Uri.parse(channel.streamUrl);
+        headers['Referer'] = '${uri.scheme}://${uri.host}/';
+      } catch (_) {}
 
-      // ✅ GET بدل HEAD
-      final response = await _dio.get(
-        channel.streamUrl,
-        options: Options(
-          responseType: ResponseType.stream,
-          headers: headers,
-        ),
-      );
+      final customReferer = channel.extras['referer'];
+      if (customReferer != null && customReferer.isNotEmpty) {
+        headers['Referer'] = customReferer;
+      }
+
+      Response response;
+      try {
+        response = await _dio.head(
+          channel.streamUrl,
+          options: Options(headers: headers),
+        );
+      } catch (_) {
+        response = await _dio.get(
+          channel.streamUrl,
+          options: Options(
+            responseType: ResponseType.stream,
+            headers: {
+              ...headers,
+              'Range': 'bytes=0-512',
+            },
+          ),
+        );
+      }
 
       final code = response.statusCode ?? 0;
       return okStatusCodes.contains(code);
@@ -104,6 +103,10 @@ class StreamChecker {
   }) async {
     if (_isRunning) return;
     _isRunning = true;
+
+    // ✅ تأخير 30 ثانية قبل البدء — لا يزاحم التحميل
+    await Future.delayed(initialDelay);
+    if (!_isRunning) return;
 
     final checkedIds = alreadyChecked?.keys.toSet() ?? <String>{};
     final toCheck =
@@ -145,7 +148,7 @@ class StreamChecker {
   }
 
   bool get isRunning => _isRunning;
-  
+
   Future<void> _savePartialResults(
     List<Channel> channels,
     List<bool> results,
