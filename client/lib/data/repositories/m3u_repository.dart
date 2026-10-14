@@ -4,6 +4,7 @@ import '../models/channel.dart';
 import 'xtream_client.dart';
 
 /// مستودع رياضي — Xtream Live + M3U + Fallback UA + Retry 5xx
+/// ✅ يدعم التحويلات عبر البروتوكولات (HTTP ↔ HTTPS)
 class M3uRepository {
   static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
 
@@ -90,10 +91,13 @@ class M3uRepository {
               connectTimeout: const Duration(seconds: 30),
               receiveTimeout: const Duration(seconds: 180),
               sendTimeout: const Duration(seconds: 30),
+              // ✅ متابعة كل التحويلات تلقائياً
               followRedirects: true,
-              maxRedirects: 5,
+              // ✅ زيادة الحد الأقصى (302 → 302 → 200)
+              maxRedirects: 10,
               persistentConnection: true,
-              validateStatus: (status) => status != null && status < 600,
+              // ✅ قبول كل رموز الحالة (حتى 4xx و5xx)
+              validateStatus: (_) => true,
               headers: {
                 'User-Agent': vlcUserAgent,
                 'Accept': '*/*',
@@ -101,7 +105,10 @@ class M3uRepository {
                 'Connection': 'keep-alive',
                 'Icy-MetaData': '1',
               },
-            ));
+            )) {
+    // ✅ interceptor لمتابعة التحويلات عبر البروتوكولات
+    _dio.interceptors.add(_CrossProtocolRedirectInterceptor(_dio));
+  }
 
   // ==========================================================
   //  الدالة الرئيسية
@@ -302,6 +309,8 @@ Future<String?> _tryFetch(String url, String ua) async {
         options: Options(
           responseType: ResponseType.plain,
           headers: headers,
+          followRedirects: true,
+          maxRedirects: 10,
           validateStatus: (_) => true,
         ),
       );
@@ -314,7 +323,34 @@ Future<String?> _tryFetch(String url, String ua) async {
         return response.data;
       }
 
-      // ✅ إعادة المحاولة على 5xx (server errors)
+      // ✅ 3xx لم تُتابع — جرّب يدوياً
+      if (code >= 300 && code < 400) {
+        final location = response.headers.value('location');
+        if (location != null && location.isNotEmpty) {
+          try {
+            final redirectUri =
+                Uri.parse(url).resolve(location).toString();
+            // جرّب الرابط الجديد مباشرة
+            final redirectResponse = await _dio.get<String>(
+              redirectUri,
+              options: Options(
+                responseType: ResponseType.plain,
+                headers: headers,
+                followRedirects: true,
+                maxRedirects: 10,
+                validateStatus: (_) => true,
+              ),
+            );
+            if (redirectResponse.statusCode == 200 &&
+                redirectResponse.data != null &&
+                redirectResponse.data!.isNotEmpty) {
+              return redirectResponse.data;
+            }
+          } catch (_) {}
+        }
+      }
+
+      // ✅ إعادة المحاولة على 5xx
       if (code >= 500 && code < 600) {
         await Future.delayed(
           Duration(milliseconds: 800 * (attempt + 1)),
@@ -322,7 +358,7 @@ Future<String?> _tryFetch(String url, String ua) async {
         continue;
       }
 
-      // ✅ إعادة المحاولة على 429 (rate limit)
+      // ✅ إعادة المحاولة على 429
       if (code == 429) {
         await Future.delayed(
           Duration(milliseconds: 1500 * (attempt + 1)),
@@ -330,10 +366,8 @@ Future<String?> _tryFetch(String url, String ua) async {
         continue;
       }
 
-      // ❌ باقي الأخطاء (4xx) → لا تعيد المحاولة
       return null;
     } catch (_) {
-      // خطأ شبكة → إعادة المحاولة مع تأخير متزايد
       if (attempt < maxAttempts - 1) {
         await Future.delayed(
           Duration(milliseconds: 500 * (attempt + 1)),
@@ -496,13 +530,53 @@ Future<String?> _tryFetch(String url, String ua) async {
     return priority;
   }
 
-  bool _contains(String text, List<String> keywords) {
-    for (final k in keywords) {
-      if (text.contains(k)) return true;
-    }
-    return false;
-  }
-
   void clearCache() => _cache.clear();
   void dispose() => _dio.close();
+}
+
+// ==========================================================
+//  Interceptor للتحويلات عبر البروتوكولات
+// ==========================================================
+class _CrossProtocolRedirectInterceptor extends Interceptor {
+  final Dio _dio;
+
+  _CrossProtocolRedirectInterceptor(this._dio);
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    try {
+      final response = err.response;
+      if (response == null) {
+        return handler.next(err);
+      }
+
+      final code = response.statusCode ?? 0;
+      if (code < 300 || code >= 400) {
+        return handler.next(err);
+      }
+
+      final location = response.headers.value('location');
+      if (location == null || location.isEmpty) {
+        return handler.next(err);
+      }
+
+      final currentUri = response.requestOptions.uri;
+      final redirectUri = currentUri.resolve(location);
+
+      final retryResponse = await _dio.get(
+        redirectUri.toString(),
+        options: Options(
+          responseType: response.requestOptions.responseType,
+          headers: response.requestOptions.headers,
+          followRedirects: true,
+          maxRedirects: 10,
+          validateStatus: (_) => true,
+        ),
+      );
+
+      return handler.resolve(retryResponse);
+    } catch (_) {
+      return handler.next(err);
+    }
+  }
 }
