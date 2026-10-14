@@ -48,14 +48,12 @@ class XtreamDetector {
     try {
       final uri = Uri.parse(url);
 
-      // استخراج username/password من query params
       final username = uri.queryParameters['username'];
       final password = uri.queryParameters['password'];
 
       if (username == null || password == null) return null;
       if (username.isEmpty || password.isEmpty) return null;
 
-      // بناء server URL (scheme + host + port)
       final portPart = uri.hasPort ? ':${uri.port}' : '';
       final server = '${uri.scheme}://${uri.host}$portPart';
 
@@ -70,21 +68,28 @@ class XtreamDetector {
   }
 }
 
-/// عميل Xtream API
+/// عميل Xtream API — ✅ okhttp UA + مهلة قصيرة + بدون Referer
 class XtreamClient {
-  static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
+  /// ✅ okhttp أفضل من VLC مع Cloudflare
+  static const String userAgent = 'okhttp/4.9.0';
 
   final Dio _dio;
   final XtreamCredentials credentials;
 
   XtreamClient(this.credentials)
       : _dio = Dio(BaseOptions(
-          connectTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(seconds: 90),
+          // ✅ مهلة قصيرة (5 ثوانٍ)
+          connectTimeout: const Duration(seconds: 5),
+          receiveTimeout: const Duration(seconds: 60),
+          followRedirects: true,
+          maxRedirects: 5,
+          validateStatus: (status) => status != null && status < 500,
           headers: {
-            'User-Agent': vlcUserAgent,
+            'User-Agent': userAgent,
             'Accept': 'application/json, */*',
+            'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
+            // ✅ لا Referer ولا Origin (لتجنب 511 من Cloudflare)
           },
         ));
 
@@ -124,16 +129,6 @@ class XtreamClient {
   // ==========================================================
   Future<Map<String, String>> getLiveCategories() async {
     final data = await _get('get_live_categories');
-    return _parseCategories(data);
-  }
-
-  Future<Map<String, String>> getVodCategories() async {
-    final data = await _get('get_vod_categories');
-    return _parseCategories(data);
-  }
-
-  Future<Map<String, String>> getSeriesCategories() async {
-    final data = await _get('get_series_categories');
     return _parseCategories(data);
   }
 
@@ -182,13 +177,10 @@ Channel? _parseLiveStream(
   final categoryId = item['category_id']?.toString() ?? '';
   final categoryName = categories?[categoryId] ?? '';
 
-  // ✅ بناء رابط البث (HTTP/HTTPS)
   final ext = item['container_extension']?.toString() ?? 'ts';
   final streamUrl = _buildStreamUrl('live', streamId, ext);
 
-  // تحليل التصنيف
   final category = _inferCategory(name, categoryName);
-  final language = _inferLanguage(name, categoryName);
   final country = _inferCountry(name, categoryName);
 
   return Channel(
@@ -198,7 +190,7 @@ Channel? _parseLiveStream(
     streamUrl: streamUrl,
     group: categoryName.isEmpty ? 'غير مصنف' : categoryName,
     category: category,
-    language: language,
+    language: 'ara',
     countryCode: country,
     contentType: 'live',
     isWorking: true,
@@ -208,384 +200,90 @@ Channel? _parseLiveStream(
 }
 
 // ==========================================================
-//  جلب الأفلام (VOD)
+//  بناء روابط البث
 // ==========================================================
-Future<List<Channel>> getVodStreams({
-  Map<String, String>? categories,
-}) async {
-  final data = await _get('get_vod_streams');
-  if (data is! List) return [];
-
-  final result = <Channel>[];
-  for (final item in data) {
-    if (item is! Map) continue;
-    try {
-      final movie = _parseVodStream(item, categories);
-      if (movie != null) result.add(movie);
-    } catch (_) {}
-  }
-  return result;
-}
-
-Channel? _parseVodStream(
-  Map<dynamic, dynamic> item,
-  Map<String, String>? categories,
-) {
-  final streamId = item['stream_id']?.toString() ?? '';
-  final name = item['name']?.toString() ?? '';
-  if (streamId.isEmpty || name.isEmpty) return null;
-
-  final logo = item['stream_icon']?.toString() ?? '';
-  final categoryId = item['category_id']?.toString() ?? '';
-  final categoryName = categories?[categoryId] ?? '';
-
-  // ✅ بناء رابط الفيلم
-  final ext = item['container_extension']?.toString() ?? 'mp4';
-  final streamUrl = _buildStreamUrl('movie', streamId, ext);
-
-  final category = 'movie';
-  final contentType = 'movie';
-  final language = _inferLanguage(name, categoryName);
-  final country = _inferCountry(name, categoryName);
-  final genre = _inferGenre(name, categoryName);
-  final year = _extractYear(name);
-  final translation = _inferTranslation(name, categoryName);
-  final originalName = _extractOriginalName(name);
-
-  return Channel(
-    id: 'xtream_vod_$streamId',
-    name: _cleanName(name),
-    originalName: originalName,
-    logo: logo,
-    streamUrl: streamUrl,
-    group: categoryName.isEmpty ? 'أفلام' : categoryName,
-    category: category,
-    language: language,
-    countryCode: country,
-    genre: genre,
-    contentType: contentType,
-    translation: translation,
-    year: year,
-    isWorking: true,
-    priority: 100,
-    tvgId: '',
-  );
-}
-
-// ==========================================================
-//  جلب المسلسلات
-// ==========================================================
-Future<List<Channel>> getSeries({
-  Map<String, String>? categories,
-}) async {
-  final data = await _get('get_series');
-  if (data is! List) return [];
-
-  final result = <Channel>[];
-  for (final item in data) {
-    if (item is! Map) continue;
-    try {
-      final series = _parseSeries(item, categories);
-      if (series != null) result.add(series);
-    } catch (_) {}
-  }
-  return result;
-}
-
-Channel? _parseSeries(
-  Map<dynamic, dynamic> item,
-  Map<String, String>? categories,
-) {
-  final seriesId = item['series_id']?.toString() ?? '';
-  final name = item['name']?.toString() ?? '';
-  if (seriesId.isEmpty || name.isEmpty) return null;
-
-  final logo = item['cover']?.toString() ?? '';
-  final categoryId = item['category_id']?.toString() ?? '';
-  final categoryName = categories?[categoryId] ?? '';
-
-  // ✅ رابط المسلسل عبر API خاص
-  final streamUrl =
-      '${credentials.server}/series/${credentials.username}/${credentials.password}/$seriesId';
-
-  final language = _inferLanguage(name, categoryName);
-  final country = _inferCountry(name, categoryName);
-  final genre = _inferGenre(name, categoryName);
-  final year = _extractYear(name);
-  final translation = _inferTranslation(name, categoryName);
-  final originalName = _extractOriginalName(name);
-
-  return Channel(
-    id: 'xtream_series_$seriesId',
-    name: _cleanName(name),
-    originalName: originalName,
-    logo: logo,
-    streamUrl: streamUrl,
-    group: categoryName.isEmpty ? 'مسلسلات' : categoryName,
-    category: 'series',
-    language: language,
-    countryCode: country,
-    genre: genre,
-    contentType: 'series',
-    translation: translation,
-    year: year,
-    isWorking: true,
-    priority: 100,
-    tvgId: '',
-    extras: {'xtream_series_id': seriesId},
-  );
-}
-
-// ==========================================================
-//  بناء روابط البث — مهم لـ HTTP/HTTPS
-// ==========================================================
-/// بناء رابط البث حسب نوع Xtream
-///
-/// صيغ الروابط:
-/// - Live:  {server}/live/{user}/{pass}/{streamId}.{ext}
-/// - Movie: {server}/movie/{user}/{pass}/{streamId}.{ext}
-/// - Series: {server}/series/{user}/{pass}/{seriesId}.{ext}
 String _buildStreamUrl(String type, String streamId, String ext) {
-  // استخدام uri.encodeComponent للـ username/password
-  // (يحتاج في حالة رموز خاصة)
   final user = Uri.encodeComponent(credentials.username);
   final pass = Uri.encodeComponent(credentials.password);
 
-  // تنظيف ext (بعض السيرفرات ترجع "mp4" بأقواس)
   final cleanExt = ext.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
   final finalExt = cleanExt.isEmpty ? 'ts' : cleanExt;
 
   return '${credentials.server}/$type/$user/$pass/$streamId.$finalExt';
 }
 
-/// بناء رابط بث مخصص (يُستخدم للمسلسلات عند اختيار حلقة)
-String buildEpisodeUrl(String episodeId, String ext) {
-  final user = Uri.encodeComponent(credentials.username);
-  final pass = Uri.encodeComponent(credentials.password);
-  return '${credentials.server}/series/$user/$pass/$episodeId.$ext';
+// ==========================================================
+//  التصنيف
+// ==========================================================
+String _inferCategory(String name, String group) {
+  // كل شيء في هذا التطبيق رياضي
+  return 'sport';
 }
 
-// ==========================================================
-//  جلب حلقات مسلسل
-// ==========================================================
-Future<Map<String, dynamic>?> getSeriesInfo(String seriesId) async {
-  final data = await _get('get_series_info', extra: {
-    'series_id': seriesId,
-  });
-  if (data is Map) return Map<String, dynamic>.from(data);
-  return null;
+String _inferCountry(String name, String group) {
+  final text = '${name.toLowerCase()} ${group.toLowerCase()}';
+
+  if (text.contains('saudi') || text.contains('ksa') ||
+      text.contains('سعودي') || text.contains('السعودية')) {
+    return 'SA';
+  }
+  if (text.contains('emarat') || text.contains('uae') ||
+      text.contains('امارات') || text.contains('الإمارات') ||
+      text.contains('dubai') || text.contains('abu dhabi')) {
+    return 'AE';
+  }
+  if (text.contains('egypt') || text.contains('مصر') ||
+      text.contains('مصري')) {
+    return 'EG';
+  }
+  if (text.contains('morocco') || text.contains('مغرب') ||
+      text.contains('مغربي')) {
+    return 'MA';
+  }
+  if (text.contains('algeria') || text.contains('جزائر') ||
+      text.contains('جزائري')) {
+    return 'DZ';
+  }
+  if (text.contains('tunisia') || text.contains('تونس') ||
+      text.contains('تونسي')) {
+    return 'TN';
+  }
+  if (text.contains('iraq') || text.contains('عراق') ||
+      text.contains('عراقي')) {
+    return 'IQ';
+  }
+  if (text.contains('kuwait') || text.contains('كويت') ||
+      text.contains('كويتي')) {
+    return 'KW';
+  }
+  if (text.contains('qatar') || text.contains('قطر') ||
+      text.contains('قطري')) {
+    return 'QA';
+  }
+  if (text.contains('jordan') || text.contains('أردن') ||
+      text.contains('اردن')) {
+    return 'JO';
+  }
+  if (text.contains('lebanon') || text.contains('لبنان')) return 'LB';
+  if (text.contains('syria') || text.contains('سوريا')) return 'SY';
+  if (text.contains('yemen') || text.contains('يمن')) return 'YE';
+  if (text.contains('oman') || text.contains('عمان')) return 'OM';
+  if (text.contains('bahrain') || text.contains('بحرين')) return 'BH';
+  if (text.contains('sudan') || text.contains('سودان')) return 'SD';
+  if (text.contains('libya') || text.contains('ليبيا')) return 'LY';
+  if (text.contains('palestin') || text.contains('فلسطين')) return 'PS';
+
+  final codeMatch = RegExp(
+          r'\b(SA|AE|EG|MA|DZ|TN|IQ|KW|QA|JO|LB|SY|YE|OM|BH|SD|LY|PS)\b')
+      .firstMatch(group.toUpperCase());
+  if (codeMatch != null) return codeMatch.group(1)!;
+
+  return '';
 }
   
   // ==========================================================
-  //  معالجة HTTP/HTTPS
+  //  أدوات عامة
   // ==========================================================
-  /// تحويل رابط إلى HTTP/HTTPS حسب السيرفر
-  String normalizeUrl(String url) {
-    // إذا كان الرابط يبدأ بـ https لكن السيرفر HTTP → حوّله
-    if (credentials.server.startsWith('http://') &&
-        url.startsWith('https://')) {
-      return url.replaceFirst('https://', 'http://');
-    }
-    return url;
-  }
-
-  // ==========================================================
-  //  التصنيف الذكي
-  // ==========================================================
-  String _inferCategory(String name, String group) {
-    final text = '${name.toLowerCase()} ${group.toLowerCase()}';
-
-    if (_contains(text, [
-      'bein', 'sport', 'ssc', 'رياض', 'كورة', 'alkass',
-      'dubai sport', 'ad sport', 'ksa sport', 'alwan sport',
-      'sky sport', 'espn', 'dazn', 'nba', 'nfl',
-    ])) return 'sport';
-
-    if (_contains(text, [
-      'series', 'serie', 'drama', 'مسلسل', 'مسلسلات', 'دراما',
-      'soap', 'telenovela',
-    ])) return 'series';
-
-    if (_contains(text, [
-      'movie', 'movies', 'cinema', 'film', 'films', 'vod',
-      'أفلام', 'فيلم', 'سينما',
-    ])) return 'movie';
-
-    if (_contains(text, ['anime', 'أنمي', 'manga'])) return 'movie';
-
-    if (_contains(text, [
-      'news', 'أخبار', 'alarabiya', 'jazeera', 'sky news',
-      'cnn', 'bbc', 'france 24', 'rt',
-    ])) return 'news';
-
-    if (_contains(text, [
-      'kid', 'kids', 'cartoon', 'أطفال', 'كرتون', 'spacetoon',
-      'mbc3', 'baby', 'junior',
-    ])) return 'kids';
-
-    if (_contains(text, [
-      'documentary', 'docu', 'وثائقي', 'nat geo', 'discovery',
-      'history', 'animal planet',
-    ])) return 'documentary';
-
-    if (_contains(text, ['music', 'موسيقى', 'mtv', 'rotana', 'mazzika'])) {
-      return 'music';
-    }
-
-    if (_contains(text, [
-      'quran', 'قرآن', 'islam', 'إسلام', 'دين', 'religious',
-      'makkah', 'madinah', 'sunna',
-    ])) return 'religious';
-
-    return 'general';
-  }
-
-  String _inferLanguage(String name, String group) {
-    final text = '${name.toLowerCase()} ${group.toLowerCase()}';
-
-    if (_contains(text, ['anime', 'أنمي', 'manga'])) return 'anime';
-    if (_contains(text, ['korean', 'كوري', 'k-drama', 'kdrama'])) {
-      return 'kor';
-    }
-    if (_contains(text, ['japan', 'ياباني', 'j-drama', 'jdrama'])) {
-      return 'jpn';
-    }
-    if (_contains(text, [
-      'hindi', 'bollywood', 'هندي', 'الهند', 'india', 'indian',
-    ])) return 'hin';
-    if (_contains(text, ['turk', 'turkish', 'تركي', 'تركية', 'türk'])) {
-      return 'tur';
-    }
-    if (_contains(text, [
-      'foreign', 'اجنبي', 'أجنبي', 'english', 'usa', 'uk',
-      'american', 'hollywood', 'west',
-    ])) return 'eng';
-    if (_contains(text, ['french', 'franc', 'فرنسي'])) return 'fra';
-    if (_contains(text, [
-      'asian', 'اسيوي', 'أسيوي', 'china', 'chinese', 'صيني',
-      'thai', 'تايلندي', 'vietnam', 'philippines',
-    ])) return 'asian';
-
-    return 'ara';
-  }
-
-  String _inferCountry(String name, String group) {
-    final text = '${name.toLowerCase()} ${group.toLowerCase()}';
-
-    if (_contains(text, ['saudi', 'ksa', 'سعودي', 'السعودية'])) return 'SA';
-    if (_contains(text, [
-      'emarat', 'uae', 'امارات', 'الإمارات', 'dubai', 'abu dhabi',
-    ])) return 'AE';
-    if (_contains(text, ['egypt', 'مصر', 'مصري', 'cairo'])) return 'EG';
-    if (_contains(text, ['morocco', 'مغرب', 'مغربي'])) return 'MA';
-    if (_contains(text, ['algeria', 'جزائر', 'جزائري'])) return 'DZ';
-    if (_contains(text, ['tunisia', 'تونس', 'تونسي'])) return 'TN';
-    if (_contains(text, ['iraq', 'عراق', 'عراقي', 'بغداد'])) return 'IQ';
-    if (_contains(text, ['kuwait', 'كويت', 'كويتي'])) return 'KW';
-    if (_contains(text, ['qatar', 'قطر', 'قطري'])) return 'QA';
-    if (_contains(text, ['jordan', 'أردن', 'اردن'])) return 'JO';
-    if (_contains(text, ['lebanon', 'لبنان', 'لبناني'])) return 'LB';
-    if (_contains(text, ['syria', 'سوريا', 'سوري'])) return 'SY';
-    if (_contains(text, ['yemen', 'يمن', 'يمني'])) return 'YE';
-    if (_contains(text, ['oman', 'عمان', 'عُمان'])) return 'OM';
-    if (_contains(text, ['bahrain', 'بحرين', 'بحريني'])) return 'BH';
-    if (_contains(text, ['sudan', 'سودان', 'سوداني'])) return 'SD';
-    if (_contains(text, ['libya', 'ليبيا', 'ليبي'])) return 'LY';
-    if (_contains(text, ['palestin', 'فلسطين', 'فلسطيني', 'غزة'])) {
-      return 'PS';
-    }
-    if (_contains(text, ['mauritania', 'موريتانيا'])) return 'MR';
-
-    final codeMatch = RegExp(
-            r'\b(SA|AE|EG|MA|DZ|TN|IQ|KW|QA|JO|LB|SY|YE|OM|BH|SD|LY|PS|MR)\b')
-        .firstMatch(group.toUpperCase());
-    if (codeMatch != null) return codeMatch.group(1)!;
-
-    return '';
-  }
-
-  String _inferGenre(String name, String group) {
-    final text = '${name.toLowerCase()} ${group.toLowerCase()}';
-
-    if (_contains(text, ['action', 'أكشن', 'اكشن'])) return 'action';
-    if (_contains(text, ['drama', 'دراما'])) return 'drama';
-    if (_contains(text, ['comedy', 'كوميدي', 'ضحك', 'funny'])) {
-      return 'comedy';
-    }
-    if (_contains(text, ['horror', 'رعب', 'مخيف', 'scary'])) return 'horror';
-    if (_contains(text, ['romance', 'رومانس', 'رومانسي', 'love', 'حب'])) {
-      return 'romance';
-    }
-    if (_contains(text, ['thriller', 'إثارة', 'اثارة'])) return 'thriller';
-    if (_contains(text, ['sci-fi', 'scifi', 'خيال علمي', 'space'])) {
-      return 'scifi';
-    }
-    if (_contains(text, ['fantasy', 'فانتازيا', 'fairy'])) return 'fantasy';
-    if (_contains(text, ['animation', 'رسوم متحركة', 'انيميشن'])) {
-      return 'animation';
-    }
-    if (_contains(text, ['documentary', 'وثائقي', 'docu'])) {
-      return 'documentary';
-    }
-    if (_contains(text, ['family', 'عائلي', 'عائلة'])) return 'family';
-    if (_contains(text, ['crime', 'جريمة', 'criminal'])) return 'crime';
-    if (_contains(text, ['mystery', 'غموض'])) return 'mystery';
-    if (_contains(text, ['war', 'حرب', 'حربي'])) return 'war';
-    if (_contains(text, ['history', 'تاريخ', 'تاريخي'])) return 'history';
-    if (_contains(text, ['adventure', 'مغامرة'])) return 'adventure';
-    if (_contains(text, ['kids', 'أطفال', 'اطفال', 'child'])) return 'kids';
-
-    return '';
-  }
-
-  String? _inferTranslation(String name, String group) {
-    final text = '${name.toLowerCase()} ${group.toLowerCase()}';
-    if (_contains(text, ['مدبلج', 'dubbed', 'dub', 'مدبلجة'])) {
-      return 'dubbed';
-    }
-    if (_contains(text, ['مترجم', 'مترجمة', 'subtitled', 'sub', 'subs'])) {
-      return 'subtitled';
-    }
-    if (_contains(text, ['original', 'أصلي', 'اصلي'])) return 'original';
-    return null;
-  }
-
-  // ==========================================================
-  //  أدوات مساعدة
-  // ==========================================================
-  String _cleanName(String name) {
-    return name
-        .replaceAll(RegExp(r'^\s*[-•·|]+\s*'), '')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-  }
-
-  int? _extractYear(String name) {
-    final match = RegExp(r'\b(19\d{2}|20\d{2})\b').firstMatch(name);
-    if (match == null) return null;
-    final year = int.tryParse(match.group(1)!);
-    if (year == null) return null;
-    if (year < 1950 || year > 2030) return null;
-    return year;
-  }
-
-  String _extractOriginalName(String name) {
-    final match =
-        RegExp(r'\(([A-Za-z0-9\s\:\-\.\,\!\?]+)\)').firstMatch(name);
-    if (match != null) return match.group(1)!.trim();
-    if (RegExp(r'^[A-Za-z0-9\s\:\-\.\,\!\?]+$').hasMatch(name)) {
-      return name.trim();
-    }
-    return '';
-  }
-
-  bool _contains(String text, List<String> keywords) {
-    for (final k in keywords) {
-      if (text.contains(k)) return true;
-    }
-    return false;
-  }
-
   void dispose() {
     _dio.close();
   }
