@@ -134,7 +134,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 
     final saved = await _checker.loadResults();
 
-    // ✅ 1) اعرض الكاش فوراً
     if (!forceRefresh) {
       final cached = _storage.loadChannels();
       if (cached != null && cached.isNotEmpty) {
@@ -144,12 +143,10 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
           lastUpdate: _storage.getLastSaveTime(),
         );
 
-        // ✅ 2) أجّل التحديث الخلفي 5 ثوانٍ
         Future.delayed(const Duration(seconds: 5), () {
           _refreshInBackground(urls);
         });
 
-        // ✅ 3) أجّل الفحص الخلفي 45 ثانية
         Future.delayed(const Duration(seconds: 45), () {
           _startBackgroundCheckIfNeeded();
         });
@@ -158,7 +155,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }
     }
 
-    // لا يوجد كاش → تحميل كامل
     state = state.copyWith(isLoading: true, clearError: true);
 
     final channels = await _fetchAll(urls);
@@ -206,9 +202,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     }
   }
 
-  // ==========================================================
-  //  ✅ التحميل المتوازي (4 روابط معاً)
-  // ==========================================================
   Future<List<Channel>?> _fetchAll(
     List<String> urls, {
     bool refreshCache = false,
@@ -276,15 +269,94 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     List<Channel> channels, {
     Map<String, bool>? workingStatus,
   }) {
-    final categories = _buildCategoriesFromChannels(channels);
+    // ✅ ترتيب القنوات الرياضية
+    final sorted = _sortSportsChannels(channels);
+    final categories = _buildCategoriesFromChannels(sorted);
     state = state.copyWith(
-      allChannels: channels,
+      allChannels: sorted,
       categories: categories,
       workingStatus: workingStatus ?? state.workingStatus,
     );
     _applyFilters();
   }
   
+  // ==========================================================
+  //  ✅ ترتيب القنوات الرياضية
+  // ==========================================================
+  List<Channel> _sortSportsChannels(List<Channel> channels) {
+    // ترتيب الباقات حسب الطلب
+    const packageOrder = <String>[
+      'bein',        // 1. beIN Sports
+      'alwan',       // 2. قنوات ألوان
+      'ad sport',    // 3. أبوظبي
+      'adsport',     // 3. أبوظبي (بدون مسافة)
+      'abu dhabi',   // 3. أبوظبي
+      'ad sports',   // 3. أبوظبي
+      'alkass',      // 4. الكأس
+      'premier',     // 5. الإنجليزي
+      'epl',         // 5. الإنجليزي
+      'bundesliga',  // 6. الألماني
+      'laliga',      // 7. الإسباني
+      'la liga',     // 7. الإسباني
+      'ligue1',      // 8. الفرنسي
+      'ligue 1',     // 8. الفرنسي
+    ];
+
+    int packageRank(Channel c) {
+      final text = '${c.name.toLowerCase()} ${c.group.toLowerCase()}';
+      for (int i = 0; i < packageOrder.length; i++) {
+        if (text.contains(packageOrder[i])) return i;
+      }
+      return 999;
+    }
+
+    // ✅ ترتيب الجودة: من الأقل إلى الأعلى
+    int qualityRank(String name) {
+      final lower = name.toLowerCase();
+
+      // TOD في النهاية دائماً
+      if (lower.contains('tod')) return 9999;
+
+      // من الأقل جودة إلى الأعلى
+      if (lower.contains('8k')) return 8000;
+      if (lower.contains('4k') || lower.contains('uhd')) return 7000;
+      if (lower.contains('fhd')) return 6000;
+      if (lower.contains('hd')) return 5000;
+      return 4000; // بدون علامة جودة → القنوات العادية
+    }
+
+    int extractNumber(String name) {
+      final match = RegExp(r'(\d+)').firstMatch(name);
+      if (match != null) {
+        return int.tryParse(match.group(1)!) ?? 9999;
+      }
+      return 9999;
+    }
+
+    final sorted = List<Channel>.from(channels);
+    sorted.sort((a, b) {
+      // 1) الباقة
+      final pa = packageRank(a);
+      final pb = packageRank(b);
+      if (pa != pb) return pa.compareTo(pb);
+
+      // 2) الجودة (الأقل أولاً)
+      final qa = qualityRank(a.name);
+      final qb = qualityRank(b.name);
+      if (qa != qb) return qa.compareTo(qb);
+
+      // 3) الرقم من الاسم
+      final na = extractNumber(a.name);
+      final nb = extractNumber(b.name);
+      if (na != nb) return na.compareTo(nb);
+
+      // 4) ترتيب أبجدي
+      return a.name.compareTo(b.name);
+    });
+
+    return sorted;
+  }
+
   // ==========================================================
   //  الفحص الخلفي
   // ==========================================================
@@ -438,14 +510,16 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   List<Category> _buildCategoriesFromChannels(List<Channel> channels) {
     const defaultSubs = [
       SubCategory(id: '1', name: 'beIN Sports', slug: 'bein', order: 1),
-      SubCategory(id: '2', name: 'SSC', slug: 'ssc', order: 2),
-      SubCategory(id: '3', name: 'AD Sports', slug: 'adsports', order: 3),
-      SubCategory(id: '4', name: 'Al Kass', slug: 'alkass', order: 4),
-      SubCategory(id: '5', name: 'Dubai Sports', slug: 'dubai', order: 5),
-      SubCategory(id: '6', name: 'KSA Sports', slug: 'ksa', order: 6),
-      SubCategory(id: '7', name: 'Alwan', slug: 'alwan', order: 7),
-      SubCategory(id: '8', name: 'Shahid', slug: 'shahid', order: 8),
-      SubCategory(id: '9', name: '1001', slug: '1001', order: 9),
+      SubCategory(id: '2', name: 'ألوان', slug: 'alwan', order: 2),
+      SubCategory(id: '3', name: 'أبوظبي', slug: 'adsports', order: 3),
+      SubCategory(id: '4', name: 'الكأس', slug: 'alkass', order: 4),
+      SubCategory(id: '5', name: 'الإنجليزي', slug: 'premier', order: 5),
+      SubCategory(id: '6', name: 'الألماني', slug: 'bundesliga', order: 6),
+      SubCategory(id: '7', name: 'الإسباني', slug: 'laliga', order: 7),
+      SubCategory(id: '8', name: 'الفرنسي', slug: 'ligue1', order: 8),
+      SubCategory(id: '9', name: 'SSC', slug: 'ssc', order: 9),
+      SubCategory(id: '10', name: 'Shahid', slug: 'shahid', order: 10),
+      SubCategory(id: '11', name: '1001', slug: '1001', order: 11),
     ];
 
     final subs = <SubCategory>[];
