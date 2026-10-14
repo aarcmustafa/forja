@@ -3,19 +3,26 @@ import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
-/// خدمة فحص القنوات — تعمل في الخلفية بتأخير
+/// خدمة فحص القنوات — بطيئة ولطيفة (لا تزعج Cloudflare)
 class StreamChecker {
   static const String _boxName = 'stream_checks';
   static const String _kResults = 'results';
   static const String _kTimestamp = 'checked_at';
 
-  static const Duration timeout = Duration(seconds: 5);
-  static const int concurrency = 10;
-  static const int backgroundBatchSize = 8;
-  static const Duration backgroundDelay = Duration(seconds: 15);
+  /// ✅ مهلة قصيرة جداً
+  static const Duration timeout = Duration(seconds: 3);
 
-  /// ✅ تأخير أولي قبل بدء الفحص
-  static const Duration initialDelay = Duration(seconds: 30);
+  /// ✅ توازي منخفض جداً (تم تقليله من 10)
+  static const int concurrency = 2;
+
+  /// ✅ دفعة صغيرة (تم تقليلها من 8)
+  static const int backgroundBatchSize = 3;
+
+  /// ✅ راحة طويلة بين الدفعات (تمت زيادتها من 15)
+  static const Duration backgroundDelay = Duration(seconds: 30);
+
+  /// ✅ تأخير أولي قبل البدء (تمت زيادته من 30)
+  static const Duration initialDelay = Duration(seconds: 60);
 
   static const int maxSavedResults = 30000;
 
@@ -24,7 +31,6 @@ class StreamChecker {
   static const List<int> okStatusCodes = [
     200, 206,
     301, 302, 303, 307, 308,
-    401, 403,
   ];
 
   final Dio _dio;
@@ -56,19 +62,11 @@ class StreamChecker {
 
   Future<bool> checkOne(Channel channel) async {
     try {
+      // ✅ بدون Referer/Origin (قد يسبب 511)
       final headers = <String, String>{
         'User-Agent': vlcUserAgent,
         'Accept': '*/*',
       };
-      try {
-        final uri = Uri.parse(channel.streamUrl);
-        headers['Referer'] = '${uri.scheme}://${uri.host}/';
-      } catch (_) {}
-
-      final customReferer = channel.extras['referer'];
-      if (customReferer != null && customReferer.isNotEmpty) {
-        headers['Referer'] = customReferer;
-      }
 
       Response response;
       try {
@@ -83,13 +81,26 @@ class StreamChecker {
             responseType: ResponseType.stream,
             headers: {
               ...headers,
-              'Range': 'bytes=0-512',
+              'Range': 'bytes=0-256',
             },
           ),
         );
       }
 
       final code = response.statusCode ?? 0;
+
+      // ✅ لا نعتبر 403 فشلاً إذا كان بسبب referer
+      if (code == 403 || code == 511) {
+        // جرّب مرة أخرى بدون أي headers
+        try {
+          final retry = await _dio.head(channel.streamUrl);
+          final retryCode = retry.statusCode ?? 0;
+          return retryCode == 200 || retryCode == 206;
+        } catch (_) {
+          return false;
+        }
+      }
+
       return okStatusCodes.contains(code);
     } catch (_) {
       return false;
@@ -104,7 +115,7 @@ class StreamChecker {
     if (_isRunning) return;
     _isRunning = true;
 
-    // ✅ تأخير 30 ثانية قبل البدء — لا يزاحم التحميل
+    // ✅ تأخير 60 ثانية قبل البدء
     await Future.delayed(initialDelay);
     if (!_isRunning) return;
 
@@ -117,6 +128,7 @@ class StreamChecker {
       return;
     }
 
+    // ✅ فحص 3 قنوات فقط في كل دفعة
     for (int i = 0; i < toCheck.length; i += backgroundBatchSize) {
       while (_isPaused) {
         await Future.delayed(const Duration(seconds: 2));
@@ -124,13 +136,20 @@ class StreamChecker {
       if (!_isRunning) break;
 
       final batch = toCheck.skip(i).take(backgroundBatchSize).toList();
-      final results = await Future.wait(batch.map((c) => checkOne(c)));
+
+      // ✅ معالجة متتالية داخل الدفعة (لا توازي)
+      final results = <bool>[];
+      for (final c in batch) {
+        final r = await checkOne(c);
+        results.add(r);
+      }
 
       for (int j = 0; j < batch.length; j++) {
         onResult(batch[j].id, results[j]);
       }
       await _savePartialResults(batch, results);
 
+      // ✅ راحة 30 ثانية بين الدفعات
       if (i + backgroundBatchSize < toCheck.length) {
         await Future.delayed(backgroundDelay);
       }
@@ -175,7 +194,6 @@ class StreamChecker {
             final tb = (b.value['at'] as int?) ?? 0;
             return tb.compareTo(ta);
           });
-
         map = Map.fromEntries(entries.take(maxSavedResults));
       }
 
