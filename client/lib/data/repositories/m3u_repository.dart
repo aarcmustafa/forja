@@ -3,12 +3,10 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 import 'xtream_client.dart';
 
-/// مستودع رياضي — Xtream Live + M3U + Fallback UA + Retry 5xx
-/// ✅ لا يرسل Referer/Origin (يتجنب 511 من Cloudflare)
 class M3uRepository {
   static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
 
-  /// ✅ okhttp أولاً — يقبله Xtream
+  /// ✅ ترتيب جديد: okhttp أولاً (كما اقترح pcapDroid)
   static const List<String> fallbackUserAgents = [
     'okhttp/4.9.0',
     'IPTV Smarters Pro',
@@ -63,49 +61,26 @@ class M3uRepository {
     } catch (_) {}
   }
 
-  static String extractReferer(String url) {
-    try {
-      final uri = Uri.parse(url);
-      final portPart = uri.hasPort ? ':${uri.port}' : '';
-      return '${uri.scheme}://${uri.host}$portPart/';
-    } catch (_) {
-      return '';
-    }
-  }
-
-  static String extractOrigin(String url) {
-    try {
-      final uri = Uri.parse(url);
-      final portPart = uri.hasPort ? ':${uri.port}' : '';
-      return '${uri.scheme}://${uri.host}$portPart';
-    } catch (_) {
-      return '';
-    }
-  }
-
   final Dio _dio;
   final Map<String, List<Channel>> _cache = {};
 
   M3uRepository({Dio? dio})
       : _dio = dio ??
             Dio(BaseOptions(
-              connectTimeout: const Duration(seconds: 15),
-              receiveTimeout: const Duration(seconds: 180),
-              sendTimeout: const Duration(seconds: 15),
+              // ✅ مهلة اتصال قصيرة (5 ثوانٍ)
+              connectTimeout: const Duration(seconds: 5),
+              receiveTimeout: const Duration(seconds: 120),
+              sendTimeout: const Duration(seconds: 10),
               followRedirects: true,
-              maxRedirects: 10,
-              persistentConnection: true,
-              validateStatus: (_) => true,
+              maxRedirects: 5,
+              validateStatus: (status) => status != null && status < 500,
               headers: {
-                'User-Agent': vlcUserAgent,
+                'User-Agent': 'okhttp/4.9.0',
                 'Accept': '*/*',
                 'Accept-Encoding': 'gzip, deflate',
                 'Connection': 'keep-alive',
-                'Icy-MetaData': '1',
               },
-            )) {
-    _dio.interceptors.add(_CrossProtocolRedirectInterceptor(_dio));
-  }
+            ));
 
   Future<List<Channel>> loadFromUrl(
     String url, {
@@ -184,171 +159,140 @@ class M3uRepository {
     };
   }
   
-Future<List<Channel>> _loadFromXtream(
-  XtreamCredentials credentials,
-) async {
-  final client = XtreamClient(credentials);
-  final all = <Channel>[];
+  // ==========================================================
+  //  تحميل من Xtream — ✅ بدون Referer/Origin
+  // ==========================================================
+  Future<List<Channel>> _loadFromXtream(
+    XtreamCredentials credentials,
+  ) async {
+    final client = XtreamClient(credentials);
+    final all = <Channel>[];
 
-  try {
     try {
-      final liveCats = await client.getLiveCategories();
-      final live = await client.getLiveStreams(categories: liveCats);
-      final sport = live.where((c) => _isSportChannel(c)).toList();
-      all.addAll(sport);
-    } catch (_) {}
+      try {
+        final liveCats = await client.getLiveCategories();
+        final live = await client.getLiveStreams(categories: liveCats);
 
-    if (all.isEmpty) {
-      return await _loadFromM3u(
-        '${credentials.server}/get.php?username=${credentials.username}&password=${credentials.password}&type=m3u_plus&output=m3u8',
-      );
+        final sport = live.where((c) => _isSportChannel(c)).toList();
+        all.addAll(sport);
+
+        // ignore: avoid_print
+        print('Xtream Live: ${live.length} → Sport: ${sport.length}');
+      } catch (e) {
+        // ignore: avoid_print
+        print('فشل جلب القنوات: $e');
+      }
+
+      if (all.isEmpty) {
+        return await _loadFromM3u(
+          '${credentials.server}/get.php?username=${credentials.username}&password=${credentials.password}&type=m3u_plus&output=m3u8',
+        );
+      }
+
+      return all;
+    } finally {
+      client.dispose();
+    }
+  }
+
+  bool _isSportChannel(Channel c) {
+    if (c.category == 'sport') return true;
+
+    final name = c.name.toLowerCase();
+    final group = c.group.toLowerCase();
+    final text = '$name $group';
+
+    const sportKeywords = [
+      'bein', 'sport', 'ssc', 'رياض', 'كورة', 'alkass',
+      'dubai sport', 'ad sport', 'ksa sport', 'alwan',
+      'sky sport', 'espn', 'dazn', 'nba', 'nfl',
+      'shahid sport', 'shasha', '1001', 'sportv',
+      'فورمولا', 'moto', 'ufc', 'wwe', 'fight',
+      'fifa', 'uefa', 'caf', 'afc',
+    ];
+
+    for (final keyword in sportKeywords) {
+      if (text.contains(keyword)) return true;
+    }
+    return false;
+  }
+
+  // ==========================================================
+  //  تحميل من M3U
+  // ==========================================================
+  Future<List<Channel>> _loadFromM3u(String url) async {
+    final data = await _fetchWithFallback(url);
+
+    if (data == null || data.isEmpty) {
+      throw Exception('فشل تحميل الملف');
     }
 
-    return all;
-  } finally {
-    client.dispose();
-  }
-}
-
-bool _isSportChannel(Channel c) {
-  if (c.category == 'sport') return true;
-  final name = c.name.toLowerCase();
-  final group = c.group.toLowerCase();
-  final text = '$name $group';
-
-  const sportKeywords = [
-    'bein', 'sport', 'ssc', 'رياض', 'كورة', 'alkass',
-    'dubai sport', 'ad sport', 'ksa sport', 'alwan',
-    'sky sport', 'espn', 'dazn', 'nba', 'nfl',
-    'shahid sport', 'shasha', '1001', 'sportv',
-    'فورمولا', 'moto', 'ufc', 'wwe', 'fight',
-    'fifa', 'uefa', 'caf', 'afc',
-  ];
-  for (final keyword in sportKeywords) {
-    if (text.contains(keyword)) return true;
-  }
-  return false;
-}
-
-Future<List<Channel>> _loadFromM3u(String url) async {
-  final data = await _fetchWithFallback(url);
-  if (data == null || data.isEmpty) {
-    throw Exception('فشل تحميل الملف');
-  }
-  final all = parseM3uContent(data);
-  return all.where((c) => _isSportChannel(c)).toList();
-}
-
-Future<String?> _fetchWithFallback(String url) async {
-  final bestUa = await _getBestUa(url);
-  if (bestUa != null) {
-    final data = await _tryFetch(url, bestUa);
-    if (data != null) return data;
+    final all = parseM3uContent(data);
+    return all.where((c) => _isSportChannel(c)).toList();
   }
 
-  for (int i = 0; i < fallbackUserAgents.length; i++) {
-    final ua = fallbackUserAgents[i];
-    final data = await _tryFetch(url, ua);
-
-    if (data != null) {
-      await _saveBestUa(url, ua);
-      return data;
+  Future<String?> _fetchWithFallback(String url) async {
+    final bestUa = await _getBestUa(url);
+    if (bestUa != null) {
+      final data = await _tryFetch(url, bestUa);
+      if (data != null) return data;
     }
 
-    final delayMs = 500 * (i + 1);
-    await Future.delayed(Duration(milliseconds: delayMs));
+    for (int i = 0; i < fallbackUserAgents.length; i++) {
+      final ua = fallbackUserAgents[i];
+      final data = await _tryFetch(url, ua);
+
+      if (data != null) {
+        await _saveBestUa(url, ua);
+        return data;
+      }
+
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+    return null;
   }
-  return null;
-}
 
-/// ✅ لا Referer/Origin — يتجنب 511 من Cloudflare
-Future<String?> _tryFetch(String url, String ua) async {
-  const maxAttempts = 3;
-
-  for (int attempt = 0; attempt < maxAttempts; attempt++) {
+  /// ✅ بدون Referer/Origin للروابط Xtream (لتجنب 511)
+  Future<String?> _tryFetch(String url, String ua) async {
     try {
       final headers = <String, String>{
         'User-Agent': ua,
         'Accept': '*/*',
-        'Accept-Encoding': 'gzip, deflate',
         'Connection': 'keep-alive',
-        'Icy-MetaData': '1',
       };
+
+      // ✅ لا نضيف Referer/Origin لـ Xtream
+      final isXtream = XtreamDetector.isXtream(url);
+
+      if (!isXtream) {
+        try {
+          final uri = Uri.parse(url);
+          headers['Referer'] = '${uri.scheme}://${uri.host}/';
+        } catch (_) {}
+      }
 
       final response = await _dio.get<String>(
         url,
         options: Options(
           responseType: ResponseType.plain,
           headers: headers,
-          followRedirects: true,
-          maxRedirects: 10,
-          validateStatus: (_) => true,
         ),
       );
 
-      final code = response.statusCode ?? 0;
-
-      if (code == 200 &&
+      if (response.statusCode == 200 &&
           response.data != null &&
           response.data!.isNotEmpty) {
         return response.data;
       }
-
-      // 3xx
-      if (code >= 300 && code < 400) {
-        final location = response.headers.value('location');
-        if (location != null && location.isNotEmpty) {
-          try {
-            final redirectUri =
-                Uri.parse(url).resolve(location).toString();
-            final redirectResponse = await _dio.get<String>(
-              redirectUri,
-              options: Options(
-                responseType: ResponseType.plain,
-                headers: headers,
-                followRedirects: true,
-                maxRedirects: 10,
-                validateStatus: (_) => true,
-              ),
-            );
-            if (redirectResponse.statusCode == 200 &&
-                redirectResponse.data != null &&
-                redirectResponse.data!.isNotEmpty) {
-              return redirectResponse.data;
-            }
-          } catch (_) {}
-        }
-      }
-
-      // 5xx — retry
-      if (code >= 500 && code < 600) {
-        await Future.delayed(
-          Duration(milliseconds: 800 * (attempt + 1)),
-        );
-        continue;
-      }
-
-      // 429 — retry
-      if (code == 429) {
-        await Future.delayed(
-          Duration(milliseconds: 1500 * (attempt + 1)),
-        );
-        continue;
-      }
-
-      // 511 / 403 — لا نعيد المحاولة
       return null;
     } catch (_) {
-      if (attempt < maxAttempts - 1) {
-        await Future.delayed(
-          Duration(milliseconds: 500 * (attempt + 1)),
-        );
-      }
+      return null;
     }
   }
-  return null;
-}
-  
+
+  // ==========================================================
+  //  تحليل M3U
+  // ==========================================================
   List<Channel> parseM3uContent(String content) {
     final lines = content.split('\n');
     final channels = <Channel>[];
@@ -409,13 +353,14 @@ Future<String?> _tryFetch(String url, String ua) async {
     final tvgId = info['tvg-id'] ?? '';
     final logo = info['tvg-logo'] ?? '';
 
+    final customReferer = info['referer'] ?? info['http-referrer'] ?? '';
     final customUA = info['user-agent'] ?? info['http-user-agent'] ?? '';
 
-    final category = _inferCategory(name, group);
     final countryCode = _inferCountry(name, group);
     final priority = _calculatePriority(url);
 
     final extras = <String, String>{};
+    if (customReferer.isNotEmpty) extras['referer'] = customReferer;
     if (customUA.isNotEmpty) extras['user_agent'] = customUA;
 
     return Channel(
@@ -424,7 +369,7 @@ Future<String?> _tryFetch(String url, String ua) async {
       logo: logo,
       streamUrl: url,
       group: group,
-      category: category,
+      category: 'sport',
       language: 'ara',
       countryCode: countryCode,
       contentType: 'live',
@@ -435,18 +380,13 @@ Future<String?> _tryFetch(String url, String ua) async {
     );
   }
 
-  String _inferCategory(String name, String group) {
-    return 'sport';
-  }
-
   String _inferCountry(String name, String group) {
     final text = '${name.toLowerCase()} ${group.toLowerCase()}';
 
     if (text.contains('saudi') || text.contains('ksa') ||
         text.contains('سعودي')) return 'SA';
     if (text.contains('emarat') || text.contains('uae') ||
-        text.contains('امارات') || text.contains('dubai') ||
-        text.contains('abu dhabi')) return 'AE';
+        text.contains('امارات') || text.contains('dubai')) return 'AE';
     if (text.contains('egypt') || text.contains('مصر')) return 'EG';
     if (text.contains('morocco') || text.contains('مغرب')) return 'MA';
     if (text.contains('algeria') || text.contains('جزائر')) return 'DZ';
@@ -455,11 +395,6 @@ Future<String?> _tryFetch(String url, String ua) async {
     if (text.contains('kuwait') || text.contains('كويت')) return 'KW';
     if (text.contains('qatar') || text.contains('قطر')) return 'QA';
     if (text.contains('jordan') || text.contains('أردن')) return 'JO';
-
-    final codeMatch = RegExp(
-            r'\b(SA|AE|EG|MA|DZ|TN|IQ|KW|QA|JO)\b')
-        .firstMatch(group.toUpperCase());
-    if (codeMatch != null) return codeMatch.group(1)!;
 
     return '';
   }
@@ -498,48 +433,4 @@ Future<String?> _tryFetch(String url, String ua) async {
 
   void clearCache() => _cache.clear();
   void dispose() => _dio.close();
-}
-
-class _CrossProtocolRedirectInterceptor extends Interceptor {
-  final Dio _dio;
-
-  _CrossProtocolRedirectInterceptor(this._dio);
-
-  @override
-  void onError(DioException err, ErrorInterceptorHandler handler) async {
-    try {
-      final response = err.response;
-      if (response == null) {
-        return handler.next(err);
-      }
-
-      final code = response.statusCode ?? 0;
-      if (code < 300 || code >= 400) {
-        return handler.next(err);
-      }
-
-      final location = response.headers.value('location');
-      if (location == null || location.isEmpty) {
-        return handler.next(err);
-      }
-
-      final currentUri = response.requestOptions.uri;
-      final redirectUri = currentUri.resolve(location);
-
-      final retryResponse = await _dio.get(
-        redirectUri.toString(),
-        options: Options(
-          responseType: response.requestOptions.responseType,
-          headers: response.requestOptions.headers,
-          followRedirects: true,
-          maxRedirects: 10,
-          validateStatus: (_) => true,
-        ),
-      );
-
-      return handler.resolve(retryResponse);
-    } catch (_) {
-      return handler.next(err);
-    }
-  }
 }
