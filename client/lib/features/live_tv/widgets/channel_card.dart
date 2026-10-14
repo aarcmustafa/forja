@@ -6,7 +6,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../../data/models/channel.dart';
 import '../../../data/providers/tv_focus_provider.dart';
 
-/// بطاقة عرض القناة — مصممة للتلفاز
 class ChannelCard extends ConsumerStatefulWidget {
   final Channel channel;
   final VoidCallback? onTap;
@@ -40,7 +39,6 @@ class _ChannelCardState extends ConsumerState<ChannelCard> {
     final focused = widget.isFocused || _isFocused;
     final isSelected = isItemSelected(ref, widget.channel.id);
 
-    // الألوان حسب الحالة
     Color borderColor;
     double borderWidth;
     List<BoxShadow> shadows;
@@ -55,11 +53,6 @@ class _ChannelCardState extends ConsumerState<ChannelCard> {
           color: const Color(0xFF00C8FF).withOpacity(0.7),
           blurRadius: 24,
           spreadRadius: 3,
-        ),
-        BoxShadow(
-          color: const Color(0xFF00C8FF).withOpacity(0.3),
-          blurRadius: 40,
-          spreadRadius: 6,
         ),
       ];
     } else if (isSelected) {
@@ -121,7 +114,6 @@ class _ChannelCardState extends ConsumerState<ChannelCard> {
               borderRadius: BorderRadius.circular(11),
               child: Column(
                 children: [
-                  // ====== الشعار ======
                   Expanded(
                     flex: 3,
                     child: Container(
@@ -130,8 +122,6 @@ class _ChannelCardState extends ConsumerState<ChannelCard> {
                       child: _buildLogo(focused, isSelected),
                     ),
                   ),
-
-                  // ====== اسم القناة ======
                   Expanded(
                     flex: 2,
                     child: Padding(
@@ -182,9 +172,7 @@ class _ChannelCardState extends ConsumerState<ChannelCard> {
     );
   }
   
-  // ==========================================================
-  //  الشعار مع Cached Network Image
-  // ==========================================================
+  /// ✅ User-Agent للصور — يتجاوز 403 من بعض السيرفرات
   Widget _buildLogo(bool focused, bool isSelected) {
     if (widget.channel.logo.isEmpty || _imageError) {
       return Center(
@@ -205,10 +193,14 @@ class _ChannelCardState extends ConsumerState<ChannelCard> {
       child: CachedNetworkImage(
         imageUrl: widget.channel.logo,
         fit: BoxFit.contain,
-        // ✅ Cache: أسرع 10x من Image.network
         memCacheWidth: 200,
         memCacheHeight: 200,
-        // ====== عند الخطأ ======
+        httpHeaders: const {
+          'User-Agent':
+              'Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'image/*,*/*;q=0.8',
+          'Referer': '',
+        },
         errorWidget: (_, __, ___) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted && !_imageError) {
@@ -227,7 +219,6 @@ class _ChannelCardState extends ConsumerState<ChannelCard> {
             ),
           );
         },
-        // ====== عند التحميل ======
         placeholder: (_, __) {
           return Center(
             child: SizedBox(
