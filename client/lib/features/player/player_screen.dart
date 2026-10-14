@@ -6,7 +6,6 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../data/local/playback_position_service.dart';
 
-/// شاشة المشغل — Retry + Redirects + Resume Position
 class PlayerScreen extends StatefulWidget {
   final String streamUrl;
   final String channelName;
@@ -72,9 +71,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     super.dispose();
   }
 
-  // ==========================================================
-  //  التهيئة
-  // ==========================================================
   Future<void> _initializePlayer() async {
     try {
       player = Player(
@@ -93,9 +89,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
       );
 
       controller = VideoController(player);
-
-      // ✅ ضبط خصائص mpv (Redirects + Reconnect + Headers)
-      await _configurePlayerProperties();
 
       player.stream.playing.listen((playing) {
         if (!mounted) return;
@@ -143,44 +136,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  // ==========================================================
-  //  ضبط خصائص mpv لحل مشاكل التحويلات والاتصال
-  // ==========================================================
-  Future<void> _configurePlayerProperties() async {
-    // ✅ 1) متابعة التحويلات عبر البروتوكولات (HTTP ↔ HTTPS)
-    try {
-      await player.setProperty('stream-lavf-o', 'reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=5,timeout=30');
-    } catch (_) {}
-
-    // ✅ 2) User-Agent (VLC مقبول من كل السيرفرات)
-    try {
-      await player.setProperty('user-agent', 'VLC/3.0.20 LibVLC/3.0.20');
-    } catch (_) {}
-
-    // ✅ 3) HTTP Headers
-    try {
-      await player.setProperty(
-        'http-header-fields',
-        'Accept: */*,Connection: keep-alive,Icy-MetaData: 1',
-      );
-    } catch (_) {}
-
-    // ✅ 4) مهلة الشبكة
-    try {
-      await player.setProperty('network-timeout', '30');
-    } catch (_) {}
-
-    // ✅ 5) تحسينات البث المباشر
-    try {
-      await player.setProperty('cache', 'yes');
-      await player.setProperty('cache-pause', 'no');
-      await player.setProperty('cache-pause-initial', 'no');
-    } catch (_) {}
-  }
-
-  // ==========================================================
-  //  فتح البث
-  // ==========================================================
   Future<void> _openStream() async {
     final headers = _buildHeaders(widget.streamUrl);
 
@@ -217,9 +172,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return headers;
   }
 
-  // ==========================================================
-  //  إعادة المحاولة مع Exponential Backoff
-  // ==========================================================
   void _handleError(String error) {
     if (!mounted) return;
 
@@ -272,312 +224,759 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
     }
   }
+
+  void _startHideControlsTimer() {
+    _hideControlsTimer?.cancel();
+    _hideControlsTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted && _showControls) setState(() => _showControls = false);
+    });
+  }
+
+  void _toggleControls() {
+    setState(() => _showControls = !_showControls);
+    if (_showControls) _startHideControlsTimer();
+  }
+
+  void _togglePlayPause() {
+    if (_isPlaying) {
+      player.pause();
+    } else {
+      player.play();
+    }
+    _startHideControlsTimer();
+  }
+
+  void _seekBackward() {
+    final newPos = _position - const Duration(seconds: 10);
+    player.seek(newPos.isNegative ? Duration.zero : newPos);
+    _startHideControlsTimer();
+  }
+
+  void _seekForward() {
+    final newPos = _position + const Duration(seconds: 10);
+    player.seek(newPos > _duration ? _duration : newPos);
+    _startHideControlsTimer();
+  }
+
+  void _setVolume(double v) {
+    setState(() {
+      _volume = v;
+      _isMuted = v == 0;
+    });
+    player.setVolume(v);
+    _showVolumeIndicator();
+  }
+
+  void _toggleMute() {
+    if (_isMuted) {
+      _setVolume(_volume > 0 ? _volume : 50);
+    } else {
+      _setVolume(0);
+    }
+  }
+
+  void _showVolumeIndicator() {
+    setState(() => _showVolumeBar = true);
+    _volumeBarTimer?.cancel();
+    _volumeBarTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _showVolumeBar = false);
+    });
+  }
+
+  void _changeSpeed() {
+    final idx = _speedOptions.indexOf(_playbackSpeed);
+    final nextIdx = (idx + 1) % _speedOptions.length;
+    final newSpeed = _speedOptions[nextIdx];
+    player.setRate(newSpeed);
+    setState(() => _playbackSpeed = newSpeed);
+    _startHideControlsTimer();
+  }
+
+  void _changeAspect() {
+    setState(() => _aspectMode = (_aspectMode + 1) % 3);
+    _startHideControlsTimer();
+  }
+
+  BoxFit _getBoxFit() {
+    switch (_aspectMode) {
+      case 0:
+        return BoxFit.contain;
+      case 1:
+        return BoxFit.cover;
+      case 2:
+        return BoxFit.fill;
+      default:
+        return BoxFit.contain;
+    }
+  }
+
+  String _formatDuration(Duration d) {
+    if (d.inHours > 0) {
+      return '${d.inHours}:${d.inMinutes.remainder(60).toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+    }
+    return '${d.inMinutes.toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _saveCurrentPosition() async {
+    try {
+      if (_duration == Duration.zero) return;
+      if (_position < const Duration(seconds: 30)) return;
+
+      await _positionService.save(
+        itemId: widget.streamUrl,
+        position: _position,
+        duration: _duration,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _restoreSavedPosition() async {
+    if (_hasRestoredPosition) return;
+    _hasRestoredPosition = true;
+
+    try {
+      final saved = await _positionService.load(widget.streamUrl);
+      if (saved == null) return;
+      if (saved < const Duration(seconds: 30)) return;
+
+      await Future.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+
+      await player.seek(saved);
+    } catch (_) {}
+  }
   
-// ==========================================================
-//  دوال التحكم
-// ==========================================================
-void _startHideControlsTimer() {
-  _hideControlsTimer?.cancel();
-  _hideControlsTimer = Timer(const Duration(seconds: 5), () {
-    if (mounted && _showControls) setState(() => _showControls = false);
-  });
-}
-
-void _toggleControls() {
-  setState(() => _showControls = !_showControls);
-  if (_showControls) _startHideControlsTimer();
-}
-
-void _togglePlayPause() {
-  if (_isPlaying) {
-    player.pause();
-  } else {
-    player.play();
-  }
-  _startHideControlsTimer();
-}
-
-void _seekBackward() {
-  final newPos = _position - const Duration(seconds: 10);
-  player.seek(newPos.isNegative ? Duration.zero : newPos);
-  _startHideControlsTimer();
-}
-
-void _seekForward() {
-  final newPos = _position + const Duration(seconds: 10);
-  player.seek(newPos > _duration ? _duration : newPos);
-  _startHideControlsTimer();
-}
-
-void _setVolume(double v) {
-  setState(() {
-    _volume = v;
-    _isMuted = v == 0;
-  });
-  player.setVolume(v);
-  _showVolumeIndicator();
-}
-
-void _toggleMute() {
-  if (_isMuted) {
-    _setVolume(_volume > 0 ? _volume : 50);
-  } else {
-    _setVolume(0);
-  }
-}
-
-void _showVolumeIndicator() {
-  setState(() => _showVolumeBar = true);
-  _volumeBarTimer?.cancel();
-  _volumeBarTimer = Timer(const Duration(seconds: 2), () {
-    if (mounted) setState(() => _showVolumeBar = false);
-  });
-}
-
-void _changeSpeed() {
-  final idx = _speedOptions.indexOf(_playbackSpeed);
-  final nextIdx = (idx + 1) % _speedOptions.length;
-  final newSpeed = _speedOptions[nextIdx];
-  player.setRate(newSpeed);
-  setState(() => _playbackSpeed = newSpeed);
-  _startHideControlsTimer();
-}
-
-void _changeAspect() {
-  setState(() => _aspectMode = (_aspectMode + 1) % 3);
-  _startHideControlsTimer();
-}
-
-BoxFit _getBoxFit() {
-  switch (_aspectMode) {
-    case 0:
-      return BoxFit.contain;
-    case 1:
-      return BoxFit.cover;
-    case 2:
-      return BoxFit.fill;
-    default:
-      return BoxFit.contain;
-  }
-}
-
-String _formatDuration(Duration d) {
-  if (d.inHours > 0) {
-    return '${d.inHours}:${d.inMinutes.remainder(60).toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
-  }
-  return '${d.inMinutes.toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
-}
-
-// ==========================================================
-//  حفظ/استئناف الموضع
-// ==========================================================
-Future<void> _saveCurrentPosition() async {
-  try {
-    if (_duration == Duration.zero) return;
-    if (_position < const Duration(seconds: 30)) return;
-
-    await _positionService.save(
-      itemId: widget.streamUrl,
-      position: _position,
-      duration: _duration,
-    );
-  } catch (_) {}
-}
-
-Future<void> _restoreSavedPosition() async {
-  if (_hasRestoredPosition) return;
-  _hasRestoredPosition = true;
-
-  try {
-    final saved = await _positionService.load(widget.streamUrl);
-    if (saved == null) return;
-    if (saved < const Duration(seconds: 30)) return;
-
-    await Future.delayed(const Duration(seconds: 2));
-    if (!mounted) return;
-
-    await player.seek(saved);
-  } catch (_) {}
-}
-
-// ==========================================================
-//  BUILD
-// ==========================================================
-@override
-Widget build(BuildContext context) {
-  return Directionality(
-    textDirection: TextDirection.rtl,
-    child: Scaffold(
-      backgroundColor: Colors.black,
-      body: Focus(
-        autofocus: true,
-        onKeyEvent: (node, event) {
-          if (event is KeyDownEvent) {
-            final key = event.logicalKey.keyLabel;
-            if (key == 'Select' || key == 'Enter' ||
-                key == 'Media Play Pause') {
-              _togglePlayPause();
-              return KeyEventResult.handled;
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Focus(
+          autofocus: true,
+          onKeyEvent: (node, event) {
+            if (event is KeyDownEvent) {
+              final key = event.logicalKey.keyLabel;
+              if (key == 'Select' || key == 'Enter' ||
+                  key == 'Media Play Pause') {
+                _togglePlayPause();
+                return KeyEventResult.handled;
+              }
+              if (key == 'Escape' || key == 'Go Back') {
+                Navigator.pop(context);
+                return KeyEventResult.handled;
+              }
+              if (key == 'Arrow Right') {
+                _seekForward();
+                return KeyEventResult.handled;
+              }
+              if (key == 'Arrow Left') {
+                _seekBackward();
+                return KeyEventResult.handled;
+              }
+              if (key == 'Arrow Up') {
+                _setVolume((_volume + 10).clamp(0, 100));
+                return KeyEventResult.handled;
+              }
+              if (key == 'Arrow Down') {
+                _setVolume((_volume - 10).clamp(0, 100));
+                return KeyEventResult.handled;
+              }
             }
-            if (key == 'Escape' || key == 'Go Back') {
-              Navigator.pop(context);
-              return KeyEventResult.handled;
-            }
-            if (key == 'Arrow Right') {
-              _seekForward();
-              return KeyEventResult.handled;
-            }
-            if (key == 'Arrow Left') {
-              _seekBackward();
-              return KeyEventResult.handled;
-            }
-            if (key == 'Arrow Up') {
-              _setVolume((_volume + 10).clamp(0, 100));
-              return KeyEventResult.handled;
-            }
-            if (key == 'Arrow Down') {
-              _setVolume((_volume - 10).clamp(0, 100));
-              return KeyEventResult.handled;
-            }
-          }
-          return KeyEventResult.ignored;
-        },
-        child: GestureDetector(
-          onTap: _toggleControls,
-          child: Stack(
-            children: [
-              Center(
-                child: _error != null
-                    ? _buildError()
-                    : SizedBox.expand(
-                        child: FittedBox(
-                          fit: _getBoxFit(),
-                          child: SizedBox(
-                            width: (player.state.width ?? 1920).toDouble(),
-                            height:
-                                (player.state.height ?? 1080).toDouble(),
-                            child: Video(
-                              controller: controller,
-                              controls: NoVideoControls,
+            return KeyEventResult.ignored;
+          },
+          child: GestureDetector(
+            onTap: _toggleControls,
+            child: Stack(
+              children: [
+                Center(
+                  child: _error != null
+                      ? _buildError()
+                      : SizedBox.expand(
+                          child: FittedBox(
+                            fit: _getBoxFit(),
+                            child: SizedBox(
+                              width: (player.state.width ?? 1920).toDouble(),
+                              height:
+                                  (player.state.height ?? 1080).toDouble(),
+                              child: Video(
+                                controller: controller,
+                                controls: NoVideoControls,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-              ),
-              if (_isLoading && _error == null) _buildLoading(),
-              if (_isReconnecting) _buildReconnecting(),
-              if (_isBuffering && !_isLoading && !_isReconnecting)
-                _buildBuffering(),
-              if (_showVolumeBar) _buildVolumeOverlay(),
-              if (_showControls && _error == null) ...[
-                _buildTopBar(context),
-                _buildBottomBar(context),
+                ),
+                if (_isLoading && _error == null) _buildLoading(),
+                if (_isReconnecting) _buildReconnecting(),
+                if (_isBuffering && !_isLoading && !_isReconnecting)
+                  _buildBuffering(),
+                if (_showVolumeBar) _buildVolumeOverlay(),
+                if (_showControls && _error == null) ...[
+                  _buildTopBar(context),
+                  _buildBottomBar(context),
+                ],
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoading() {
+    return Container(
+      color: Colors.black.withOpacity(0.85),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const SizedBox(
+              width: 70,
+              height: 70,
+              child: CircularProgressIndicator(
+                color: Color(0xFF00C8FF),
+                strokeWidth: 4,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'جارٍ التحميل...',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 60),
+              child: Text(
+                widget.channelName,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReconnecting() {
+    return Positioned(
+      top: 100,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFF9800).withOpacity(0.95),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2.5,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Text(
+                'إعادة الاتصال ($_retryCount/$_maxRetries)',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ],
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
-Widget _buildLoading() {
-  return Container(
-    color: Colors.black.withOpacity(0.85),
-    child: Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const SizedBox(
-            width: 70,
-            height: 70,
-            child: CircularProgressIndicator(
-              color: Color(0xFF00C8FF),
-              strokeWidth: 4,
-            ),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            'جارٍ التحميل...',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 60),
-            child: Text(
-              widget.channelName,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white54,
-                fontSize: 14,
+  Widget _buildBuffering() {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Container(
+          color: Colors.black.withOpacity(0.4),
+          child: const Center(
+            child: SizedBox(
+              width: 55,
+              height: 55,
+              child: CircularProgressIndicator(
+                color: Color(0xFF00C8FF),
+                strokeWidth: 3,
               ),
             ),
           ),
-        ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
-Widget _buildReconnecting() {
-  return Positioned(
-    top: 100,
-    left: 0,
-    right: 0,
-    child: Center(
+  Widget _buildVolumeOverlay() {
+    return Positioned(
+      top: 40,
+      left: 40,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFFFF9800).withOpacity(0.95),
-          borderRadius: BorderRadius.circular(14),
+          color: Colors.black.withOpacity(0.75),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(
-              width: 22,
-              height: 22,
-              child: CircularProgressIndicator(
-                color: Colors.white,
-                strokeWidth: 2.5,
+            Icon(
+              _isMuted || _volume == 0
+                  ? Icons.volume_off_rounded
+                  : _volume < 50
+                      ? Icons.volume_down_rounded
+                      : Icons.volume_up_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
+            const SizedBox(width: 10),
+            SizedBox(
+              width: 100,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: _volume / 100,
+                  minHeight: 6,
+                  backgroundColor: Colors.white24,
+                  valueColor: const AlwaysStoppedAnimation(
+                    Color(0xFF00C8FF),
+                  ),
+                ),
               ),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: 10),
             Text(
-              'إعادة الاتصال ($_retryCount/$_maxRetries)',
+              '${_volume.toInt()}%',
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 15,
+                fontSize: 13,
                 fontWeight: FontWeight.bold,
               ),
             ),
           ],
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
-Widget _buildBuffering() {
-  return Positioned.fill(
-    child: IgnorePointer(
+  Widget _buildTopBar(BuildContext context) {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
       child: Container(
-        color: Colors.black.withOpacity(0.4),
-        child: const Center(
-          child: SizedBox(
-            width: 55,
-            height: 55,
-            child: CircularProgressIndicator(
-              color: Color(0xFF00C8FF),
-              strokeWidth: 3,
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.black.withOpacity(0.85),
+              Colors.transparent,
+            ],
+          ),
+        ),
+        child: Row(
+          children: [
+            _CircleButton(
+              icon: Icons.arrow_back,
+              onPressed: () => Navigator.pop(context),
+            ),
+            const SizedBox(width: 20),
+            if (widget.channelLogo != null &&
+                widget.channelLogo!.isNotEmpty)
+              Container(
+                width: 44,
+                height: 44,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Image.network(
+                  widget.channelLogo!,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+            if (widget.channelLogo != null &&
+                widget.channelLogo!.isNotEmpty)
+              const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                widget.channelName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            if (_playbackSpeed != 1.0)
+              Container(
+                margin: const EdgeInsets.only(left: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00C8FF),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${_playbackSpeed}x',
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            Container(
+              margin: const EdgeInsets.only(left: 12),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 6,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF1744),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'مباشر',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomBar(BuildContext context) {
+    return Positioned(
+      bottom: 0,
+      left: 0,
+      right: 0,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [
+              Colors.black.withOpacity(0.85),
+              Colors.transparent,
+            ],
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildProgressBar(),
+            const SizedBox(height: 18),
+            _buildControlRow(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProgressBar() {
+    final total = _duration.inMilliseconds.toDouble();
+    final current = _position.inMilliseconds.toDouble();
+    final max = total > 0 ? total : 1.0;
+    final value = current.clamp(0.0, max);
+
+    return Row(
+      children: [
+        Text(
+          _formatDuration(_position),
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 13,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 4,
+              activeTrackColor: const Color(0xFF00C8FF),
+              inactiveTrackColor: Colors.white24,
+              thumbColor: const Color(0xFF00C8FF),
+              thumbShape:
+                  const RoundSliderThumbShape(enabledThumbRadius: 8),
+              overlayShape:
+                  const RoundSliderOverlayShape(overlayRadius: 16),
+              overlayColor: const Color(0xFF00C8FF).withOpacity(0.2),
+            ),
+            child: Slider(
+              value: value,
+              max: max,
+              onChanged: (v) {
+                player.seek(Duration(milliseconds: v.toInt()));
+                _startHideControlsTimer();
+              },
             ),
           ),
         ),
+        const SizedBox(width: 12),
+        Text(
+          _formatDuration(_duration),
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 13,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildControlRow() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _CircleButton(
+          icon: _isMuted || _volume == 0
+              ? Icons.volume_off_rounded
+              : Icons.volume_up_rounded,
+          size: 40,
+          onPressed: _toggleMute,
+        ),
+        const SizedBox(width: 14),
+        _CircleButton(
+          icon: Icons.replay_10,
+          size: 40,
+          onPressed: _seekBackward,
+        ),
+        const SizedBox(width: 14),
+        _CircleButton(
+          icon: _isPlaying
+              ? Icons.pause_rounded
+              : Icons.play_arrow_rounded,
+          size: 56,
+          filled: true,
+          onPressed: _togglePlayPause,
+        ),
+        const SizedBox(width: 14),
+        _CircleButton(
+          icon: Icons.forward_10,
+          size: 40,
+          onPressed: _seekForward,
+        ),
+        const SizedBox(width: 14),
+        _CircleButton(
+          icon: Icons.speed_rounded,
+          size: 40,
+          onPressed: _changeSpeed,
+        ),
+        const SizedBox(width: 14),
+        _CircleButton(
+          icon: Icons.aspect_ratio_rounded,
+          size: 40,
+          onPressed: _changeAspect,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(40),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.error_outline,
+              color: Color(0xFFFF5252),
+              size: 80,
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'تعذر تشغيل القناة',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Text(
+                _error ?? 'خطأ غير معروف',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _isLoading = true;
+                      _error = null;
+                      _retryCount = 0;
+                    });
+                    _initializePlayer();
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('إعادة المحاولة'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00C8FF),
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  label: const Text(
+                    'إغلاق',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Colors.white54),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
+}
+
+class _CircleButton extends StatefulWidget {
+  final IconData icon;
+  final VoidCallback onPressed;
+  final double size;
+  final bool filled;
+
+  const _CircleButton({
+    required this.icon,
+    required this.onPressed,
+    this.size = 48,
+    this.filled = false,
+  });
+
+  @override
+  State<_CircleButton> createState() => _CircleButtonState();
+}
+
+class _CircleButtonState extends State<_CircleButton> {
+  bool _isFocused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Focus(
+      onFocusChange: (hasFocus) {
+        setState(() => _isFocused = hasFocus);
+      },
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent) {
+          final key = event.logicalKey.keyLabel;
+          if (key == 'Select' || key == 'Enter' ||
+              key == 'Media Play Pause') {
+            widget.onPressed();
+            return KeyEventResult.handled;
+          }
+        }
+        return KeyEventResult.ignored;
+      },
+      child: GestureDetector(
+        onTap: widget.onPressed,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          width: widget.size,
+          height: widget.size,
+          decoration: BoxDecoration(
+            color: widget.filled
+                ? const Color(0xFF00C8FF)
+                : _isFocused
+                    ? const Color(0xFF00C8FF)
+                    : Colors.black.withOpacity(0.5),
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: _isFocused
+                  ? Colors.white
+                  : Colors.white.withOpacity(0.2),
+              width: _isFocused ? 3 : 1,
+            ),
+            boxShadow: _isFocused
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF00C8FF).withOpacity(0.6),
+                      blurRadius: 20,
+                      spreadRadius: 2,
+                    ),
+                  ]
+                : [],
+          ),
+          child: Icon(
+            widget.icon,
+            color: widget.filled || _isFocused
+                ? Colors.black
+                : Colors.white,
+            size: widget.size * 0.5,
+          ),
+        ),
+      ),
+    );
+  }
 }
