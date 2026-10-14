@@ -6,9 +6,6 @@ import '../local/local_storage.dart';
 import '../services/stream_checker.dart';
 import '../../features/settings/settings_screen.dart';
 
-// ==========================================================
-//  Providers أساسية
-// ==========================================================
 final m3uRepositoryProvider = Provider<M3uRepository>((ref) {
   final repo = M3uRepository();
   ref.onDispose(() => repo.dispose());
@@ -25,9 +22,6 @@ final streamCheckerProvider = Provider<StreamChecker>((ref) {
   return checker;
 });
 
-// ==========================================================
-//  حالة القنوات
-// ==========================================================
 class PlaylistState {
   final List<Channel> allChannels;
   final List<Channel> filteredChannels;
@@ -91,14 +85,11 @@ class PlaylistState {
   }
 }
 
-// ==========================================================
-//  Notifier
-// ==========================================================
 class PlaylistNotifier extends StateNotifier<PlaylistState> {
   final M3uRepository _repository;
   final LocalStorage _storage;
   final StreamChecker _checker;
-  bool _filterAdult = true;
+  bool _filterAdult = false;
   bool _backgroundCheckStarted = false;
   bool _refreshInProgress = false;
 
@@ -114,9 +105,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void pauseBackgroundCheck() => _checker.pause();
   void resumeBackgroundCheck() => _checker.resume();
 
-  // ==========================================================
-  //  التحميل — الكاش أولاً
-  // ==========================================================
   Future<void> loadPlaylists(
     List<String> urls, {
     bool forceRefresh = false,
@@ -124,7 +112,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     if (urls.isEmpty) {
       state = state.copyWith(
         isLoading: false,
-        error: 'لا توجد روابط M3U للتحميل',
+        error: 'لا توجد روابط M3U',
       );
       return;
     }
@@ -132,22 +120,24 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     await _storage.init();
     await _checker.init();
 
-    final saved = await _checker.loadResults();
-
+    // ✅ 1) اقرأ الكاش فوراً
     if (!forceRefresh) {
       final cached = _storage.loadChannels();
       if (cached != null && cached.isNotEmpty) {
+        final saved = await _checker.loadResults();
         _setChannels(cached, workingStatus: saved);
         state = state.copyWith(
           isLoading: false,
           lastUpdate: _storage.getLastSaveTime(),
         );
 
+        // تحديث في الخلفية
         Future.delayed(const Duration(seconds: 5), () {
           _refreshInBackground(urls);
         });
 
-        Future.delayed(const Duration(seconds: 45), () {
+        // ✅ 2) ابدأ الفحص بعد 15 ثانية (بدل 45)
+        Future.delayed(const Duration(seconds: 15), () {
           _startBackgroundCheckIfNeeded();
         });
 
@@ -155,6 +145,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }
     }
 
+    // لا يوجد كاش → تحميل كامل
     state = state.copyWith(isLoading: true, clearError: true);
 
     final channels = await _fetchAll(urls);
@@ -167,7 +158,10 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       return;
     }
 
+    // ✅ 3) احفظ فوراً + إجبار الكتابة
     await _storage.saveChannels(channels);
+
+    final saved = await _checker.loadResults();
     _setChannels(channels, workingStatus: saved);
 
     state = state.copyWith(
@@ -220,8 +214,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
                 forceRefresh: refreshCache,
               );
             } catch (e) {
-              // ignore: avoid_print
-              print('فشل تحميل $url: $e');
               return <Channel>[];
             }
           }),
@@ -237,39 +229,70 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       final sportOnly = all.where((c) => _isSportChannel(c)).toList();
       return _removeDuplicates(sportOnly);
     } catch (e) {
-      // ignore: avoid_print
-      print('خطأ في الجلب: $e');
       return null;
     }
   }
 
+  // ==========================================================
+  //  ✅ فلتر صارم — رياضة فقط
+  // ==========================================================
   bool _isSportChannel(Channel c) {
-    if (c.category == 'sport') return true;
-
     final name = c.name.toLowerCase();
     final group = c.group.toLowerCase();
     final text = '$name $group';
 
-    const sportKeywords = [
-      'bein', 'sport', 'ssc', 'رياض', 'كورة', 'alkass',
-      'dubai sport', 'ad sport', 'ksa sport', 'alwan',
-      'sky sport', 'espn', 'dazn', 'nba', 'nfl',
-      'shahid sport', 'shasha', '1001', 'sportv',
-      'فورمولا', 'moto', 'ufc', 'wwe', 'fight',
-      'fifa', 'uefa', 'caf', 'afc',
+    // ✅ 1) كلمات ممنوعة (غير رياضية)
+    const excludeKeywords = [
+      'quran', 'قرآن', 'إسلام', 'دين', 'religious', 'prayer',
+      'movie', 'cinema', 'فيلم', 'أفلام', 'film',
+      'series', 'مسلسل', 'drama', 'دراما',
+      'kids', 'أطفال', 'cartoon', 'كرتون',
+      'music', 'أغاني', 'موسيقى',
+      'news', 'أخبار', 'إخبارية',
+      'cooking', 'طبخ', 'food',
+      'fashion', 'أزياء',
+      'shopping', 'تسوق',
+      'general', 'عامة',
     ];
 
-    for (final keyword in sportKeywords) {
-      if (text.contains(keyword)) return true;
+    for (final k in excludeKeywords) {
+      if (text.contains(k)) return false;
     }
+
+    // ✅ 2) كلمات رياضية مطلوبة
+    const sportKeywords = [
+      // علامات رياضية
+      'bein', 'ssc', 'alkass', 'alwan', 'shahid sport',
+      'ad sport', 'adsport', 'abu dhabi sport',
+      'dubai sport', 'ksa sport', 'saudi sport',
+      'al kass', 'shasha sport', '1001 sport',
+      'sportv', 'sport tv', 'sky sport', 'espn',
+      'dazn', 'nba', 'nfl', 'ufc', 'wwe',
+      'fifa', 'uefa', 'caf', 'afc', 'f1',
+      'formula', 'moto gp', 'motogp',
+      // كلمات عربية
+      'رياض', 'رياضية', 'كورة', 'كرة',
+      'الدوري', 'دوري',
+      'مباريات', 'مباراة',
+      // الدوريات
+      'premier', 'laliga', 'bundesliga', 'ligue',
+      'serie a', 'world cup', 'euro',
+    ];
+
+    for (final k in sportKeywords) {
+      if (text.contains(k)) return true;
+    }
+
     return false;
   }
 
+  // ==========================================================
+  //  ✅ ترتيب القنوات — الشغالة أولاً + الباقات + الجودة
+  // ==========================================================
   void _setChannels(
     List<Channel> channels, {
     Map<String, bool>? workingStatus,
   }) {
-    // ✅ ترتيب القنوات الرياضية
     final sorted = _sortSportsChannels(channels);
     final categories = _buildCategoriesFromChannels(sorted);
     state = state.copyWith(
@@ -279,27 +302,17 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     );
     _applyFilters();
   }
-  
-  // ==========================================================
-  //  ✅ ترتيب القنوات الرياضية
-  // ==========================================================
+
   List<Channel> _sortSportsChannels(List<Channel> channels) {
-    // ترتيب الباقات حسب الطلب
     const packageOrder = <String>[
-      'bein',        // 1. beIN Sports
-      'alwan',       // 2. قنوات ألوان
-      'ad sport',    // 3. أبوظبي
-      'adsport',     // 3. أبوظبي (بدون مسافة)
-      'abu dhabi',   // 3. أبوظبي
-      'ad sports',   // 3. أبوظبي
-      'alkass',      // 4. الكأس
-      'premier',     // 5. الإنجليزي
-      'epl',         // 5. الإنجليزي
-      'bundesliga',  // 6. الألماني
-      'laliga',      // 7. الإسباني
-      'la liga',     // 7. الإسباني
-      'ligue1',      // 8. الفرنسي
-      'ligue 1',     // 8. الفرنسي
+      'bein',
+      'alwan',
+      'ad sport', 'adsport', 'abu dhabi',
+      'alkass', 'al kass',
+      'premier', 'epl',
+      'bundesliga',
+      'laliga', 'la liga',
+      'ligue1', 'ligue 1',
     ];
 
     int packageRank(Channel c) {
@@ -310,62 +323,60 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       return 999;
     }
 
-    // ✅ ترتيب الجودة: من الأقل إلى الأعلى
     int qualityRank(String name) {
       final lower = name.toLowerCase();
-
-      // TOD في النهاية دائماً
       if (lower.contains('tod')) return 9999;
-
-      // من الأقل جودة إلى الأعلى
       if (lower.contains('8k')) return 8000;
       if (lower.contains('4k') || lower.contains('uhd')) return 7000;
       if (lower.contains('fhd')) return 6000;
       if (lower.contains('hd')) return 5000;
-      return 4000; // بدون علامة جودة → القنوات العادية
+      return 4000;
     }
 
     int extractNumber(String name) {
       final match = RegExp(r'(\d+)').firstMatch(name);
-      if (match != null) {
-        return int.tryParse(match.group(1)!) ?? 9999;
-      }
+      if (match != null) return int.tryParse(match.group(1)!) ?? 9999;
       return 9999;
     }
 
     final sorted = List<Channel>.from(channels);
     sorted.sort((a, b) {
-      // 1) الباقة
+      // ✅ 1) الشغالة أولاً (الأهم!)
+      final wa = state.workingStatus[a.id];
+      final wb = state.workingStatus[b.id];
+
+      // working=true → rank 0
+      // unknown → rank 1
+      // working=false → rank 2 (سيبقى في النهاية)
+      final ra = wa == true ? 0 : (wa == false ? 2 : 1);
+      final rb = wb == true ? 0 : (wb == false ? 2 : 1);
+      if (ra != rb) return ra.compareTo(rb);
+
+      // ✅ 2) الباقة
       final pa = packageRank(a);
       final pb = packageRank(b);
       if (pa != pb) return pa.compareTo(pb);
 
-      // 2) الجودة (الأقل أولاً)
+      // ✅ 3) الجودة
       final qa = qualityRank(a.name);
       final qb = qualityRank(b.name);
       if (qa != qb) return qa.compareTo(qb);
 
-      // 3) الرقم من الاسم
+      // ✅ 4) الرقم
       final na = extractNumber(a.name);
       final nb = extractNumber(b.name);
       if (na != nb) return na.compareTo(nb);
 
-      // 4) ترتيب أبجدي
       return a.name.compareTo(b.name);
     });
 
     return sorted;
   }
-
-  // ==========================================================
-  //  الفحص الخلفي
-  // ==========================================================
+  
   void _startBackgroundCheckIfNeeded() {
     if (_backgroundCheckStarted) return;
     if (state.allChannels.isEmpty) return;
-
     _backgroundCheckStarted = true;
-
     _runBackgroundCheck();
   }
 
@@ -382,18 +393,21 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
         newWorkingStatus[channelId] = isWorking;
         state = state.copyWith(workingStatus: newWorkingStatus);
 
-        if (newWorkingStatus.length % 50 == 0) {
+        // ✅ إعادة الترتيب كل 20 نتيجة
+        if (newWorkingStatus.length % 20 == 0) {
+          final reSorted = _sortSportsChannels(state.allChannels);
+          state = state.copyWith(allChannels: reSorted);
           _applyFilters();
         }
       },
     );
 
+    // إعادة الترتيب النهائية
+    final finalSorted = _sortSportsChannels(state.allChannels);
+    state = state.copyWith(allChannels: finalSorted);
     _applyFilters();
   }
 
-  // ==========================================================
-  //  الفلاتر
-  // ==========================================================
   void selectCategory(String? slug) {
     if (slug == null) {
       state = state.copyWith(
@@ -427,25 +441,13 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void _applyFilters() {
     List<Channel> filtered = List.from(state.allChannels);
 
-    // 1) الرياضة فقط
-    filtered = filtered.where((c) => _isSportChannel(c)).toList();
-
-    // 2) فلتر البالغين
     if (_filterAdult) {
       filtered = filtered
           .where((c) => !isAdultContent(c.name, c.group))
           .toList();
     }
 
-    // 3) إخفاء الميتة
-    if (state.workingStatus.isNotEmpty) {
-      filtered = filtered.where((c) {
-        final status = state.workingStatus[c.id];
-        return status == null || status == true;
-      }).toList();
-    }
-
-    // 4) الباقة الفرعية
+    // ✅ لا نخفي الميتة تلقائياً، فقط نرتبها في النهاية
     if (state.selectedSubCategorySlug != null) {
       final slug = state.selectedSubCategorySlug!.toLowerCase();
       final selectedCat = state.categories.firstWhere(
@@ -469,7 +471,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }).toList();
     }
 
-    // 5) البحث
     if (state.searchQuery.trim().isNotEmpty) {
       final q = state.searchQuery.trim().toLowerCase();
       filtered = filtered
@@ -482,9 +483,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     state = state.copyWith(filteredChannels: filtered);
   }
 
-  // ==========================================================
-  //  مساعدات
-  // ==========================================================
   List<Channel> _removeDuplicates(List<Channel> channels) {
     final Map<String, Channel> unique = {};
     for (final ch in channels) {
@@ -559,9 +557,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   }
 }
 
-// ==========================================================
-//  Provider الرئيسي
-// ==========================================================
 final playlistProvider =
     StateNotifierProvider<PlaylistNotifier, PlaylistState>((ref) {
   final repo = ref.watch(m3uRepositoryProvider);
@@ -582,9 +577,6 @@ final playlistProvider =
   return notifier;
 });
 
-// ==========================================================
-//  Providers مساعدة
-// ==========================================================
 final filteredChannelsProvider = Provider<List<Channel>>((ref) {
   return ref.watch(playlistProvider).filteredChannels;
 });
