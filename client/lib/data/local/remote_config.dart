@@ -1,11 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:dio/dio.dart';
-import 'package:dio/io.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 /// يجلب الروابط المشفّرة من GitHub
-/// ✅ timeout قصير (5s) + IPv4 لتفادي بطء IPv6
 class RemoteConfig {
   static const String remoteUrl =
       'https://raw.githubusercontent.com/aarcmustafa/forja/main/client/assets/remote/playlists.enc';
@@ -44,25 +41,13 @@ class RemoteConfig {
     return [];
   }
 
-  /// ✅ timeout 5 ثوانٍ فقط — يجرب IPv4 بسرعة
+  /// ✅ مهلة قصيرة 5 ثوانٍ (كما اقترح pcapDroid)
   Future<List<String>?> fetchRemote() async {
     try {
       final dio = Dio(BaseOptions(
         connectTimeout: const Duration(seconds: 5),
-        receiveTimeout: const Duration(seconds: 5),
-        sendTimeout: const Duration(seconds: 5),
-        headers: {'Accept': '*/*', 'User-Agent': 'okhttp/4.9.0'},
+        receiveTimeout: const Duration(seconds: 10),
       ));
-
-      // ✅ إجبار IPv4 (يتفادى بطء IPv6 مع GitHub Raw)
-      dio.httpClientAdapter = IOHttpClientAdapter(
-        createHttpClient: () {
-          final client = HttpClient();
-          client.connectionTimeout = const Duration(seconds: 5);
-          client.idleTimeout = const Duration(seconds: 5);
-          return client;
-        },
-      );
 
       final ts = DateTime.now().millisecondsSinceEpoch;
       final response = await dio.get<String>(
