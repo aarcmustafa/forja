@@ -23,7 +23,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
 
-  // ✅ تهيئة الإشعارات
+  // تهيئة الإشعارات
   try {
     await NotificationService().init();
   } catch (_) {}
@@ -95,19 +95,18 @@ class _MobileShellState extends ConsumerState<MobileShell> {
   }
 
   // ==========================================================
-  //  ✅ التحميل الجديد: نبدأ مباشرة من SecureConfig،
-  //  ونحدّث الروابط من RemoteConfig في الخلفية.
+  //  التحميل: نبدأ مباشرة من SecureConfig
+  //  + تحديث RemoteConfig في الخلفية
   // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
-    // 1) حالة الإشعارات
+    // 1) الإشعارات
     try {
       final settings = ref.read(settingsProvider);
       NotificationService().setEnabled(settings.matchNotifications);
     } catch (_) {}
 
-    // 2) تأكد أن لدينا روابط من SecureConfig (المولّد أثناء البناء)
+    // 2) روابط SecureConfig
     if (kPlaylistUrls.isEmpty) {
-      // محاولة قراءة كاش RemoteConfig
       try {
         final remote = RemoteConfig();
         final cached = await remote.loadCached();
@@ -117,18 +116,17 @@ class _MobileShellState extends ConsumerState<MobileShell> {
       } catch (_) {}
     }
 
-    // 3) ابدأ التحميل — سيستخدم الكاش إن وُجد
+    // 3) ابدأ التحميل (بدون انتظار)
     if (kPlaylistUrls.isNotEmpty) {
       final state = ref.read(playlistProvider);
       if (state.allChannels.isEmpty && !state.isLoading) {
-        // لا await — ندع الواجهة تظهر ثم تُحدَّث تدريجيًا
         ref
             .read(playlistProvider.notifier)
             .loadPlaylists(kPlaylistUrls);
       }
     }
 
-    // 4) اجلب روابط RemoteConfig في الخلفية (لتحديث مستقبلي)
+    // 4) تحديث من RemoteConfig في الخلفية
     try {
       final remote = RemoteConfig();
       final remoteUrls = await remote.fetchRemote();
@@ -239,6 +237,9 @@ class _MobileShellState extends ConsumerState<MobileShell> {
     );
   }
 
+  // ==========================================================
+  //  ✅ تمرير extras إلى المشغل (يدعم Cookies + Headers)
+  // ==========================================================
   void _openChannel(Channel channel) {
     ref.read(historyProvider.notifier).record(channel);
     Navigator.push(
@@ -248,6 +249,7 @@ class _MobileShellState extends ConsumerState<MobileShell> {
           streamUrl: channel.streamUrl,
           channelName: channel.name,
           channelLogo: channel.logo,
+          extras: channel.extras,  // ✅ جديد
         ),
       ),
     );
