@@ -1,13 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../models/channel.dart';
 import '../models/category.dart';
 import '../repositories/m3u_repository.dart';
 import '../local/local_storage.dart';
 import '../services/stream_checker.dart';
 import '../../features/settings/settings_screen.dart';
-
-const int kSportSchemaVersion = 3;
 
 // ==========================================================
 //  Providers أساسية
@@ -117,253 +114,149 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void resumeBackgroundCheck() => _checker.resume();
 
   // ==========================================================
-  //  ✅ هل القناة رياضية؟
+  //  التحميل
   // ==========================================================
-  bool isSportChannel(Channel c) {
+  Future<void> loadPlaylists(
+    List<String> urls, {
+    bool forceRefresh = false,
+  }) async {
+    if (urls.isEmpty) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'لا توجد روابط M3U للتحميل',
+      );
+      return;
+    }
+
+    await _storage.init();
+    await _checker.init();
+
+    final saved = await _checker.loadResults();
+
+    if (!forceRefresh) {
+      // ✅ تصحيح: إضافة await
+      final cached = await _storage.loadChannels();
+      if (cached != null && cached.isNotEmpty) {
+        _setChannels(cached, workingStatus: saved);
+        state = state.copyWith(
+          isLoading: false,
+          lastUpdate: _storage.getLastSaveTime(),
+        );
+        _startBackgroundCheckIfNeeded();
+        _refreshInBackground(urls);
+        return;
+      }
+    }
+
+    state = state.copyWith(isLoading: true, clearError: true);
+
+    final channels = await _fetchAll(urls);
+
+    if (channels == null || channels.isEmpty) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'فشل تحميل القنوات',
+      );
+      return;
+    }
+
+    await _storage.saveChannels(channels);
+    _setChannels(channels, workingStatus: saved);
+
+    state = state.copyWith(
+      isLoading: false,
+      lastUpdate: DateTime.now(),
+    );
+
+    _startBackgroundCheckIfNeeded();
+  }
+
+  Future<void> _refreshInBackground(List<String> urls) async {
+    state = state.copyWith(isRefreshing: true);
+
+    try {
+      final channels = await _fetchAll(urls, refreshCache: true);
+      if (channels != null && channels.isNotEmpty) {
+        await _storage.saveChannels(channels);
+        _setChannels(channels, workingStatus: state.workingStatus);
+        state = state.copyWith(
+          isRefreshing: false,
+          lastUpdate: DateTime.now(),
+        );
+      } else {
+        state = state.copyWith(isRefreshing: false);
+      }
+    } catch (_) {
+      state = state.copyWith(isRefreshing: false);
+    }
+  }
+
+  Future<List<Channel>?> _fetchAll(
+    List<String> urls, {
+    bool refreshCache = false,
+  }) async {
+    try {
+      final List<Channel> all = [];
+      for (final url in urls) {
+        try {
+          final channels = await _repository.loadFromUrl(
+            url,
+            forceRefresh: refreshCache,
+          );
+          all.addAll(channels);
+        } catch (e) {
+          // ignore: avoid_print
+          print('فشل تحميل $url: $e');
+        }
+      }
+      if (all.isEmpty) return null;
+
+      // ✅ فلترة الرياضة فقط
+      final sportOnly = all.where((c) => _isSportChannel(c)).toList();
+
+      return _removeDuplicates(sportOnly);
+    } catch (e) {
+      // ignore: avoid_print
+      print('خطأ في الجلب: $e');
+      return null;
+    }
+  }
+
+  /// ✅ هل القناة رياضية؟
+  bool _isSportChannel(Channel c) {
     if (c.category == 'sport') return true;
-    if (c.category == 'movie') return false;
-    if (c.category == 'series') return false;
-    if (c.category == 'news') return false;
-    if (c.category == 'kids') return false;
 
     final name = c.name.toLowerCase();
     final group = c.group.toLowerCase();
     final text = '$name $group';
 
-    const strictKeywords = [
-      'bein', 'ssc', 'ad sport', 'ad sports',
-      'dubai sport', 'ksa sport', 'alkass',
-      'alwan sport', 'alwan sports',
-      'shahid sport', 'shasha sport',
-      '1001 sport', '1001 network sport',
-      'sportv', 'sport tv',
-      'sky sport', 'espn', 'dazn',
-      'nba', 'nfl', 'ufc', 'wwe',
+    const sportKeywords = [
+      'bein', 'sport', 'ssc', 'رياض', 'كورة', 'alkass',
+      'dubai sport', 'ad sport', 'ksa sport', 'alwan',
+      'sky sport', 'espn', 'dazn', 'nba', 'nfl',
+      'shahid sport', 'shasha', '1001', 'sportv',
+      'فورمولا', 'moto', 'ufc', 'wwe', 'fight',
       'fifa', 'uefa', 'caf', 'afc',
-      'moto gp', 'formula', 'فورمولا',
-      'رياض', 'كورة', 'مباراة', 'دوري',
-      'f1', 'motogp',
     ];
 
-    for (final k in strictKeywords) {
-      if (text.contains(k)) return true;
+    for (final keyword in sportKeywords) {
+      if (text.contains(keyword)) return true;
     }
-
-    const excludeKeywords = [
-      'movie', 'film', 'أفلام', 'فيلم',
-      'series', 'مسلسل', 'دراما',
-      'news', 'أخبار',
-      'kids', 'أطفال', 'كرتون',
-      'quran', 'قرآن',
-      'music', 'موسيقى',
-      'xxx', 'adult', '+18',
-    ];
-
-    for (final k in excludeKeywords) {
-      if (text.contains(k)) return false;
-    }
-
     return false;
   }
-  
-// ==========================================================
-//  ✅ markDeadByUrl — تحديد قناة كـ ميتة من رابطها
-// ==========================================================
-Future<void> markDeadByUrl(String streamUrl) async {
-  // ابحث عن القناة
-  Channel? target;
-  for (final c in state.allChannels) {
-    if (c.streamUrl == streamUrl) {
-      target = c;
-      break;
-    }
-  }
 
-  if (target == null) return;
-
-  // حدّدها كـ ميتة
-  await _checker.markDead(target.id);
-
-  // حدّث الحالة
-  final newStatus = {...state.workingStatus};
-  newStatus[target.id] = false;
-  state = state.copyWith(workingStatus: newStatus);
-  _applyFilters();
-}
-
-// ==========================================================
-//  ✅ markDead — تحديد قناة كـ ميتة
-// ==========================================================
-Future<void> markDead(String channelId) async {
-  await _checker.markDead(channelId);
-  final newStatus = {...state.workingStatus};
-  newStatus[channelId] = false;
-  state = state.copyWith(workingStatus: newStatus);
-  _applyFilters();
-}
-
-// ==========================================================
-//  ✅ markWorking — تحديد قناة كـ شغّالة
-// ==========================================================
-Future<void> markWorking(String channelId) async {
-  await _checker.markWorking(channelId);
-  final newStatus = {...state.workingStatus};
-  newStatus[channelId] = true;
-  state = state.copyWith(workingStatus: newStatus);
-  _applyFilters();
-}
-
-// ==========================================================
-//  التحميل
-// ==========================================================
-Future<void> loadPlaylists(
-  List<String> urls, {
-  bool forceRefresh = false,
-}) async {
-  if (urls.isEmpty) {
+  void _setChannels(
+    List<Channel> channels, {
+    Map<String, bool>? workingStatus,
+  }) {
+    final categories = _buildCategoriesFromChannels(channels);
     state = state.copyWith(
-      isLoading: false,
-      error: 'لا توجد روابط M3U للتحميل',
+      allChannels: channels,
+      categories: categories,
+      workingStatus: workingStatus ?? state.workingStatus,
     );
-    return;
+    _applyFilters();
   }
-
-  await _storage.init();
-  await _checker.init();
-
-  // فحص إصدار Schema
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    final savedVersion = prefs.getInt('sport_schema') ?? 0;
-    if (savedVersion < kSportSchemaVersion) {
-      await _storage.clear();
-      await _checker.clear();
-      await prefs.setInt('sport_schema', kSportSchemaVersion);
-      forceRefresh = true;
-    }
-  } catch (_) {
-    forceRefresh = true;
-  }
-
-  final saved = await _checker.loadResults();
-
-  // ✅ محاولة من Cache (مع await)
-  if (!forceRefresh) {
-    try {
-      // ⚠️ loadChannels ليست Future — إن كانت كذلك في مكان آخر
-      // سنستخدمها بشكل متزامن
-      final cached = _storage.loadChannels();
-      if (cached != null && cached.isNotEmpty) {
-        final sportOnly =
-            cached.where((c) => isSportChannel(c)).toList();
-
-        if (sportOnly.isNotEmpty) {
-          _setChannels(sportOnly, workingStatus: saved);
-          state = state.copyWith(
-            isLoading: false,
-            lastUpdate: _storage.getLastSaveTime(),
-          );
-          _startBackgroundCheckIfNeeded();
-          _refreshInBackground(urls);
-          return;
-        } else {
-          forceRefresh = true;
-        }
-      }
-    } catch (_) {
-      forceRefresh = true;
-    }
-  }
-
-  state = state.copyWith(isLoading: true, clearError: true);
-
-  final channels = await _fetchAll(urls);
-
-  if (channels == null || channels.isEmpty) {
-    state = state.copyWith(
-      isLoading: false,
-      error: 'فشل تحميل القنوات الرياضية',
-    );
-    return;
-  }
-
-  await _storage.saveChannels(channels);
-  _setChannels(channels, workingStatus: saved);
-
-  state = state.copyWith(
-    isLoading: false,
-    lastUpdate: DateTime.now(),
-  );
-
-  _startBackgroundCheckIfNeeded();
-}
-
-Future<void> _refreshInBackground(List<String> urls) async {
-  state = state.copyWith(isRefreshing: true);
-
-  try {
-    final channels = await _fetchAll(urls, refreshCache: true);
-    if (channels != null && channels.isNotEmpty) {
-      await _storage.saveChannels(channels);
-      _setChannels(channels, workingStatus: state.workingStatus);
-      state = state.copyWith(
-        isRefreshing: false,
-        lastUpdate: DateTime.now(),
-      );
-    } else {
-      state = state.copyWith(isRefreshing: false);
-    }
-  } catch (_) {
-    state = state.copyWith(isRefreshing: false);
-  }
-}
-
-Future<List<Channel>?> _fetchAll(
-  List<String> urls, {
-  bool refreshCache = false,
-}) async {
-  try {
-    final List<Channel> all = [];
-    for (final url in urls) {
-      try {
-        final channels = await _repository.loadFromUrl(
-          url,
-          forceRefresh: refreshCache,
-        );
-        all.addAll(channels);
-      } catch (e) {
-        // ignore: avoid_print
-        print('فشل تحميل $url: $e');
-      }
-    }
-
-    if (all.isEmpty) return null;
-
-    final sportOnly = all.where((c) => isSportChannel(c)).toList();
-
-    // ignore: avoid_print
-    print('Loaded ${all.length} → Sport: ${sportOnly.length}');
-
-    return _removeDuplicates(sportOnly);
-  } catch (e) {
-    // ignore: avoid_print
-    print('خطأ في الجلب: $e');
-    return null;
-  }
-}
-
-void _setChannels(
-  List<Channel> channels, {
-  Map<String, bool>? workingStatus,
-}) {
-  final categories = _buildCategoriesFromChannels(channels);
-  state = state.copyWith(
-    allChannels: channels,
-    categories: categories,
-    workingStatus: workingStatus ?? state.workingStatus,
-  );
-  _applyFilters();
-}
   
   // ==========================================================
   //  الفحص الخلفي
@@ -374,7 +267,7 @@ void _setChannels(
 
     _backgroundCheckStarted = true;
 
-    Future.delayed(const Duration(seconds: 15), () {
+    Future.delayed(const Duration(seconds: 5), () {
       _runBackgroundCheck();
     });
   }
@@ -391,6 +284,10 @@ void _setChannels(
       onResult: (channelId, isWorking) {
         newWorkingStatus[channelId] = isWorking;
         state = state.copyWith(workingStatus: newWorkingStatus);
+
+        if (newWorkingStatus.length % 50 == 0) {
+          _applyFilters();
+        }
       },
     );
 
@@ -433,14 +330,25 @@ void _setChannels(
   void _applyFilters() {
     List<Channel> filtered = List.from(state.allChannels);
 
-    filtered = filtered.where((c) => isSportChannel(c)).toList();
+    // 1) الرياضة فقط
+    filtered = filtered.where((c) => _isSportChannel(c)).toList();
 
+    // 2) فلتر البالغين
     if (_filterAdult) {
       filtered = filtered
           .where((c) => !isAdultContent(c.name, c.group))
           .toList();
     }
 
+    // 3) إخفاء الميتة
+    if (state.workingStatus.isNotEmpty) {
+      filtered = filtered.where((c) {
+        final status = state.workingStatus[c.id];
+        return status == null || status == true;
+      }).toList();
+    }
+
+    // 4) الباقة الفرعية
     if (state.selectedSubCategorySlug != null) {
       final slug = state.selectedSubCategorySlug!.toLowerCase();
       final selectedCat = state.categories.firstWhere(
@@ -464,6 +372,7 @@ void _setChannels(
       }).toList();
     }
 
+    // 5) البحث
     if (state.searchQuery.trim().isNotEmpty) {
       final q = state.searchQuery.trim().toLowerCase();
       filtered = filtered
@@ -471,17 +380,6 @@ void _setChannels(
               c.name.toLowerCase().contains(q) ||
               c.group.toLowerCase().contains(q))
           .toList();
-    }
-
-    // ترتيب: الشغّالة أولاً، الميتة آخراً
-    if (state.workingStatus.isNotEmpty) {
-      filtered.sort((a, b) {
-        final aWorking = state.workingStatus[a.id];
-        final bWorking = state.workingStatus[b.id];
-        final aScore = aWorking == false ? 2 : (aWorking == true ? 0 : 1);
-        final bScore = bWorking == false ? 2 : (bWorking == true ? 0 : 1);
-        return aScore.compareTo(bScore);
-      });
     }
 
     state = state.copyWith(filteredChannels: filtered);
@@ -516,13 +414,13 @@ void _setChannels(
     const defaultSubs = [
       SubCategory(id: '1', name: 'beIN Sports', slug: 'bein', order: 1),
       SubCategory(id: '2', name: 'SSC', slug: 'ssc', order: 2),
-      SubCategory(id: '3', name: 'AD Sports', slug: 'ad sport', order: 3),
+      SubCategory(id: '3', name: 'AD Sports', slug: 'adsports', order: 3),
       SubCategory(id: '4', name: 'Al Kass', slug: 'alkass', order: 4),
-      SubCategory(id: '5', name: 'Dubai Sports', slug: 'dubai sport', order: 5),
-      SubCategory(id: '6', name: 'KSA Sports', slug: 'ksa sport', order: 6),
-      SubCategory(id: '7', name: 'Alwan', slug: 'alwan sport', order: 7),
-      SubCategory(id: '8', name: 'Shahid', slug: 'shahid sport', order: 8),
-      SubCategory(id: '9', name: '1001', slug: '1001 sport', order: 9),
+      SubCategory(id: '5', name: 'Dubai Sports', slug: 'dubai', order: 5),
+      SubCategory(id: '6', name: 'KSA Sports', slug: 'ksa', order: 6),
+      SubCategory(id: '7', name: 'Alwan', slug: 'alwan', order: 7),
+      SubCategory(id: '8', name: 'Shahid', slug: 'shahid', order: 8),
+      SubCategory(id: '9', name: '1001', slug: '1001', order: 9),
     ];
 
     final subs = <SubCategory>[];
@@ -532,8 +430,10 @@ void _setChannels(
         final n = c.name.toLowerCase();
         final s = sub.slug.toLowerCase();
         final name = sub.name.toLowerCase();
-        return g.contains(s) || n.contains(s) ||
-            g.contains(name) || n.contains(name);
+        return g.contains(s) ||
+            n.contains(s) ||
+            g.contains(name) ||
+            n.contains(name);
       }).length;
 
       if (count > 0) {
@@ -556,18 +456,6 @@ void _setChannels(
 
   Future<void> refresh(List<String> urls) async {
     _repository.clearCache();
-    await loadPlaylists(urls, forceRefresh: true);
-  }
-
-  Future<void> clearAllCache(List<String> urls) async {
-    await _storage.clear();
-    await _checker.clear();
-    _repository.clearCache();
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('sport_schema', kSportSchemaVersion);
-    } catch (_) {}
-    state = const PlaylistState();
     await loadPlaylists(urls, forceRefresh: true);
   }
 }
