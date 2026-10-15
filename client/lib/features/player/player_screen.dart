@@ -4,18 +4,20 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
-/// شاشة المشغل — محسّنة للتلفاز مع دعم كل صيغ IPTV
-/// ✅ لا تعرض أي رسائل خطأ أو محاولات اتصال — دائرة تحميل فقط
+/// شاشة المشغل — صامتة بدون رسائل خطأ
+/// ✅ تدعم Headers + Cookies مخصصة من channel.extras
 class PlayerScreen extends StatefulWidget {
   final String streamUrl;
   final String channelName;
   final String? channelLogo;
+  final Map<String, String>? extras;
 
   const PlayerScreen({
     super.key,
     required this.streamUrl,
     required this.channelName,
     this.channelLogo,
+    this.extras,
   });
 
   @override
@@ -28,11 +30,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool _isLoading = true;
   bool _showControls = true;
-  bool _fatalError = false;    // ✅ خطأ قاتل: يظهر فقط دائرة حمراء
+  bool _fatalError = false;
   Timer? _hideControlsTimer;
   Timer? _retryTimer;
   Timer? _volumeBarTimer;
-  Timer? _fatalTimeoutTimer;   // ✅ مهلة نهائية قبل إظهار دائرة حمراء
+  Timer? _fatalTimeoutTimer;
 
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -46,11 +48,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _showVolumeBar = false;
 
   int _retryCount = 0;
-  static const int _maxRetries = 5;                          // ✅ زيادة المحاولات
+  static const int _maxRetries = 5;
   static const Duration _retryDelay = Duration(seconds: 3);
-  static const Duration _fatalTimeout = Duration(seconds: 45); // ✅ مهلة نهائية
+  static const Duration _fatalTimeout = Duration(seconds: 45);
 
-  // مسارات الترجمة
   List<SubtitleTrack> _subtitleTracks = [];
   SubtitleTrack? _currentSubtitleTrack;
 
@@ -73,7 +74,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
     super.dispose();
   }
 
-  /// ✅ مؤقت أمان: إذا لم يبدأ البث خلال 45 ثانية → حالة فشل
   void _startFatalTimeout() {
     _fatalTimeoutTimer?.cancel();
     _fatalTimeoutTimer = Timer(_fatalTimeout, () {
@@ -83,10 +83,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
     });
   }
-  // ==========================================================
-//  التهيئة
-// ==========================================================
-Future<void> _initializePlayer() async {
+  Future<void> _initializePlayer() async {
   try {
     player = Player(
       configuration: const PlayerConfiguration(
@@ -108,7 +105,6 @@ Future<void> _initializePlayer() async {
     player.stream.playing.listen((playing) {
       if (!mounted) return;
       setState(() => _isPlaying = playing);
-      // ✅ عند بدء التشغيل، أوقف مؤقت الفشل
       if (playing) {
         _fatalTimeoutTimer?.cancel();
         _retryCount = 0;
@@ -133,7 +129,6 @@ Future<void> _initializePlayer() async {
       setState(() => _duration = dur);
     });
 
-    // ✅ الأخطاء تُعالج بصمت — لا تُعرض أبدًا
     player.stream.error.listen((error) {
       if (!mounted) return;
       _handleSilentError();
@@ -141,38 +136,27 @@ Future<void> _initializePlayer() async {
 
     player.stream.tracks.listen((tracks) {
       if (!mounted) return;
-      setState(() {
-        _subtitleTracks = tracks.subtitle;
-      });
+      setState(() => _subtitleTracks = tracks.subtitle);
     });
 
     player.stream.track.listen((track) {
       if (!mounted) return;
-      setState(() {
-        _currentSubtitleTrack = track.subtitle;
-      });
+      setState(() => _currentSubtitleTrack = track.subtitle);
     });
 
     await _openStream();
     _startHideControlsTimer();
   } catch (_) {
-    // ✅ لا نعرض الخطأ — نحاول مجددًا بصمت
     if (!mounted) return;
     _handleSilentError();
   }
 }
 
-// ==========================================================
-//  فتح البث
-// ==========================================================
 Future<void> _openStream() async {
   final headers = _buildHeaders(widget.streamUrl);
 
   await player.open(
-    Media(
-      widget.streamUrl,
-      httpHeaders: headers,
-    ),
+    Media(widget.streamUrl, httpHeaders: headers),
     play: true,
   );
 
@@ -183,6 +167,7 @@ Future<void> _openStream() async {
   });
 }
 
+/// ✅ بناء رؤوس HTTP مع دعم Cookies ورؤوس مخصصة من extras
 Map<String, String> _buildHeaders(String url) {
   final headers = <String, String>{
     'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
@@ -191,6 +176,7 @@ Map<String, String> _buildHeaders(String url) {
     'Icy-MetaData': '1',
   };
 
+  // Referer + Origin تلقائي
   try {
     final uri = Uri.parse(url);
     final origin = '${uri.scheme}://${uri.host}';
@@ -198,16 +184,32 @@ Map<String, String> _buildHeaders(String url) {
     headers['Origin'] = origin;
   } catch (_) {}
 
+  // ✅ إضافة كل الرؤوس من extras (cookie, authorization, x-api-key...)
+  final extras = widget.extras;
+  if (extras != null) {
+    extras.forEach((key, value) {
+      if (value.isNotEmpty) {
+        // اكتب المفتاح بصيغة HTTP صحيحة (Title-Case)
+        headers[_toHttpHeaderCase(key)] = value;
+      }
+    });
+  }
+
   return headers;
 }
 
-// ==========================================================
-//  ✅ معالج خطأ صامت — بدون أي عرض للخطأ
-// ==========================================================
+String _toHttpHeaderCase(String key) {
+  return key
+      .split('-')
+      .map((s) => s.isEmpty
+          ? s
+          : '${s[0].toUpperCase()}${s.substring(1).toLowerCase()}')
+      .join('-');
+}
+
 void _handleSilentError() {
   if (!mounted) return;
 
-  // إعادة المحاولة بصمت
   if (_retryCount < _maxRetries) {
     _retryCount++;
     setState(() {
@@ -225,17 +227,13 @@ void _handleSilentError() {
       }
     });
   } else {
-    // ✅ بعد كل المحاولات → دائرة حمراء فقط، بدون نص
     setState(() {
       _fatalError = true;
       _isLoading = false;
     });
   }
 }
-  // ==========================================================
-//  دوال التحكم
-// ==========================================================
-void _startHideControlsTimer() {
+  void _startHideControlsTimer() {
   _hideControlsTimer?.cancel();
   _hideControlsTimer = Timer(const Duration(seconds: 5), () {
     if (mounted && _showControls) setState(() => _showControls = false);
@@ -327,9 +325,6 @@ String _formatDuration(Duration d) {
   return '${d.inMinutes.toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
 }
 
-// ==========================================================
-//  BUILD
-// ==========================================================
 @override
 Widget build(BuildContext context) {
   return Directionality(
@@ -389,16 +384,11 @@ Widget build(BuildContext context) {
                   ),
                 ),
               ),
-              // ✅ شاشة التحميل
               if (_isLoading && !_fatalError) _buildLoading(),
-              // ✅ شاشة الفشل — دائرة حمراء فقط بدون نص
               if (_fatalError) _buildFatalError(),
-              // التخزين المؤقت
               if (_isBuffering && !_isLoading && !_fatalError)
                 _buildBuffering(),
-              // مؤشر الصوت
               if (_showVolumeBar) _buildVolumeOverlay(),
-              // أشرطة التحكم
               if (_showControls && !_fatalError) ...[
                 _buildTopBar(context),
                 _buildBottomBar(context),
@@ -410,10 +400,7 @@ Widget build(BuildContext context) {
     ),
   );
 }
-  // ==========================================================
-//  شاشة التحميل — دائرة تحميل فقط بدون نصوص
-// ==========================================================
-Widget _buildLoading() {
+  Widget _buildLoading() {
   return Container(
     color: Colors.black.withOpacity(0.85),
     child: const Center(
@@ -429,10 +416,6 @@ Widget _buildLoading() {
   );
 }
 
-// ==========================================================
-//  شاشة الفشل — دائرة حمراء فقط بدون نص
-//  المستخدم يضغط زر الرجوع للخروج
-// ==========================================================
 Widget _buildFatalError() {
   return Container(
     color: Colors.black,
@@ -449,9 +432,6 @@ Widget _buildFatalError() {
   );
 }
 
-// ==========================================================
-//  التخزين المؤقت
-// ==========================================================
 Widget _buildBuffering() {
   return Positioned.fill(
     child: IgnorePointer(
@@ -472,9 +452,6 @@ Widget _buildBuffering() {
   );
 }
 
-// ==========================================================
-//  مؤشر الصوت
-// ==========================================================
 Widget _buildVolumeOverlay() {
   return Positioned(
     top: 40,
@@ -527,9 +504,6 @@ Widget _buildVolumeOverlay() {
   );
 }
 
-// ==========================================================
-//  الشريط العلوي
-// ==========================================================
 Widget _buildTopBar(BuildContext context) {
   return Positioned(
     top: 0,
@@ -589,9 +563,7 @@ Widget _buildTopBar(BuildContext context) {
             Container(
               margin: const EdgeInsets.only(left: 12),
               padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 6,
-              ),
+                  horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                 color: const Color(0xFF00C8FF),
                 borderRadius: BorderRadius.circular(8),
@@ -608,9 +580,7 @@ Widget _buildTopBar(BuildContext context) {
           Container(
             margin: const EdgeInsets.only(left: 12),
             padding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 6,
-            ),
+                horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color: const Color(0xFFFF1744),
               borderRadius: BorderRadius.circular(6),
@@ -643,9 +613,6 @@ Widget _buildTopBar(BuildContext context) {
   );
 }
 
-// ==========================================================
-//  الشريط السفلي
-// ==========================================================
 Widget _buildBottomBar(BuildContext context) {
   return Positioned(
     bottom: 0,
@@ -782,10 +749,7 @@ Widget _buildControlRow() {
     ],
   );
 }
-    // ==========================================================
-  //  قائمة الترجمة
-  // ==========================================================
-  void _showSubtitleSheet() {
+    void _showSubtitleSheet() {
     _hideControlsTimer?.cancel();
 
     showModalBottomSheet(
@@ -826,9 +790,7 @@ Widget _buildControlRow() {
                         const Spacer(),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
+                              horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
                             color: const Color(0xFF00C8FF).withOpacity(0.15),
                             borderRadius: BorderRadius.circular(12),
@@ -940,9 +902,7 @@ Widget _buildControlRow() {
           borderRadius: BorderRadius.circular(10),
           child: Container(
             padding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 14,
-            ),
+                horizontal: 14, vertical: 14),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
@@ -1005,7 +965,7 @@ Widget _buildControlRow() {
 }
 
 // ==========================================================
-//  زر دائري قابل للتركيز
+//  زر دائري
 // ==========================================================
 class _CircleButton extends StatefulWidget {
   final IconData icon;
