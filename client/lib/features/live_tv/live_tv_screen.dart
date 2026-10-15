@@ -65,6 +65,10 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
           child: Column(
             children: [
               _buildTopBar(state, notifier),
+              // ✅ شريط تقدم الفحص الأولي
+              if (state.isInitialChecking) _buildInitialCheckBar(state),
+              // ✅ مؤشر "جارٍ جلب قنوات أكثر..."
+              if (state.isLoadingMore) _buildLoadingMoreBar(),
               const SizedBox(height: 16),
               _buildCategorySection(state),
               const SizedBox(height: 12),
@@ -74,6 +78,114 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ==========================================================
+  //  شريط الفحص الأولي
+  // ==========================================================
+  Widget _buildInitialCheckBar(PlaylistState state) {
+    final total = state.initialCheckTotal;
+    final done = state.initialCheckDone;
+    final progress = total > 0 ? (done / total).clamp(0.0, 1.0) : 0.0;
+    final percent = (progress * 100).toStringAsFixed(0);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141A2E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: const Color(0xFF4CAF50).withOpacity(0.4),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  color: Color(0xFF4CAF50),
+                  strokeWidth: 2,
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Text(
+                'جارٍ فحص القنوات...',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '$done / $total  ($percent%)',
+                style: const TextStyle(
+                  color: Color(0xFF4CAF50),
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 5,
+              backgroundColor: Colors.white12,
+              valueColor: const AlwaysStoppedAnimation(
+                Color(0xFF4CAF50),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'سيتم إخفاء القنوات غير الشغالة تلقائياً',
+            style: TextStyle(color: Colors.white38, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================================================
+  //  شريط "جارٍ جلب المزيد من القنوات"
+  // ==========================================================
+  Widget _buildLoadingMoreBar() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF141A2E),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              color: Color(0xFF00C8FF),
+              strokeWidth: 2,
+            ),
+          ),
+          SizedBox(width: 10),
+          Text(
+            'جارٍ جلب قنوات إضافية...',
+            style: TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+        ],
       ),
     );
   }
@@ -224,260 +336,258 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
       },
     );
   }
-
   // ==========================================================
-  //  الجسم الرئيسي
-  // ==========================================================
-  Widget _buildBody(PlaylistState state, PlaylistNotifier notifier) {
-    if (state.isLoading && state.allChannels.isEmpty) {
-      return _buildLoading();
-    }
-
-    if (state.error != null && state.allChannels.isEmpty) {
-      return _buildError(state.error!);
-    }
-
-    if (state.filteredChannels.isEmpty) {
-      return _buildEmpty();
-    }
-
-    final recentIds = ref.watch(historyProvider).liveIds;
-    final showRecent = state.selectedCategorySlug == null &&
-        state.searchQuery.isEmpty &&
-        recentIds.isNotEmpty;
-
-    if (showRecent) {
-      return _buildBodyWithRecent(state, recentIds);
-    }
-
-    if (state.selectedCategorySlug == 'sport' &&
-        state.selectedSubCategorySlug == null &&
-        state.searchQuery.isEmpty) {
-      return _buildSportsBody(state);
-    }
-
-    return _buildGrid(state);
+//  الجسم الرئيسي
+// ==========================================================
+Widget _buildBody(PlaylistState state, PlaylistNotifier notifier) {
+  if (state.isLoading && state.allChannels.isEmpty) {
+    return _buildLoading();
   }
 
-  // ==========================================================
-  //  جسم الرياضة
-  // ==========================================================
-  Widget _buildSportsBody(PlaylistState state) {
-    return CustomScrollView(
-      slivers: [
-        SliverToBoxAdapter(
-          child: FadeInSlide(
-            child: SportsMatchesWidget(
-              onChannelTap: (channel) => widget.onChannelTap?.call(channel),
-            ),
+  if (state.error != null && state.allChannels.isEmpty) {
+    return _buildError(state.error!);
+  }
+
+  if (state.filteredChannels.isEmpty) {
+    return _buildEmpty();
+  }
+
+  final recentIds = ref.watch(historyProvider).liveIds;
+  final showRecent = state.selectedCategorySlug == null &&
+      state.searchQuery.isEmpty &&
+      recentIds.isNotEmpty;
+
+  if (showRecent) {
+    return _buildBodyWithRecent(state, recentIds);
+  }
+
+  if (state.selectedCategorySlug == 'sport' &&
+      state.selectedSubCategorySlug == null &&
+      state.searchQuery.isEmpty) {
+    return _buildSportsBody(state);
+  }
+
+  return _buildGrid(state);
+}
+
+// ==========================================================
+//  جسم الرياضة
+// ==========================================================
+Widget _buildSportsBody(PlaylistState state) {
+  return CustomScrollView(
+    slivers: [
+      SliverToBoxAdapter(
+        child: FadeInSlide(
+          child: SportsMatchesWidget(
+            onChannelTap: (channel) => widget.onChannelTap?.call(channel),
           ),
         ),
-        const SliverToBoxAdapter(
+      ),
+      const SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 32),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 5,
+                height: 24,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Color(0xFF4CAF50),
+                    borderRadius: BorderRadius.all(Radius.circular(3)),
+                  ),
+                ),
+              ),
+              SizedBox(width: 12),
+              Text(
+                'كل القنوات الرياضية',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      const SliverToBoxAdapter(child: SizedBox(height: 16)),
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        sliver: SliverGrid(
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 200,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+            childAspectRatio: 0.95,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (context, i) {
+              final channel = state.filteredChannels[i];
+              return ChannelCard(
+                channel: channel,
+                width: 200,
+                height: 200,
+                onTap: () => widget.onChannelTap?.call(channel),
+              );
+            },
+            childCount: state.filteredChannels.length,
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+// ==========================================================
+//  عرض السجل + الشبكة
+// ==========================================================
+Widget _buildBodyWithRecent(PlaylistState state, List<String> recentIds) {
+  final map = {for (final c in state.allChannels) c.id: c};
+  final recent = recentIds
+      .map((id) => map[id])
+      .whereType<Channel>()
+      .toList();
+
+  if (recent.isEmpty) return _buildGrid(state);
+
+  return CustomScrollView(
+    slivers: [
+      SliverToBoxAdapter(
+        child: FadeInSlide(
           child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 32),
-            child: Row(
+            padding: const EdgeInsets.only(bottom: 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(
-                  width: 5,
-                  height: 24,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Color(0xFF4CAF50),
-                      borderRadius: BorderRadius.all(Radius.circular(3)),
-                    ),
-                  ),
-                ),
-                SizedBox(width: 12),
-                Text(
-                  'كل القنوات الرياضية',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SliverToBoxAdapter(child: SizedBox(height: 16)),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-          sliver: SliverGrid(
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 200,
-              crossAxisSpacing: 16,
-              mainAxisSpacing: 16,
-              childAspectRatio: 0.95,
-            ),
-            delegate: SliverChildBuilderDelegate(
-              (context, i) {
-                final channel = state.filteredChannels[i];
-                return ChannelCard(
-                  channel: channel,
-                  width: 200,
-                  height: 200,
-                  onTap: () => widget.onChannelTap?.call(channel),
-                );
-              },
-              childCount: state.filteredChannels.length,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ==========================================================
-  //  عرض السجل + الشبكة
-  // ==========================================================
-  Widget _buildBodyWithRecent(PlaylistState state, List<String> recentIds) {
-    final map = {for (final c in state.allChannels) c.id: c};
-    final recent = recentIds
-        .map((id) => map[id])
-        .whereType<Channel>()
-        .toList();
-
-    if (recent.isEmpty) return _buildGrid(state);
-
-    return CustomScrollView(
-      slivers: [
-        SliverToBoxAdapter(
-          child: FadeInSlide(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 5,
-                          height: 24,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFB800),
-                            borderRadius: BorderRadius.circular(3),
-                          ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 5,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFB800),
+                          borderRadius: BorderRadius.circular(3),
                         ),
-                        const SizedBox(width: 12),
-                        const Icon(
-                          Icons.history_rounded,
-                          color: Color(0xFFFFB800),
-                          size: 22,
+                      ),
+                      const SizedBox(width: 12),
+                      const Icon(
+                        Icons.history_rounded,
+                        color: Color(0xFFFFB800),
+                        size: 22,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'شوهد حديثاً',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
                         ),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'شوهد حديثاً',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFB800).withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${recent.length}',
+                          style: const TextStyle(
+                            color: Color(0xFFFFB800),
+                            fontSize: 12,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFB800).withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            '${recent.length}',
-                            style: const TextStyle(
-                              color: Color(0xFFFFB800),
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    height: 200,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 32),
-                      itemCount: recent.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 14),
-                      itemBuilder: (context, i) {
-                        return ChannelCard(
-                          channel: recent[i],
-                          width: 180,
-                          height: 200,
-                          onTap: () => widget.onChannelTap?.call(recent[i]),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        const SliverToBoxAdapter(
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 32),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 5,
-                  height: 24,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: Color(0xFF4CAF50),
-                      borderRadius: BorderRadius.all(Radius.circular(3)),
-                    ),
+                      ),
+                    ],
                   ),
                 ),
-                SizedBox(width: 12),
-                Text(
-                  'كل القنوات',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: 200,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    itemCount: recent.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 14),
+                    itemBuilder: (context, i) {
+                      return ChannelCard(
+                        channel: recent[i],
+                        width: 180,
+                        height: 200,
+                        onTap: () => widget.onChannelTap?.call(recent[i]),
+                      );
+                    },
                   ),
                 ),
               ],
             ),
           ),
         ),
-        const SliverToBoxAdapter(child: SizedBox(height: 16)),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-          sliver: SliverGrid(
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 200,
-              crossAxisSpacing: 16,
-              mainAxisSpacing: 16,
-              childAspectRatio: 0.95,
-            ),
-            delegate: SliverChildBuilderDelegate(
-              (context, i) {
-                final channel = state.filteredChannels[i];
-                return ChannelCard(
-                  channel: channel,
-                  width: 200,
-                  height: 200,
-                  onTap: () => widget.onChannelTap?.call(channel),
-                );
-              },
-              childCount: state.filteredChannels.length,
-            ),
+      ),
+      const SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 32),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 5,
+                height: 24,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Color(0xFF4CAF50),
+                    borderRadius: BorderRadius.all(Radius.circular(3)),
+                  ),
+                ),
+              ),
+              SizedBox(width: 12),
+              Text(
+                'كل القنوات',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
           ),
         ),
-      ],
-    );
-  }
-  
-  // ==========================================================
+      ),
+      const SliverToBoxAdapter(child: SizedBox(height: 16)),
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        sliver: SliverGrid(
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 200,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+            childAspectRatio: 0.95,
+          ),
+          delegate: SliverChildBuilderDelegate(
+            (context, i) {
+              final channel = state.filteredChannels[i];
+              return ChannelCard(
+                channel: channel,
+                width: 200,
+                height: 200,
+                onTap: () => widget.onChannelTap?.call(channel),
+              );
+            },
+            childCount: state.filteredChannels.length,
+          ),
+        ),
+      ),
+    ],
+  );
+}
+    // ==========================================================
   //  حالة التحميل — Shimmer
   // ==========================================================
   Widget _buildLoading() {
@@ -588,7 +698,6 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
     );
   }
 }
-
 // ==========================================================
 //  زر الشريط العلوي
 // ==========================================================
