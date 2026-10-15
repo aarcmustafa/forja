@@ -273,7 +273,6 @@ jobs:
                   else "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'"
               )
 
-              # الخطوة 1: أضف dependency
               if "desugar_jdk_libs" not in src:
                   if "dependencies {" in src:
                       idx = src.find("dependencies {")
@@ -286,7 +285,6 @@ jobs:
               else:
                   print(f"[1] desugar_jdk_libs already present in {path}")
 
-              # الخطوة 2: فعّل core library desugaring
               if is_kts:
                   if "isCoreLibraryDesugaringEnabled" not in src:
                       if "compileOptions {" in src:
