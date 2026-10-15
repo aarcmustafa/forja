@@ -1,249 +1,360 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_kit/media_kit.dart';
+name: Build Mobile APK
 
-import 'features/home/home_screen.dart';
-import 'features/live_tv/live_tv_screen.dart';
-import 'features/live_tv/widgets/sports_matches_widget.dart';
-import 'features/favorites/favorites_screen.dart';
-import 'features/packages/packages_screen.dart';
-import 'features/settings/settings_screen.dart';
-import 'features/player/player_screen.dart';
-import 'features/search/unified_search_screen.dart';
-import 'data/models/channel.dart';
-import 'data/providers/playlist_provider.dart';
-import 'data/providers/favorites_provider.dart';
-import 'data/providers/history_provider.dart';
-import 'data/local/secure_config.dart';
-import 'data/local/remote_config.dart';
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'client/**'
+      - '.github/workflows/build_mobile.yml'
 
-// ==========================================================
-//  روابط M3U
-// ==========================================================
-List<String> kPlaylistUrls = SecureConfig.urls;
+permissions:
+  contents: write
 
-// ==========================================================
-//  نقطة انطلاق التطبيق
-// ==========================================================
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized();
-  runApp(
-    const ProviderScope(
-      child: EstetnFarjaMobileApp(),
-    ),
-  );
-}
+jobs:
+  build-mobile:
+    name: Build Mobile APK
+    runs-on: ubuntu-latest
 
-class EstetnFarjaMobileApp extends StatelessWidget {
-  const EstetnFarjaMobileApp({super.key});
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'استيتن فرجة الرياضية',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0A0E1A),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF00C8FF),
-          secondary: Color(0xFFFFB800),
-          surface: Color(0xFF141A2E),
-        ),
-      ),
-      home: const MobileShell(),
-    );
-  }
-}
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
-// ==========================================================
-//  الشاشة الرئيسية للهاتف
-// ==========================================================
-class MobileShell extends ConsumerStatefulWidget {
-  const MobileShell({super.key});
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
 
-  @override
-  ConsumerState<MobileShell> createState() => _MobileShellState();
-}
+      - name: Generate Android platform
+        run: |
+          cd /tmp
+          flutter create --platforms=android --org com.estitn --project-name estitn_farja --no-pub temp_app
+          rm -rf "$GITHUB_WORKSPACE/client/android"
+          cp -r /tmp/temp_app/android "$GITHUB_WORKSPACE/client/android"
+          echo "Copied android folder"
 
-class _MobileShellState extends ConsumerState<MobileShell> {
-  int _selectedIndex = 0;
+      - name: Auto-fix Dart files
+        run: |
+          echo "=== Fix 1: Add flutter/services import ==="
+          find client/lib -name "*.dart" | while read f; do
+            if grep -q "KeyDownEvent" "$f"; then
+              if ! grep -q "package:flutter/services.dart" "$f"; then
+                sed -i "1i import 'package:flutter/services.dart';" "$f"
+                echo "Added import to: $f"
+              fi
+            fi
+          done
 
-  final List<String> _titles = const [
-    'الرئيسية',
-    'البث المباشر',
-    'المباريات',
-    'المفضلة',
-    'الإعدادات',
-  ];
+          echo ""
+          echo "=== Fix 2: media_kit controller.value ==="
+          find client/lib -name "*.dart" | while read f; do
+            if grep -q "controller.value.size" "$f"; then
+              sed -i "s|controller.value.size.width|(player.state.width ?? 1920).toDouble()|g" "$f"
+              sed -i "s|controller.value.size.height|(player.state.height ?? 1080).toDouble()|g" "$f"
+              echo "Fixed controller.value in: $f"
+            fi
+          done
 
-  final List<IconData> _icons = const [
-    Icons.home_rounded,
-    Icons.live_tv_rounded,
-    Icons.sports_soccer_rounded,
-    Icons.favorite_rounded,
-    Icons.settings_rounded,
-  ];
+          echo ""
+          echo "=== Done ==="
 
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadPlaylistsIfNeeded();
-    });
-  }
+      - name: Install unrar and 7zip
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y unrar-free p7zip-full || true
 
-  Future<void> _loadPlaylistsIfNeeded() async {
-    try {
-      final remote = RemoteConfig();
-      final cached = await remote.loadCached();
-      if (cached.isNotEmpty) {
-        kPlaylistUrls = cached;
-      }
-      remote.fetchRemote().then((remoteUrls) {
-        if (remoteUrls != null && remoteUrls.isNotEmpty) {
-          kPlaylistUrls = remoteUrls;
-        }
-      });
-    } catch (_) {}
+      - name: Check uploaded assets
+        run: |
+          ls -lh client/assets/android_res/ || true
 
-    if (kPlaylistUrls.isEmpty) return;
-    final state = ref.read(playlistProvider);
-    if (state.allChannels.isNotEmpty || state.isLoading) return;
-    await ref.read(playlistProvider.notifier).loadPlaylists(kPlaylistUrls);
-  }
+      - name: Extract archive
+        run: |
+          BASE="client/assets/android_res"
+          mkdir -p "$BASE/extracted"
+          ARCHIVE=$(find "$BASE" -maxdepth 1 \( -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) 2>/dev/null | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            echo "no archive found"
+            exit 0
+          fi
+          echo "Archive: $ARCHIVE"
+          if [ "${ARCHIVE##*.}" = "zip" ]; then
+            unzip -o "$ARCHIVE" -d "$BASE/extracted"
+          elif [ "${ARCHIVE##*.}" = "rar" ]; then
+            unrar x -o+ "$ARCHIVE" "$BASE/extracted/" || 7z x "$ARCHIVE" -o"$BASE/extracted" -y
+          else
+            7z x "$ARCHIVE" -o"$BASE/extracted" -y
+          fi
+          find "$BASE/extracted" -type f | head -40 || true
 
-  @override
-  Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF141A2E),
-          elevation: 0,
-          title: Row(
-            children: [
-              const Icon(
-                Icons.sports_soccer_rounded,
-                color: Color(0xFF00C8FF),
-                size: 28,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _titles[_selectedIndex],
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 20,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.search, color: Colors.white70),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const UnifiedSearchScreen(),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-        body: _buildContent(),
-        bottomNavigationBar: Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF141A2E),
-            border: Border(
-              top: BorderSide(color: Color(0xFF2A3350), width: 1),
-            ),
-          ),
-          child: BottomNavigationBar(
-            currentIndex: _selectedIndex,
-            onTap: (i) => setState(() => _selectedIndex = i),
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            type: BottomNavigationBarType.fixed,
-            selectedItemColor: const Color(0xFF00C8FF),
-            unselectedItemColor: Colors.white54,
-            selectedFontSize: 11,
-            unselectedFontSize: 10,
-            items: [
-              for (int i = 0; i < _titles.length; i++)
-                BottomNavigationBarItem(
-                  icon: Icon(_icons[i]),
-                  label: _titles[i],
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+      - name: Detect res folder
+        id: locate_res
+        run: |
+          BASE="client/assets/android_res"
+          RES_PATH=""
+          if [ -d "$BASE/extracted/res" ]; then
+            RES_PATH="$BASE/extracted/res"
+          elif [ -d "$BASE/extracted/mipmap-hdpi" ]; then
+            RES_PATH="$BASE/extracted"
+          elif [ -d "$BASE/res" ]; then
+            RES_PATH="$BASE/res"
+          elif [ -d "$BASE/mipmap-hdpi" ]; then
+            RES_PATH="$BASE"
+          fi
+          echo "RES_PATH=$RES_PATH" >> $GITHUB_OUTPUT
+          echo "Detected: $RES_PATH"
 
-  Widget _buildContent() {
-    switch (_selectedIndex) {
-      case 0:
-        return const HomeScreen();
+      - name: Replace Android res folder
+        run: |
+          RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
+          RES_DEST="client/android/app/src/main/res"
+          if [ -z "$RES_SRC" ]; then
+            echo "no custom res"
+            exit 0
+          fi
+          if [ ! -d "$RES_SRC" ]; then
+            echo "not a directory"
+            exit 0
+          fi
+          rm -rf "$RES_DEST"
+          mkdir -p "$RES_DEST"
+          cp -r "$RES_SRC"/* "$RES_DEST/"
+          find "$RES_DEST" -type f | head -40 || true
 
-      case 1:
-        return LiveTvScreen(
-          playlistUrls: kPlaylistUrls,
-          onChannelTap: _openChannel,
-        );
+      - name: Patch styles.xml (fix Theme.SplashScreen)
+        run: |
+          RES_DEST="client/android/app/src/main/res"
 
-      case 2:
-        return _buildMatchesScreen();
+          echo "=== Patching styles.xml files ==="
+          find "$RES_DEST" -name "styles.xml" | while read f; do
+            echo "Patching: $f"
+            sed -i 's|parent="Theme.SplashScreen"|parent="android:Theme.Black.NoTitleBar"|g' "$f"
+            sed -i '/windowSplashScreenBackground/d' "$f"
+            sed -i '/windowSplashScreenAnimatedIcon/d' "$f"
+            sed -i '/windowSplashScreenAnimationDuration/d' "$f"
+            sed -i '/windowSplashScreenIconBackgroundColor/d' "$f"
+            sed -i '/postSplashScreenTheme/d' "$f"
+          done
 
-      case 3:
-        return const FavoritesScreen();
+      - name: Patch values-v31 folder
+        run: |
+          RES_DEST="client/android/app/src/main/res"
+          if [ -d "$RES_DEST/values-v31" ]; then
+            find "$RES_DEST/values-v31" -name "*.xml" | while read f; do
+              echo "Patching: $f"
+              sed -i 's|parent="Theme.SplashScreen"|parent="android:Theme.Black.NoTitleBar"|g' "$f"
+              sed -i '/windowSplashScreenBackground/d' "$f"
+              sed -i '/windowSplashScreenAnimatedIcon/d' "$f"
+              sed -i '/windowSplashScreenAnimationDuration/d' "$f"
+              sed -i '/windowSplashScreenIconBackgroundColor/d' "$f"
+              sed -i '/postSplashScreenTheme/d' "$f"
+            done
+          fi
 
-      case 4:
-        return const SettingsScreen();
+      - name: Generate encrypted config
+        env:
+          PLAYLIST_URLS: ${{ secrets.PLAYLIST_URLS }}
+        run: |
+          mkdir -p client/lib/data/local
+          python3 client/scripts/gen_config.py > client/lib/data/local/secure_config.dart
+          echo "Generated secure_config.dart"
 
-      default:
-        return const HomeScreen();
-    }
-  }
+      - name: Verify URLs
+        run: |
+          count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo 0)
+          echo "URLs: $count"
+          if [ "$count" -lt 1 ]; then
+            echo "ERROR: no URLs"
+            exit 1
+          fi
+          echo "OK"
 
-  Widget _buildMatchesScreen() {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: const Color(0xFF0A0E1A),
-        body: SafeArea(
-          child: SingleChildScrollView(
-            child: Column(
-              children: [
-                const SizedBox(height: 16),
-                SportsMatchesWidget(
-                  onChannelTap: _openChannel,
-                ),
-                const SizedBox(height: 40),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+      - name: Bump minSdkVersion to 23
+        working-directory: client
+        run: |
+          if [ -f android/app/build.gradle ]; then
+            sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
+          fi
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 23/' android/app/build.gradle.kts
+          fi
 
-  void _openChannel(Channel channel) {
-    ref.read(historyProvider.notifier).record(channel);
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PlayerScreen(
-          streamUrl: channel.streamUrl,
-          channelName: channel.name,
-          channelLogo: channel.logo,
-        ),
-      ),
-    );
-  }
-}
+      - name: Limit ABIs to arm64 plus armv7
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
+          for path in candidates:
+              if not os.path.exists(path):
+                  continue
+              src = open(path, "r", encoding="utf-8").read()
+              if "abiFilters" in src:
+                  continue
+              marker = "defaultConfig {"
+              idx = src.find(marker)
+              if idx == -1:
+                  continue
+              insert_at = idx + len(marker)
+              if path.endswith(".kts"):
+                  block = """
+
+              ndk {
+                  abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+              }
+          """
+              else:
+                  block = """
+
+              ndk {
+                  abiFilters 'arm64-v8a', 'armeabi-v7a'
+              }
+          """
+              src = src[:insert_at] + block + src[insert_at:]
+              open(path, "w", encoding="utf-8").write(src)
+          PYEOF
+
+      - name: Add packaging options
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
+          for path in candidates:
+              if not os.path.exists(path):
+                  continue
+              src = open(path, "r", encoding="utf-8").read()
+              if "packagingOptions" in src or "packaging {" in src:
+                  continue
+              marker = "android {"
+              idx = src.find(marker)
+              if idx == -1:
+                  continue
+              insert_at = idx + len(marker)
+              if path.endswith(".kts"):
+                  block = """
+
+              packaging {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+                  resources {
+                      excludes += setOf("META-INF/*.kotlin_module")
+                  }
+              }
+          """
+              else:
+                  block = """
+
+              packagingOptions {
+                  jniLibs {
+                      useLegacyPackaging = true
+                  }
+                  resources {
+                      excludes += ['META-INF/*.kotlin_module']
+                  }
+              }
+          """
+              src = src[:insert_at] + block + src[insert_at:]
+              open(path, "w", encoding="utf-8").write(src)
+          PYEOF
+
+      - name: Add AndroidX SplashScreen dependency
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
+          for path in candidates:
+              if not os.path.exists(path):
+                  continue
+              src = open(path, "r", encoding="utf-8").read()
+              if "core-splashscreen" in src:
+                  continue
+              marker = "dependencies {"
+              idx = src.find(marker)
+              if idx == -1:
+                  continue
+              insert_at = idx + len(marker)
+              if path.endswith(".kts"):
+                  block = """
+              implementation("androidx.core:core-splashscreen:1.0.1")
+          """
+              else:
+                  block = """
+              implementation 'androidx.core:core-splashscreen:1.0.1'
+          """
+              src = src[:insert_at] + block + src[insert_at:]
+              open(path, "w", encoding="utf-8").write(src)
+          PYEOF
+
+      - name: Override AndroidManifest (Mobile)
+        working-directory: client
+        run: |
+          cat > android/app/src/main/AndroidManifest.xml <<'XMLEOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <application
+                  android:label="استيتن فرجة"
+                  android:name="${applicationName}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:usesCleartextTraffic="true"
+                  android:requestLegacyExternalStorage="true"
+                  android:hardwareAccelerated="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <meta-data android:name="flutterEmbedding" android:value="2" />
+              </application>
+          </manifest>
+          XMLEOF
+
+      - name: Get dependencies
+        working-directory: client
+        run: flutter pub get
+
+      - name: Build Mobile APK
+        working-directory: client
+        run: |
+          flutter build apk --release -t lib/main_mobile.dart --android-skip-build-dependency-validation
+
+      - name: Rename APK
+        run: |
+          mkdir -p artifacts
+          cp client/build/app/outputs/flutter-apk/app-release.apk artifacts/estitn-farja-mobile.apk || true
+          ls -lh artifacts/
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: estitn-farja-mobile-apk
+          path: artifacts/*.apk
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f "$GITHUB_WORKSPACE/client/lib/data/local/secure_config.dart" || true
+          echo "Cleanup done"
