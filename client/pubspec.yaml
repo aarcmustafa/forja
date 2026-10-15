@@ -19,6 +19,8 @@ dependencies:
   hive: ^2.2.3
   hive_flutter: ^1.1.0
   path_provider: ^2.1.4
+  # ✅ إعادة الحزمة (توفر Theme.SplashScreen)
+  flutter_native_splash: ^2.4.1
 
 dev_dependencies:
   flutter_test:
@@ -30,3 +32,11 @@ flutter:
 
   assets:
     - assets/icon/
+
+# ==========================================================
+#  إعدادات splash (لن نستخدمها لكن الحزمة توفر Theme)
+# ==========================================================
+flutter_native_splash:
+  color: "#0A0E1A"
+  android: false
+  ios: false
