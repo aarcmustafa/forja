@@ -3,7 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
-/// خدمة فحص القنوات — تعمل في الخلفية مع إدارة كاش ذكية
+/// خدمة فحص القنوات — مع Exponential Backoff
 class StreamChecker {
   static const String _boxName = 'stream_checks';
   static const String _kResults = 'results';
@@ -49,109 +49,142 @@ class StreamChecker {
   }
 
   // ==========================================================
-  //  فحص قناة واحدة
+  //  Exponential Backoff Helper
+  // ==========================================================
+  Duration _backoff(int attempt) {
+    // 500ms, 1s, 2s, 4s, 8s
+    final ms = 500 * (1 << attempt.clamp(0, 4));
+    return Duration(milliseconds: ms);
+  }
+
+  // ==========================================================
+  //  فحص قناة واحدة (مع Headers + Cookies من extras)
   // ==========================================================
   Future<bool> checkOne(Channel channel) async {
-    try {
-      final headers = <String, String>{
-        'User-Agent': vlcUserAgent,
-        'Accept': '*/*',
-      };
+    for (int attempt = 0; attempt < 2; attempt++) {
       try {
-        final uri = Uri.parse(channel.streamUrl);
-        headers['Referer'] = '${uri.scheme}://${uri.host}/';
-      } catch (_) {}
-
-      final customReferer = channel.extras['referer'];
-      if (customReferer != null && customReferer.isNotEmpty) {
-        headers['Referer'] = customReferer;
-      }
-
-      Response response;
-      try {
-        response = await _dio.head(
-          channel.streamUrl,
-          options: Options(headers: headers),
-        );
+        final result = await _doCheck(channel);
+        if (result) return true;
       } catch (_) {
-        response = await _dio.get(
-          channel.streamUrl,
-          options: Options(
-            responseType: ResponseType.stream,
-            headers: {
-              ...headers,
-              'Range': 'bytes=0-512',
-            },
-          ),
-        );
+        // محاولة ثانية بـ backoff
+      }
+      if (attempt == 0) {
+        await Future.delayed(_backoff(0));
+      }
+    }
+    return false;
+  }
+
+  Future<bool> _doCheck(Channel channel) async {
+    final headers = <String, String>{
+      'User-Agent': vlcUserAgent,
+      'Accept': '*/*',
+    };
+
+    // Referer + Origin تلقائي
+    try {
+      final uri = Uri.parse(channel.streamUrl);
+      headers['Referer'] = '${uri.scheme}://${uri.host}/';
+      headers['Origin'] = '${uri.scheme}://${uri.host}';
+    } catch (_) {}
+
+    // ✅ إضافة كل الرؤوس المخصصة من extras
+    channel.extras.forEach((key, value) {
+      if (value.isNotEmpty) {
+        headers[key] = value;
+      }
+    });
+
+    Response response;
+    try {
+      response = await _dio.head(
+        channel.streamUrl,
+        options: Options(headers: headers),
+      );
+    } catch (_) {
+      response = await _dio.get(
+        channel.streamUrl,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {
+            ...headers,
+            'Range': 'bytes=0-2048',  // ✅ قراءة 2KB للتحقق
+          },
+        ),
+      );
+    }
+
+    final code = response.statusCode ?? 0;
+    if (!okStatusCodes.contains(code)) return false;
+
+    // ✅ تحقق إضافي: إذا كانت استجابة GET، تأكد من وجود بيانات
+    if (response.requestOptions.method == 'GET') {
+      final stream = response.data;
+      if (stream is ResponseBody) {
+        // نجحت القراءة الأولى
+        return true;
+      }
+    }
+
+    return true;
+  }
+
+  // ==========================================================
+  //  الفحص الأولي (مصحح)
+  // ==========================================================
+  Future<Map<String, bool>> checkInitial(
+    List<Channel> channels, {
+    int? limit,
+    int batchSize = 20,
+    void Function(int done, int total)? onProgress,
+    void Function(Map<String, bool> batchResults)? onBatch,
+  }) async {
+    final result = <String, bool>{};
+    if (channels.isEmpty) return result;
+
+    final toCheck = limit != null && limit > 0 && limit < channels.length
+        ? channels.take(limit).toList()
+        : channels;
+    final total = toCheck.length;
+
+    for (int i = 0; i < total; i += batchSize) {
+      while (_isPaused) {
+        await Future.delayed(const Duration(milliseconds: 500));
       }
 
-      final code = response.statusCode ?? 0;
-      return okStatusCodes.contains(code);
-    } catch (_) {
-      return false;
+      final batch = toCheck.skip(i).take(batchSize).toList();
+
+      try {
+        final batchResults = await Future.wait(batch.map(checkOne));
+        final batchMap = <String, bool>{};
+        for (int j = 0; j < batch.length; j++) {
+          batchMap[batch[j].id] = batchResults[j];
+          result[batch[j].id] = batchResults[j];
+        }
+        onBatch?.call(batchMap);
+      } catch (_) {
+        final batchMap = <String, bool>{};
+        for (final c in batch) {
+          batchMap[c.id] = false;
+          result[c.id] = false;
+        }
+        onBatch?.call(batchMap);
+      }
+
+      onProgress?.call(
+        (i + batch.length).clamp(0, total),
+        total,
+      );
+
+      if (i > 0 && (i ~/ batchSize) % 5 == 0) {
+        await _saveBatchResults(result);
+      }
     }
+
+    await _saveBatchResults(result);
+    return result;
   }
   // ==========================================================
-//  الفحص الأولي (مصحح — بدون bug الـ 20 قناة)
-// ==========================================================
-Future<Map<String, bool>> checkInitial(
-  List<Channel> channels, {
-  int? limit,
-  int batchSize = 20,
-  void Function(int done, int total)? onProgress,
-  void Function(Map<String, bool> batchResults)? onBatch,
-}) async {
-  final result = <String, bool>{};
-
-  if (channels.isEmpty) return result;
-
-  final toCheck = limit != null && limit > 0 && limit < channels.length
-      ? channels.take(limit).toList()
-      : channels;
-  final total = toCheck.length;
-
-  for (int i = 0; i < total; i += batchSize) {
-    // نحترم فقط الإيقاف المؤقت
-    while (_isPaused) {
-      await Future.delayed(const Duration(milliseconds: 500));
-    }
-
-    final batch = toCheck.skip(i).take(batchSize).toList();
-
-    try {
-      final batchResults = await Future.wait(batch.map(checkOne));
-      final batchMap = <String, bool>{};
-      for (int j = 0; j < batch.length; j++) {
-        batchMap[batch[j].id] = batchResults[j];
-        result[batch[j].id] = batchResults[j];
-      }
-      onBatch?.call(batchMap);
-    } catch (_) {
-      final batchMap = <String, bool>{};
-      for (final c in batch) {
-        batchMap[c.id] = false;
-        result[c.id] = false;
-      }
-      onBatch?.call(batchMap);
-    }
-
-    onProgress?.call(
-      (i + batch.length).clamp(0, total),
-      total,
-    );
-
-    // حفظ تدريجي كل 5 دفعات
-    if (i > 0 && (i ~/ batchSize) % 5 == 0) {
-      await _saveBatchResults(result);
-    }
-  }
-
-  await _saveBatchResults(result);
-  return result;
-}
-
-// ==========================================================
 //  الفحص الخلفي التلقائي
 // ==========================================================
 Future<void> startBackgroundCheck(
@@ -194,8 +227,9 @@ Future<void> startBackgroundCheck(
 
   _isRunning = false;
 }
-  // ==========================================================
-//  تحديد قناة/عدة قنوات كـ ميتة أو شغّالة
+
+// ==========================================================
+//  Mark dead/working
 // ==========================================================
 Future<void> markDead(String channelId) async {
   await _saveBatchResults({channelId: false});
@@ -281,9 +315,6 @@ DateTime? getLastCheckTime() {
   return DateTime.fromMillisecondsSinceEpoch(ts as int);
 }
 
-// ==========================================================
-//  إحصائيات
-// ==========================================================
 Future<int> getWorkingCount() async {
   final results = await loadResults();
   return results.values.where((v) => v == true).length;
@@ -307,7 +338,7 @@ Future<int> getDeadCount() async {
   bool get isPaused => _isPaused;
 
   // ==========================================================
-  //  صيانة الكاش
+  //  صيانة
   // ==========================================================
   Future<void> maintainCache() async {
     if (_box == null) await init();
@@ -352,9 +383,6 @@ Future<int> getDeadCount() async {
     }
   }
 
-  // ==========================================================
-  //  مسح النتائج
-  // ==========================================================
   Future<void> clear() async {
     if (_box == null) await init();
     if (_box == null) return;
@@ -366,9 +394,6 @@ Future<int> getDeadCount() async {
     await clear();
   }
 
-  // ==========================================================
-  //  تنظيف الموارد
-  // ==========================================================
   void dispose() {
     stop();
     _dio.close();
