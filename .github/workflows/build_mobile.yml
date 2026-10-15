@@ -237,7 +237,85 @@ jobs:
               open(path, "w", encoding="utf-8").write(src)
           PYEOF
 
-      # ✅ هذا هو الإصلاح الرئيسي: كتابة AndroidManifest.xml صحيح بدلاً من ملف فارغ
+      # ✅ جديد: تمكين Core Library Desugaring (مطلوب لـ flutter_local_notifications)
+      - name: Enable Core Library Desugaring
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+
+          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
+          for path in candidates:
+              if not os.path.exists(path):
+                  continue
+
+              src = open(path, "r", encoding="utf-8").read()
+              is_kts = path.endswith(".kts")
+
+              # 1) إضافة coreLibraryDesugaring إلى dependencies
+              if "coreLibraryDesugaring" not in src:
+                  marker = "dependencies {"
+                  idx = src.find(marker)
+                  if idx != -1:
+                      insert_at = idx + len(marker)
+                      if is_kts:
+                          block = '\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")'
+                      else:
+                          block = "\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'"
+                      src = src[:insert_at] + block + src[insert_at:]
+                      print(f"Added coreLibraryDesugaring to {path}")
+
+              # 2) تمكين desugaring داخل compileOptions
+              if is_kts:
+                  if "isCoreLibraryDesugaringEnabled" not in src:
+                      if "compileOptions {" in src:
+                          src = src.replace(
+                              "compileOptions {",
+                              "compileOptions {\n        isCoreLibraryDesugaringEnabled = true",
+                              1,
+                          )
+                          print(f"Patched existing compileOptions in {path}")
+                      else:
+                          marker = "android {"
+                          idx = src.find(marker)
+                          if idx != -1:
+                              insert_at = idx + len(marker)
+                              block = """
+          compileOptions {
+              isCoreLibraryDesugaringEnabled = true
+              sourceCompatibility = JavaVersion.VERSION_17
+              targetCompatibility = JavaVersion.VERSION_17
+          }
+          """
+                              src = src[:insert_at] + block + src[insert_at:]
+                              print(f"Created compileOptions in {path}")
+              else:
+                  if "coreLibraryDesugaringEnabled" not in src:
+                      if "compileOptions {" in src:
+                          src = src.replace(
+                              "compileOptions {",
+                              "compileOptions {\n        coreLibraryDesugaringEnabled true",
+                              1,
+                          )
+                          print(f"Patched existing compileOptions in {path}")
+                      else:
+                          marker = "android {"
+                          idx = src.find(marker)
+                          if idx != -1:
+                              insert_at = idx + len(marker)
+                              block = """
+          compileOptions {
+              coreLibraryDesugaringEnabled true
+              sourceCompatibility JavaVersion.VERSION_17
+              targetCompatibility JavaVersion.VERSION_17
+          }
+          """
+                              src = src[:insert_at] + block + src[insert_at:]
+                              print(f"Created compileOptions in {path}")
+
+              open(path, "w", encoding="utf-8").write(src)
+          PYEOF
+
       - name: Override AndroidManifest (Mobile)
         working-directory: client
         run: |
@@ -248,6 +326,9 @@ jobs:
               <uses-permission android:name="android.permission.INTERNET"/>
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
               <uses-permission android:name="android.permission.WAKE_LOCK"/>
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+              <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+              <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
 
               <application
                   android:label="استيتن فرجة"
