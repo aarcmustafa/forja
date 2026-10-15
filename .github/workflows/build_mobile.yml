@@ -3,7 +3,7 @@ name: Build Mobile APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
       - 'client/**'
       - '.github/workflows/build_mobile.yml'
@@ -15,7 +15,6 @@ jobs:
   build-mobile:
     name: Build Mobile APK
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,7 +39,7 @@ jobs:
           cp -r /tmp/temp_app/android "$GITHUB_WORKSPACE/client/android"
           echo "Copied android folder"
 
-      - name: Auto-fix Dart files
+      - name: Auto-fix Dart files (احتياطي)
         run: |
           echo "=== Fix 1: Add flutter/services import ==="
           find client/lib -name "*.dart" | while read f; do
@@ -52,37 +51,20 @@ jobs:
             fi
           done
 
-          echo ""
-          echo "=== Fix 2: media_kit controller.value ==="
-          find client/lib -name "*.dart" | while read f; do
-            if grep -q "controller.value.size" "$f"; then
-              sed -i "s|controller.value.size.width|(player.state.width ?? 1920).toDouble()|g" "$f"
-              sed -i "s|controller.value.size.height|(player.state.height ?? 1080).toDouble()|g" "$f"
-              echo "Fixed controller.value in: $f"
-            fi
-          done
-
-          echo ""
-          echo "=== Done ==="
-
       - name: Install unrar and 7zip
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y unrar-free p7zip-full || true
 
       - name: Check uploaded assets
-        run: |
-          ls -lh client/assets/android_res/ || true
+        run: ls -lh client/assets/android_res/ || true
 
       - name: Extract archive
         run: |
           BASE="client/assets/android_res"
           mkdir -p "$BASE/extracted"
           ARCHIVE=$(find "$BASE" -maxdepth 1 \( -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) 2>/dev/null | head -1)
-          if [ -z "$ARCHIVE" ]; then
-            echo "no archive found"
-            exit 0
-          fi
+          if [ -z "$ARCHIVE" ]; then echo "no archive found"; exit 0; fi
           echo "Archive: $ARCHIVE"
           if [ "${ARCHIVE##*.}" = "zip" ]; then
             unzip -o "$ARCHIVE" -d "$BASE/extracted"
@@ -98,14 +80,10 @@ jobs:
         run: |
           BASE="client/assets/android_res"
           RES_PATH=""
-          if [ -d "$BASE/extracted/res" ]; then
-            RES_PATH="$BASE/extracted/res"
-          elif [ -d "$BASE/extracted/mipmap-hdpi" ]; then
-            RES_PATH="$BASE/extracted"
-          elif [ -d "$BASE/res" ]; then
-            RES_PATH="$BASE/res"
-          elif [ -d "$BASE/mipmap-hdpi" ]; then
-            RES_PATH="$BASE"
+          if [ -d "$BASE/extracted/res" ]; then RES_PATH="$BASE/extracted/res"
+          elif [ -d "$BASE/extracted/mipmap-hdpi" ]; then RES_PATH="$BASE/extracted"
+          elif [ -d "$BASE/res" ]; then RES_PATH="$BASE/res"
+          elif [ -d "$BASE/mipmap-hdpi" ]; then RES_PATH="$BASE"
           fi
           echo "RES_PATH=$RES_PATH" >> $GITHUB_OUTPUT
           echo "Detected: $RES_PATH"
@@ -114,14 +92,8 @@ jobs:
         run: |
           RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
           RES_DEST="client/android/app/src/main/res"
-          if [ -z "$RES_SRC" ]; then
-            echo "no custom res"
-            exit 0
-          fi
-          if [ ! -d "$RES_SRC" ]; then
-            echo "not a directory"
-            exit 0
-          fi
+          if [ -z "$RES_SRC" ]; then echo "no custom res"; exit 0; fi
+          if [ ! -d "$RES_SRC" ]; then echo "not a directory"; exit 0; fi
           rm -rf "$RES_DEST"
           mkdir -p "$RES_DEST"
           cp -r "$RES_SRC"/* "$RES_DEST/"
@@ -130,7 +102,6 @@ jobs:
       - name: Patch styles.xml (fix Theme.SplashScreen)
         run: |
           RES_DEST="client/android/app/src/main/res"
-
           echo "=== Patching styles.xml files ==="
           find "$RES_DEST" -name "styles.xml" | while read f; do
             echo "Patching: $f"
@@ -169,10 +140,7 @@ jobs:
         run: |
           count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo 0)
           echo "URLs: $count"
-          if [ "$count" -lt 1 ]; then
-            echo "ERROR: no URLs"
-            exit 1
-          fi
+          if [ "$count" -lt 1 ]; then echo "ERROR: no URLs"; exit 1; fi
           echo "OK"
 
       - name: Bump minSdkVersion to 23
@@ -192,29 +160,20 @@ jobs:
           import os
           candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
           for path in candidates:
-              if not os.path.exists(path):
-                  continue
+              if not os.path.exists(path): continue
               src = open(path, "r", encoding="utf-8").read()
-              if "abiFilters" in src:
-                  continue
+              if "abiFilters" in src: continue
               marker = "defaultConfig {"
               idx = src.find(marker)
-              if idx == -1:
-                  continue
+              if idx == -1: continue
               insert_at = idx + len(marker)
               if path.endswith(".kts"):
                   block = """
-
-              ndk {
-                  abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-              }
+          ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
           """
               else:
                   block = """
-
-              ndk {
-                  abiFilters 'arm64-v8a', 'armeabi-v7a'
-              }
+          ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
           """
               src = src[:insert_at] + block + src[insert_at:]
               open(path, "w", encoding="utf-8").write(src)
@@ -227,39 +186,26 @@ jobs:
           import os
           candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
           for path in candidates:
-              if not os.path.exists(path):
-                  continue
+              if not os.path.exists(path): continue
               src = open(path, "r", encoding="utf-8").read()
-              if "packagingOptions" in src or "packaging {" in src:
-                  continue
+              if "packagingOptions" in src or "packaging {" in src: continue
               marker = "android {"
               idx = src.find(marker)
-              if idx == -1:
-                  continue
+              if idx == -1: continue
               insert_at = idx + len(marker)
               if path.endswith(".kts"):
                   block = """
-
-              packaging {
-                  jniLibs {
-                      useLegacyPackaging = true
-                  }
-                  resources {
-                      excludes += setOf("META-INF/*.kotlin_module")
-                  }
-              }
+          packaging {
+              jniLibs { useLegacyPackaging = true }
+              resources { excludes += setOf("META-INF/*.kotlin_module") }
+          }
           """
               else:
                   block = """
-
-              packagingOptions {
-                  jniLibs {
-                      useLegacyPackaging = true
-                  }
-                  resources {
-                      excludes += ['META-INF/*.kotlin_module']
-                  }
-              }
+          packagingOptions {
+              jniLibs { useLegacyPackaging = true }
+              resources { excludes += ['META-INF/*.kotlin_module'] }
+          }
           """
               src = src[:insert_at] + block + src[insert_at:]
               open(path, "w", encoding="utf-8").write(src)
@@ -272,46 +218,41 @@ jobs:
           import os
           candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
           for path in candidates:
-              if not os.path.exists(path):
-                  continue
+              if not os.path.exists(path): continue
               src = open(path, "r", encoding="utf-8").read()
-              if "core-splashscreen" in src:
-                  continue
+              if "core-splashscreen" in src: continue
               marker = "dependencies {"
               idx = src.find(marker)
-              if idx == -1:
-                  continue
+              if idx == -1: continue
               insert_at = idx + len(marker)
               if path.endswith(".kts"):
                   block = """
-              implementation("androidx.core:core-splashscreen:1.0.1")
+          implementation("androidx.core:core-splashscreen:1.0.1")
           """
               else:
                   block = """
-              implementation 'androidx.core:core-splashscreen:1.0.1'
+          implementation 'androidx.core:core-splashscreen:1.0.1'
           """
               src = src[:insert_at] + block + src[insert_at:]
               open(path, "w", encoding="utf-8").write(src)
           PYEOF
 
+      # ✅ هذا هو الإصلاح الرئيسي: كتابة AndroidManifest.xml صحيح بدلاً من ملف فارغ
       - name: Override AndroidManifest (Mobile)
         working-directory: client
         run: |
           cat > android/app/src/main/AndroidManifest.xml <<'XMLEOF'
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-permission android:name="android.permission.INTERNET" />
-              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-              <uses-permission android:name="android.permission.WAKE_LOCK" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.estitn.estitn_farja">
+
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <uses-permission android:name="android.permission.WAKE_LOCK"/>
+
               <application
                   android:label="استيتن فرجة"
                   android:name="${applicationName}"
-                  android:icon="@mipmap/ic_launcher"
-                  android:roundIcon="@mipmap/ic_launcher_round"
-                  android:usesCleartextTraffic="true"
-                  android:requestLegacyExternalStorage="true"
-                  android:hardwareAccelerated="true">
+                  android:icon="@mipmap/ic_launcher">
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
@@ -320,14 +261,25 @@ jobs:
                       android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
                       android:hardwareAccelerated="true"
                       android:windowSoftInputMode="adjustResize">
-                      <meta-data android:name="io.flutter.embedding.android.NormalTheme" android:resource="@style/NormalTheme" />
+                      <meta-data
+                          android:name="io.flutter.embedding.android.NormalTheme"
+                          android:resource="@style/NormalTheme" />
                       <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
                       </intent-filter>
                   </activity>
-                  <meta-data android:name="flutterEmbedding" android:value="2" />
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
               </application>
+
+              <queries>
+                  <intent>
+                      <action android:name="android.intent.action.VIEW" />
+                      <data android:scheme="https" />
+                  </intent>
+              </queries>
           </manifest>
           XMLEOF
 
@@ -337,8 +289,7 @@ jobs:
 
       - name: Build Mobile APK
         working-directory: client
-        run: |
-          flutter build apk --release -t lib/main_mobile.dart --android-skip-build-dependency-validation
+        run: flutter build apk --release -t lib/main_mobile.dart --android-skip-build-dependency-validation
 
       - name: Rename APK
         run: |
