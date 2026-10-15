@@ -25,7 +25,6 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
 
-  // ✅ تهيئة خدمة الإشعارات
   try {
     await NotificationService().init();
   } catch (_) {}
@@ -59,7 +58,6 @@ class EstetnFarjaTvApp extends StatelessWidget {
     );
   }
 }
-
 // ==========================================================
 //  الشاشة الرئيسية
 // ==========================================================
@@ -106,7 +104,11 @@ class _MainShellState extends ConsumerState<MainShell> {
     });
   }
 
+  // ==========================================================
+  //  ✅ التحميل الجديد (نفس منطق Mobile لكن مع maintainCache)
+  // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
+    // 1) صيانة الكاش
     try {
       final repo = ref.read(m3uRepositoryProvider);
       await repo.maintainCache();
@@ -114,29 +116,41 @@ class _MainShellState extends ConsumerState<MainShell> {
       await storage.maintain();
     } catch (_) {}
 
-    // تطبيق حالة الإشعارات
+    // 2) الإشعارات
     try {
       final settings = ref.read(settingsProvider);
       NotificationService().setEnabled(settings.matchNotifications);
     } catch (_) {}
 
+    // 3) روابط SecureConfig
+    if (kPlaylistUrls.isEmpty) {
+      try {
+        final remote = RemoteConfig();
+        final cached = await remote.loadCached();
+        if (cached.isNotEmpty) {
+          kPlaylistUrls = cached;
+        }
+      } catch (_) {}
+    }
+
+    // 4) ابدأ التحميل
+    if (kPlaylistUrls.isNotEmpty) {
+      final state = ref.read(playlistProvider);
+      if (state.allChannels.isEmpty && !state.isLoading) {
+        ref
+            .read(playlistProvider.notifier)
+            .loadPlaylists(kPlaylistUrls);
+      }
+    }
+
+    // 5) تحديث الروابط من RemoteConfig
     try {
       final remote = RemoteConfig();
-      final cached = await remote.loadCached();
-      if (cached.isNotEmpty) {
-        kPlaylistUrls = cached;
+      final remoteUrls = await remote.fetchRemote();
+      if (remoteUrls != null && remoteUrls.isNotEmpty) {
+        kPlaylistUrls = remoteUrls;
       }
-      remote.fetchRemote().then((remoteUrls) {
-        if (remoteUrls != null && remoteUrls.isNotEmpty) {
-          kPlaylistUrls = remoteUrls;
-        }
-      });
     } catch (_) {}
-
-    if (kPlaylistUrls.isEmpty) return;
-    final state = ref.read(playlistProvider);
-    if (state.allChannels.isNotEmpty || state.isLoading) return;
-    await ref.read(playlistProvider.notifier).loadPlaylists(kPlaylistUrls);
   }
 
   @override
@@ -241,65 +255,62 @@ class _MainShellState extends ConsumerState<MainShell> {
   Widget _buildSearchButton() {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Focus(
-        onFocusChange: (hasFocus) {},
-        child: Builder(
-          builder: (context) {
-            final hasFocus = Focus.of(context).hasFocus;
-            return GestureDetector(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const UnifiedSearchScreen(),
-                  ),
-                );
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                padding: const EdgeInsets.symmetric(
-                  vertical: 14,
-                  horizontal: 16,
+      child: Builder(
+        builder: (context) {
+          final hasFocus = Focus.of(context).hasFocus;
+          return GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const UnifiedSearchScreen(),
                 ),
-                decoration: BoxDecoration(
+              );
+            },
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(
+                vertical: 14,
+                horizontal: 16,
+              ),
+              decoration: BoxDecoration(
+                color: hasFocus
+                    ? const Color(0xFFFFB800)
+                    : const Color(0xFF0A0E1A),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
                   color: hasFocus
-                      ? const Color(0xFFFFB800)
-                      : const Color(0xFF0A0E1A),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: hasFocus
-                        ? Colors.white
-                        : const Color(0xFF2A3350),
-                    width: hasFocus ? 2 : 1,
-                  ),
+                      ? Colors.white
+                      : const Color(0xFF2A3350),
+                  width: hasFocus ? 2 : 1,
                 ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.search_rounded,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.search_rounded,
+                    color: hasFocus
+                        ? Colors.black
+                        : const Color(0xFFFFB800),
+                    size: 22,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'بحث',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight:
+                          hasFocus ? FontWeight.bold : FontWeight.w500,
                       color: hasFocus
                           ? Colors.black
                           : const Color(0xFFFFB800),
-                      size: 22,
                     ),
-                    const SizedBox(width: 12),
-                    Text(
-                      'بحث',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight:
-                            hasFocus ? FontWeight.bold : FontWeight.w500,
-                        color: hasFocus
-                            ? Colors.black
-                            : const Color(0xFFFFB800),
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            );
-          },
-        ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -383,7 +394,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       ),
     );
   }
-  
+
   Widget _buildContent() {
     switch (_selectedIndex) {
       case _idxHome:
