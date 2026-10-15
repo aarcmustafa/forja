@@ -3,45 +3,23 @@ import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
-/// خدمة فحص القنوات
-/// - فحص سريع (محاولة واحدة)
-/// - فحص شامل (3 محاولات) للاستخدام الأولي
-/// - بدون طباعة مزعجة
+/// خدمة فحص القنوات - تعمل في الخلفية مع إدارة كاش ذكية
 class StreamChecker {
   static const String _boxName = 'stream_checks';
   static const String _kResults = 'results';
   static const String _kTimestamp = 'checked_at';
 
-  /// مهلة الفحص السريع
-  static const Duration quickTimeout = Duration(seconds: 3);
-
-  /// مهلة الفحص الشامل (لكل محاولة)
-  static const Duration thoroughTimeout = Duration(seconds: 4);
-
-  /// عدد محاولات الفحص الشامل
-  static const int thoroughAttempts = 3;
-
-  /// عدد الفحوصات المتوازية في الفحص الأولي
-  static const int initialConcurrency = 40;
-
-  /// عدد الفحوصات المتوازية في الفحص الخلفي
+  static const Duration timeout = Duration(seconds: 4);
   static const int concurrency = 15;
-
-  /// حجم دفعة الفحص الخلفي
   static const int backgroundBatchSize = 10;
-
-  /// التأخير بين دفعات الفحص الخلفي
   static const Duration backgroundDelay = Duration(seconds: 8);
 
-  /// الحد الأقصى لنتائج الفحص المحفوظة
   static const int maxSavedResults = 30000;
 
-  /// User-Agent
   static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
 
   static const List<int> okStatusCodes = [
-    200, 206,
-    301, 302, 303, 307, 308,
+    200, 206, 301, 302, 303, 307, 308,
     401, 403,
   ];
 
@@ -53,8 +31,8 @@ class StreamChecker {
 
   StreamChecker()
       : _dio = Dio(BaseOptions(
-          connectTimeout: quickTimeout,
-          receiveTimeout: quickTimeout,
+          connectTimeout: timeout,
+          receiveTimeout: timeout,
           followRedirects: true,
           validateStatus: (_) => true,
           headers: {
@@ -73,28 +51,9 @@ class StreamChecker {
   }
 
   // ==========================================================
-  //  فحص قناة واحدة (محاولة واحدة سريعة)
+  //  فحص قناة واحدة
   // ==========================================================
   Future<bool> checkOne(Channel channel) async {
-    return _attemptCheck(channel, quickTimeout);
-  }
-
-  /// فحص شامل (3 محاولات)
-  /// يتوقف بمجرد نجاح محاولة
-  Future<bool> checkThorough(Channel channel) async {
-    for (int i = 0; i < thoroughAttempts; i++) {
-      final ok = await _attemptCheck(channel, thoroughTimeout);
-      if (ok) return true;
-      // انتظار قصير قبل المحاولة التالية
-      if (i < thoroughAttempts - 1) {
-        await Future.delayed(const Duration(milliseconds: 400));
-      }
-    }
-    return false;
-  }
-
-  /// محاولة واحدة
-  Future<bool> _attemptCheck(Channel channel, Duration timeout) async {
     try {
       final headers = <String, String>{
         'User-Agent': vlcUserAgent,
@@ -114,11 +73,7 @@ class StreamChecker {
       try {
         response = await _dio.head(
           channel.streamUrl,
-          options: Options(
-            headers: headers,
-            sendTimeout: timeout,
-            receiveTimeout: timeout,
-          ),
+          options: Options(headers: headers),
         );
       } catch (_) {
         response = await _dio.get(
@@ -129,72 +84,78 @@ class StreamChecker {
               ...headers,
               'Range': 'bytes=0-512',
             },
-            sendTimeout: timeout,
-            receiveTimeout: timeout,
           ),
         );
       }
 
       final code = response.statusCode ?? 0;
-      if (!okStatusCodes.contains(code)) return false;
-
-      // للتحقق الإضافي: إذا كان HEAD، جرّب GET للتأكد
-      if (response.requestOptions.method == 'HEAD' &&
-          (code == 405 || code == 501)) {
-        return false;
-      }
-
-      return true;
+      return okStatusCodes.contains(code);
     } catch (_) {
       return false;
     }
   }
 
   // ==========================================================
-  //  ✅ الفحص الأولي (قبل ظهور القنوات لأول مرة)
+  //  ✅ دوال جديدة — markDead / markDeadMultiple
   // ==========================================================
-  /// يفحص كل القنوات بـ 3 محاولات لكل واحدة
-  /// يعيد: Map<channelId, isWorking>
-  /// [onProgress]: (done, total) للتحكم بشريط التقدم
-  Future<Map<String, bool>> checkInitial(
-    List<Channel> channels, {
-    void Function(int done, int total)? onProgress,
-    bool Function()? shouldCancel,
-  }) async {
-    final results = <String, bool>{};
-    if (channels.isEmpty) return results;
+  /// تحديد قناة واحدة كـ "ميتة"
+  Future<void> markDead(String channelId) async {
+    await init();
+    if (_box == null) return;
 
-    final total = channels.length;
-    int done = 0;
-    final queue = List<Channel>.from(channels);
+    try {
+      final raw = _box!.get(_kResults);
+      final Map<String, dynamic> map =
+          raw != null ? Map<String, dynamic>.from(raw as Map) : {};
 
-    // معالجة بالتوازي المحدود
-    while (queue.isNotEmpty) {
-      if (shouldCancel?.call() ?? false) break;
+      map[channelId] = {
+        'ok': false,
+        'at': DateTime.now().millisecondsSinceEpoch,
+      };
 
-      final batchSize =
-          queue.length > initialConcurrency ? initialConcurrency : queue.length;
-      final batch = queue.take(batchSize).toList();
-      queue.removeRange(0, batchSize);
-
-      final batchResults = await Future.wait(
-        batch.map((c) => checkThorough(c)),
-      );
-
-      for (int i = 0; i < batch.length; i++) {
-        results[batch[i].id] = batchResults[i];
-      }
-
-      done += batch.length;
-      onProgress?.call(done, total);
-    }
-
-    // حفظ النتائج
-    await _mergeAndSaveResults(results);
-
-    return results;
+      await _box!.put(_kResults, map);
+    } catch (_) {}
   }
 
+  /// تحديد عدة قنوات كـ "ميتة" دفعة واحدة
+  Future<void> markDeadMultiple(List<String> channelIds) async {
+    if (channelIds.isEmpty) return;
+    await init();
+    if (_box == null) return;
+
+    try {
+      final raw = _box!.get(_kResults);
+      final Map<String, dynamic> map =
+          raw != null ? Map<String, dynamic>.from(raw as Map) : {};
+
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final id in channelIds) {
+        map[id] = {'ok': false, 'at': now};
+      }
+
+      await _box!.put(_kResults, map);
+    } catch (_) {}
+  }
+
+  /// تحديد قناة واحدة كـ "شغّالة"
+  Future<void> markWorking(String channelId) async {
+    await init();
+    if (_box == null) return;
+
+    try {
+      final raw = _box!.get(_kResults);
+      final Map<String, dynamic> map =
+          raw != null ? Map<String, dynamic>.from(raw as Map) : {};
+
+      map[channelId] = {
+        'ok': true,
+        'at': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      await _box!.put(_kResults, map);
+    } catch (_) {}
+  }
+  
   // ==========================================================
   //  الفحص الخلفي التلقائي
   // ==========================================================
@@ -276,31 +237,12 @@ class StreamChecker {
             final tb = (b.value['at'] as int?) ?? 0;
             return tb.compareTo(ta);
           });
+
         map = Map.fromEntries(entries.take(maxSavedResults));
       }
 
       await _box!.put(_kResults, map);
       await _box!.put(_kTimestamp, DateTime.now().millisecondsSinceEpoch);
-    } catch (_) {}
-  }
-
-  /// دمج نتائج جديدة مع المحفوظة
-  Future<void> _mergeAndSaveResults(Map<String, bool> newResults) async {
-    if (_box == null) await init();
-    if (_box == null) return;
-
-    try {
-      final raw = _box!.get(_kResults);
-      final Map<String, dynamic> map =
-          raw != null ? Map<String, dynamic>.from(raw as Map) : {};
-
-      final now = DateTime.now().millisecondsSinceEpoch;
-      newResults.forEach((id, ok) {
-        map[id] = {'ok': ok, 'at': now};
-      });
-
-      await _box!.put(_kResults, map);
-      await _box!.put(_kTimestamp, now);
     } catch (_) {}
   }
 
@@ -342,6 +284,9 @@ class StreamChecker {
     return results.length;
   }
 
+  // ==========================================================
+  //  صيانة الكاش
+  // ==========================================================
   Future<void> maintainCache() async {
     if (_box == null) await init();
     if (_box == null) return;
@@ -363,6 +308,26 @@ class StreamChecker {
       final trimmed = Map.fromEntries(entries.take(maxSavedResults));
       await _box!.put(_kResults, trimmed);
     } catch (_) {}
+  }
+
+  Future<Map<String, dynamic>> getCacheInfo() async {
+    if (_box == null) await init();
+    if (_box == null) {
+      return {'ready': false, 'count': 0, 'limit': maxSavedResults};
+    }
+
+    try {
+      final raw = _box!.get(_kResults);
+      final count = raw is Map ? raw.length : 0;
+      return {
+        'ready': true,
+        'count': count,
+        'limit': maxSavedResults,
+        'lastCheck': getLastCheckTime()?.toIso8601String(),
+      };
+    } catch (_) {
+      return {'ready': false, 'count': 0, 'limit': maxSavedResults};
+    }
   }
 
   Future<void> clear() async {
