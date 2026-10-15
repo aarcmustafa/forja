@@ -95,30 +95,31 @@ jobs:
           mkdir -p "$RES_DEST"
           cp -r "$RES_SRC"/* "$RES_DEST/"
 
-      - name: Patch styles.xml
+      - name: Patch all splash screen resources
         run: |
           RES_DEST="client/android/app/src/main/res"
-          find "$RES_DEST" -name "styles.xml" | while read f; do
+          echo "=== Removing Theme.SplashScreen references ==="
+
+          if [ -d "$RES_DEST/values-v31" ]; then
+            rm -rf "$RES_DEST/values-v31"
+            echo "Removed values-v31 folder"
+          fi
+
+          find "$RES_DEST" -type f -name "*.xml" | while read f; do
             sed -i 's|parent="Theme.SplashScreen"|parent="android:Theme.Black.NoTitleBar"|g' "$f"
             sed -i '/windowSplashScreenBackground/d' "$f"
             sed -i '/windowSplashScreenAnimatedIcon/d' "$f"
             sed -i '/windowSplashScreenAnimationDuration/d' "$f"
             sed -i '/windowSplashScreenIconBackgroundColor/d' "$f"
             sed -i '/postSplashScreenTheme/d' "$f"
+            sed -i '/<style name="Theme.SplashScreen"/,/<\/style>/d' "$f"
+            echo "Patched: $f"
           done
 
-      - name: Patch values-v31 folder
-        run: |
-          RES_DEST="client/android/app/src/main/res"
-          if [ -d "$RES_DEST/values-v31" ]; then
-            find "$RES_DEST/values-v31" -name "*.xml" | while read f; do
-              sed -i 's|parent="Theme.SplashScreen"|parent="android:Theme.Black.NoTitleBar"|g' "$f"
-              sed -i '/windowSplashScreenBackground/d' "$f"
-              sed -i '/windowSplashScreenAnimatedIcon/d' "$f"
-              sed -i '/windowSplashScreenAnimationDuration/d' "$f"
-              sed -i '/windowSplashScreenIconBackgroundColor/d' "$f"
-              sed -i '/postSplashScreenTheme/d' "$f"
-            done
+          if grep -r "Theme.SplashScreen" "$RES_DEST" 2>/dev/null; then
+            echo "WARNING: Some references remain"
+          else
+            echo "All Theme.SplashScreen references removed"
           fi
 
       - name: Generate encrypted config
