@@ -20,6 +20,7 @@ class SportsMatchesWidget extends ConsumerStatefulWidget {
 
 class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
   final SportsService _service = SportsService();
+
   List<SportMatch> _matches = [];
   bool _isLoading = true;
   bool _hasError = false;
@@ -36,27 +37,41 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
     super.dispose();
   }
 
-  Future<void> _loadMatches() async {
+  Future<void> _loadMatches({bool force = false}) async {
     setState(() {
       _isLoading = true;
       _hasError = false;
     });
 
     try {
-      final all = await _service.getTodayFootballMatches();
-      final filtered = _service.filterImportant(all);
+      final all = await _service.getTodayFootballMatches(
+        forceRefresh: force,
+      );
 
       if (!mounted) return;
+
+      // ✅ إذا كانت القائمة فارغة بعد النجاح → خطأ (غالبًا شبكة)
+      if (all.isEmpty) {
+        setState(() {
+          _matches = [];
+          _isLoading = false;
+          _hasError = true;   // ← الآن يعمل!
+        });
+        return;
+      }
+
+      final filtered = _service.filterImportant(all);
+
       setState(() {
         _matches = filtered;
         _isLoading = false;
       });
 
-      // ✅ جدولة إشعارات المباريات القادمة
+      // جدولة الإشعارات
       try {
-        final notifService = NotificationService();
-        if (notifService.isEnabled) {
-          await notifService.scheduleMatches(filtered);
+        final notif = NotificationService();
+        if (notif.isEnabled) {
+          await notif.scheduleMatches(filtered);
         }
       } catch (_) {}
     } catch (_) {
@@ -70,13 +85,19 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_isLoading && _matches.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    // ✅ لم نُعد نصمت عند غياب المباريات
+    // نُظهر رسالة "لا مباريات" بدل إخفاء القسم
 
     final liveMatches = _matches.where((m) => m.isLive).toList();
-    final upcomingMatches =
-        _matches.where((m) => m.isUpcoming && m.isSoon).toList();
+
+    // ✅ المباريات القادمة (بدون شرط isSoon الضيّق)
+    final upcomingToday = _matches
+        .where((m) => m.isUpcoming && m.isToday)
+        .toList();
+
+    final upcomingTomorrow = _matches
+        .where((m) => m.isUpcoming && m.isTomorrow)
+        .toList();
 
     return Container(
       margin: const EdgeInsets.fromLTRB(24, 0, 24, 20),
@@ -115,7 +136,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
               ),
               const SizedBox(width: 12),
               const Text(
-                'مباريات اليوم',
+                'مباريات اليوم والغد',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 20,
@@ -133,7 +154,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
                   ),
                 )
               else
-                _RefreshButton(onPressed: _loadMatches),
+                _RefreshButton(onPressed: () => _loadMatches(force: true)),
             ],
           ),
           const SizedBox(height: 16),
@@ -141,9 +162,12 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
             _buildLoading()
           else if (_hasError)
             _buildError()
-          else if (liveMatches.isEmpty && upcomingMatches.isEmpty)
+          else if (liveMatches.isEmpty &&
+              upcomingToday.isEmpty &&
+              upcomingTomorrow.isEmpty)
             _buildNoMatches()
           else ...[
+            // 🔴 مباشر
             if (liveMatches.isNotEmpty) ...[
               _buildSectionTitle(
                 'الآن على الشاشة',
@@ -151,17 +175,29 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
                 const Color(0xFFFF1744),
               ),
               const SizedBox(height: 10),
-              for (final match in liveMatches) _buildMatchCard(match),
+              for (final m in liveMatches) _buildMatchCard(m),
               const SizedBox(height: 16),
             ],
-            if (upcomingMatches.isNotEmpty) ...[
+            // ⏰ قريبًا اليوم
+            if (upcomingToday.isNotEmpty) ...[
               _buildSectionTitle(
-                'قريباً',
+                'اليوم',
                 Icons.schedule_rounded,
                 const Color(0xFFFFB800),
               ),
               const SizedBox(height: 10),
-              for (final match in upcomingMatches) _buildMatchCard(match),
+              for (final m in upcomingToday) _buildMatchCard(m),
+              const SizedBox(height: 16),
+            ],
+            // 📅 غدًا
+            if (upcomingTomorrow.isNotEmpty) ...[
+              _buildSectionTitle(
+                'غدًا',
+                Icons.event_rounded,
+                const Color(0xFF00C8FF),
+              ),
+              const SizedBox(height: 10),
+              for (final m in upcomingTomorrow) _buildMatchCard(m),
             ],
           ],
         ],
@@ -190,9 +226,13 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
     return const Padding(
       padding: EdgeInsets.all(20),
       child: Center(
-        child: Text(
-          'جارٍ تحميل المباريات...',
-          style: TextStyle(color: Colors.white54, fontSize: 13),
+        child: SizedBox(
+          width: 30,
+          height: 30,
+          child: CircularProgressIndicator(
+            color: Color(0xFF4CAF50),
+            strokeWidth: 2.5,
+          ),
         ),
       ),
     );
@@ -203,11 +243,8 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       padding: const EdgeInsets.all(20),
       child: Row(
         children: [
-          const Icon(
-            Icons.error_outline,
-            color: Color(0xFFFF5252),
-            size: 20,
-          ),
+          const Icon(Icons.error_outline,
+              color: Color(0xFFFF5252), size: 20),
           const SizedBox(width: 10),
           const Text(
             'فشل تحميل المباريات',
@@ -215,7 +252,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
           ),
           const Spacer(),
           TextButton(
-            onPressed: _loadMatches,
+            onPressed: () => _loadMatches(force: true),
             child: const Text(
               'إعادة المحاولة',
               style: TextStyle(color: Color(0xFF4CAF50)),
@@ -232,14 +269,10 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       child: Center(
         child: Column(
           children: [
-            Icon(
-              Icons.sports_rounded,
-              color: Colors.white24,
-              size: 40,
-            ),
+            Icon(Icons.sports_rounded, color: Colors.white24, size: 40),
             SizedBox(height: 8),
             Text(
-              'لا توجد مباريات مهمة اليوم',
+              'لا توجد مباريات اليوم أو غدًا',
               style: TextStyle(color: Colors.white54, fontSize: 13),
             ),
           ],
@@ -247,8 +280,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       ),
     );
   }
-  
-  Widget _buildMatchCard(SportMatch match) {
+    Widget _buildMatchCard(SportMatch match) {
     final channels = _findChannels(match);
 
     return Container(
@@ -285,9 +317,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
               const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
+                    horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: match.isLive
                       ? const Color(0xFFFF1744)
@@ -323,11 +353,8 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
           Row(
             children: [
               if (match.league.isNotEmpty) ...[
-                const Icon(
-                  Icons.emoji_events_rounded,
-                  color: Color(0xFFFFB800),
-                  size: 14,
-                ),
+                const Icon(Icons.emoji_events_rounded,
+                    color: Color(0xFFFFB800), size: 14),
                 const SizedBox(width: 4),
                 Flexible(
                   child: Text(
@@ -378,18 +405,14 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
                   .map((ch) => _buildChannelChip(ch))
                   .toList(),
             ),
-          ] else if (match.channel != null &&
-              match.channel!.isNotEmpty) ...[
+          ] else if (match.channel != null && match.channel!.isNotEmpty) ...[
             const SizedBox(height: 12),
             const Divider(color: Color(0xFF2A3350), height: 1),
             const SizedBox(height: 10),
             Row(
               children: [
-                const Icon(
-                  Icons.tv_rounded,
-                  color: Colors.white38,
-                  size: 14,
-                ),
+                const Icon(Icons.tv_rounded,
+                    color: Colors.white38, size: 14),
                 const SizedBox(width: 6),
                 Text(
                   'القناة: ${match.channel}',
@@ -406,68 +429,63 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
     );
   }
 
+  // ==========================================================
+  //  ✅ إيجاد القنوات — مصحّح (لا يشترط category == 'sport')
+  // ==========================================================
   List<Channel> _findChannels(SportMatch match) {
-    final all = ref.read(playlistProvider).allChannels;
-    final searchTerms = <String>[];
-
-    if (match.channel != null && match.channel!.isNotEmpty) {
-      searchTerms.add(match.channel!.toLowerCase());
-    }
-
-    searchTerms.add(match.homeTeam.toLowerCase());
-    searchTerms.add(match.awayTeam.toLowerCase());
-
-    if (match.league.isNotEmpty) {
-      searchTerms.add(match.league.toLowerCase());
-    }
+    // ✅ استخدم filteredChannels (التي مرت عبر _isSportChannel)
+    final all = ref.read(playlistProvider).filteredChannels;
+    if (all.isEmpty) return [];
 
     final result = <Channel>[];
     final seenIds = <String>{};
 
-    for (final channel in all) {
-      if (channel.contentType != 'live') continue;
-      if (channel.category != 'sport') continue;
+    // ✅ 1) إذا كانت القناة معروفة من API
+    if (match.channel != null && match.channel!.isNotEmpty) {
+      final apiCh = match.channel!.toLowerCase();
 
-      final name = channel.name.toLowerCase();
-      final group = channel.group.toLowerCase();
-      final text = '$name $group';
-
-      if (match.channel != null && match.channel!.isNotEmpty) {
-        final apiChannel = match.channel!.toLowerCase();
-
-        if (apiChannel.contains('bein') && name.contains('bein')) {
-          if (seenIds.add(channel.id)) {
-            result.add(channel);
-            if (result.length >= 6) break;
-            continue;
+      // استخرج كلمة مميزة (bein, ssc, ...)
+      for (final keyword in [
+        'bein', 'ssc', 'ad sport', 'dubai', 'alkass', 'ksa',
+      ]) {
+        if (apiCh.contains(keyword)) {
+          for (final c in all) {
+            if (c.name.toLowerCase().contains(keyword)) {
+              if (seenIds.add(c.id)) {
+                result.add(c);
+                if (result.length >= 6) return result;
+              }
+            }
           }
         }
       }
 
-      for (final term in searchTerms) {
-        if (term.length < 3) continue;
-        if (text.contains(term)) {
-          if (seenIds.add(channel.id)) {
-            result.add(channel);
-            if (result.length >= 6) break;
+      // مطابقة مباشرة باسم القناة
+      for (final c in all) {
+        if (c.name.toLowerCase().contains(apiCh) ||
+            apiCh.contains(c.name.toLowerCase())) {
+          if (seenIds.add(c.id)) {
+            result.add(c);
+            if (result.length >= 6) return result;
           }
-          break;
         }
       }
     }
 
-    if (result.isEmpty) {
-      for (final channel in all) {
-        if (channel.contentType != 'live') continue;
-        if (channel.category != 'sport') continue;
+    // ✅ 2) إذا لم نجد قنوات، نستخدم دوري المباراة أو أسماء الفرق
+    final searchTerms = <String>[
+      match.league.toLowerCase(),
+      match.homeTeam.toLowerCase(),
+      match.awayTeam.toLowerCase(),
+    ].where((t) => t.length >= 4).toList();
 
-        final name = channel.name.toLowerCase();
-        if (name.contains('bein') ||
-            name.contains('ssc') ||
-            name.contains('ad sport')) {
-          if (seenIds.add(channel.id)) {
-            result.add(channel);
-            if (result.length >= 4) break;
+    for (final term in searchTerms) {
+      for (final c in all) {
+        final text = '${c.name} ${c.group}'.toLowerCase();
+        if (text.contains(term)) {
+          if (seenIds.add(c.id)) {
+            result.add(c);
+            if (result.length >= 6) return result;
           }
         }
       }
@@ -483,7 +501,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
     );
   }
 }
-
 // ==========================================================
 //  شريحة قناة
 // ==========================================================
@@ -538,7 +555,9 @@ class _ChannelPlayChipState extends State<_ChannelPlayChip> {
             children: [
               Icon(
                 Icons.play_circle_fill_rounded,
-                color: _isFocused ? Colors.white : const Color(0xFF4CAF50),
+                color: _isFocused
+                    ? Colors.white
+                    : const Color(0xFF4CAF50),
                 size: 16,
               ),
               const SizedBox(width: 6),
