@@ -373,3 +373,71 @@ class _MainShellState extends ConsumerState<MainShell> {
       ),
     );
   }
+  
+  // ==========================================================
+  //  المحتوى
+  // ==========================================================
+  Widget _buildContent() {
+    switch (_selectedIndex) {
+      case _idxHome:
+        return const HomeScreen();
+
+      case _idxLive:
+        return LiveTvScreen(
+          playlistUrls: kPlaylistUrls,
+          onChannelTap: _openChannel,
+        );
+
+      case _idxMatches:
+        return _buildMatchesScreen();
+
+      case _idxFavorites:
+        return const FavoritesScreen();
+
+      case _idxPackages:
+        return const PackagesScreen();
+
+      case _idxSettings:
+        return const SettingsScreen();
+
+      default:
+        return const HomeScreen();
+    }
+  }
+
+  Widget _buildMatchesScreen() {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0A0E1A),
+        body: SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                const SizedBox(height: 20),
+                SportsMatchesWidget(
+                  onChannelTap: _openChannel,
+                ),
+                const SizedBox(height: 40),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openChannel(Channel channel) {
+    ref.read(historyProvider.notifier).record(channel);
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlayerScreen(
+          streamUrl: channel.streamUrl,
+          channelName: channel.name,
+          channelLogo: channel.logo,
+        ),
+      ),
+    );
+  }
+}
