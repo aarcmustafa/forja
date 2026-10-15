@@ -92,216 +92,208 @@ class StreamChecker {
       return false;
     }
   }
-
   // ==========================================================
-  //  ✅ checkInitial — الفحص الأولي (مصحح)
-  // ==========================================================
-  /// يفحص كل القنوات المطلوبة دفعة بدفعة، ويستدعي onBatch
-  /// بعد كل دفعة حتى يتمكن المستدعي من تحديث الواجهة تدريجيًا.
-  Future<Map<String, bool>> checkInitial(
-    List<Channel> channels, {
-    int? limit,
-    int batchSize = 20,
-    void Function(int done, int total)? onProgress,
-    void Function(Map<String, bool> batchResults)? onBatch,
-  }) async {
-    final result = <String, bool>{};
+//  الفحص الأولي (مصحح — بدون bug الـ 20 قناة)
+// ==========================================================
+Future<Map<String, bool>> checkInitial(
+  List<Channel> channels, {
+  int? limit,
+  int batchSize = 20,
+  void Function(int done, int total)? onProgress,
+  void Function(Map<String, bool> batchResults)? onBatch,
+}) async {
+  final result = <String, bool>{};
 
-    if (channels.isEmpty) return result;
+  if (channels.isEmpty) return result;
 
-    final toCheck = limit != null && limit > 0 && limit < channels.length
-        ? channels.take(limit).toList()
-        : channels;
-    final total = toCheck.length;
+  final toCheck = limit != null && limit > 0 && limit < channels.length
+      ? channels.take(limit).toList()
+      : channels;
+  final total = toCheck.length;
 
-    for (int i = 0; i < total; i += batchSize) {
-      // ❌ أزلنا الشرط القديم المعطوب:
-      // if (!_isRunning && i > 0) break;
-
-      // ✅ نحترم فقط الإيقاف المؤقت
-      while (_isPaused) {
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
-
-      final batch = toCheck.skip(i).take(batchSize).toList();
-
-      try {
-        final batchResults = await Future.wait(batch.map(checkOne));
-        final batchMap = <String, bool>{};
-        for (int j = 0; j < batch.length; j++) {
-          batchMap[batch[j].id] = batchResults[j];
-          result[batch[j].id] = batchResults[j];
-        }
-        onBatch?.call(batchMap);
-      } catch (_) {
-        final batchMap = <String, bool>{};
-        for (final c in batch) {
-          batchMap[c.id] = false;
-          result[c.id] = false;
-        }
-        onBatch?.call(batchMap);
-      }
-
-      onProgress?.call(
-        (i + batch.length).clamp(0, total),
-        total,
-      );
-
-      // حفظ تدريجي كل 5 دفعات
-      if (i > 0 && (i ~/ batchSize) % 5 == 0) {
-        await _saveBatchResults(result);
-      }
+  for (int i = 0; i < total; i += batchSize) {
+    // نحترم فقط الإيقاف المؤقت
+    while (_isPaused) {
+      await Future.delayed(const Duration(milliseconds: 500));
     }
 
-    await _saveBatchResults(result);
-    return result;
-  }
+    final batch = toCheck.skip(i).take(batchSize).toList();
 
-  // ==========================================================
-  //  ✅ الفحص الخلفي التلقائي
-  // ==========================================================
-  Future<void> startBackgroundCheck(
-    List<Channel> channels, {
-    required void Function(String channelId, bool isWorking) onResult,
-    Map<String, bool>? alreadyChecked,
-  }) async {
-    if (_isRunning) return;
-    _isRunning = true;
-
-    final checkedIds = alreadyChecked?.keys.toSet() ?? <String>{};
-    final toCheck =
-        channels.where((c) => !checkedIds.contains(c.id)).toList();
-
-    if (toCheck.isEmpty) {
-      _isRunning = false;
-      return;
-    }
-
-    for (int i = 0; i < toCheck.length; i += backgroundBatchSize) {
-      while (_isPaused) {
-        await Future.delayed(const Duration(seconds: 2));
-      }
-      if (!_isRunning) break;
-
-      final batch = toCheck.skip(i).take(backgroundBatchSize).toList();
-      final results = await Future.wait(batch.map(checkOne));
-
+    try {
+      final batchResults = await Future.wait(batch.map(checkOne));
       final batchMap = <String, bool>{};
       for (int j = 0; j < batch.length; j++) {
-        onResult(batch[j].id, results[j]);
-        batchMap[batch[j].id] = results[j];
+        batchMap[batch[j].id] = batchResults[j];
+        result[batch[j].id] = batchResults[j];
       }
-      await _saveBatchResults(batchMap);
-
-      if (i + backgroundBatchSize < toCheck.length) {
-        await Future.delayed(backgroundDelay);
-      }
-    }
-
-    _isRunning = false;
-  }
-
-  // ==========================================================
-  //  تحديد قناة/عدة قنوات كـ ميتة أو شغّالة
-  // ==========================================================
-  Future<void> markDead(String channelId) async {
-    await _saveBatchResults({channelId: false});
-  }
-
-  Future<void> markDeadMultiple(List<String> channelIds) async {
-    if (channelIds.isEmpty) return;
-    final map = {for (final id in channelIds) id: false};
-    await _saveBatchResults(map);
-  }
-
-  Future<void> markWorking(String channelId) async {
-    await _saveBatchResults({channelId: true});
-  }
-
-  Future<void> markWorkingMultiple(List<String> channelIds) async {
-    if (channelIds.isEmpty) return;
-    final map = {for (final id in channelIds) id: true};
-    await _saveBatchResults(map);
-  }
-
-  // ==========================================================
-  //  حفظ دفعة نتائج
-  // ==========================================================
-  Future<void> _saveBatchResults(Map<String, bool> results) async {
-    if (results.isEmpty) return;
-    await init();
-    if (_box == null) return;
-
-    try {
-      final raw = _box!.get(_kResults);
-      Map<String, dynamic> map =
-          raw != null ? Map<String, dynamic>.from(raw as Map) : {};
-
-      final now = DateTime.now().millisecondsSinceEpoch;
-      results.forEach((id, isWorking) {
-        map[id] = {'ok': isWorking, 'at': now};
-      });
-
-      if (map.length > maxSavedResults) {
-        final entries = map.entries.toList()
-          ..sort((a, b) {
-            final ta = (a.value['at'] as int?) ?? 0;
-            final tb = (b.value['at'] as int?) ?? 0;
-            return tb.compareTo(ta);
-          });
-        map = Map.fromEntries(entries.take(maxSavedResults));
-      }
-
-      await _box!.put(_kResults, map);
-      await _box!.put(_kTimestamp, now);
-    } catch (_) {}
-  }
-
-  // ==========================================================
-  //  تحميل النتائج
-  // ==========================================================
-  Future<Map<String, bool>> loadResults() async {
-    if (_box == null) await init();
-    if (_box == null) return {};
-
-    try {
-      final raw = _box!.get(_kResults);
-      if (raw == null) return {};
-
-      final map = Map<String, dynamic>.from(raw as Map);
-      final result = <String, bool>{};
-      map.forEach((k, v) {
-        if (v is Map && v['ok'] is bool) {
-          result[k] = v['ok'] as bool;
-        }
-      });
-      return result;
+      onBatch?.call(batchMap);
     } catch (_) {
-      return {};
+      final batchMap = <String, bool>{};
+      for (final c in batch) {
+        batchMap[c.id] = false;
+        result[c.id] = false;
+      }
+      onBatch?.call(batchMap);
+    }
+
+    onProgress?.call(
+      (i + batch.length).clamp(0, total),
+      total,
+    );
+
+    // حفظ تدريجي كل 5 دفعات
+    if (i > 0 && (i ~/ batchSize) % 5 == 0) {
+      await _saveBatchResults(result);
     }
   }
 
-  DateTime? getLastCheckTime() {
-    if (_box == null) return null;
-    final ts = _box!.get(_kTimestamp);
-    if (ts == null) return null;
-    return DateTime.fromMillisecondsSinceEpoch(ts as int);
+  await _saveBatchResults(result);
+  return result;
+}
+
+// ==========================================================
+//  الفحص الخلفي التلقائي
+// ==========================================================
+Future<void> startBackgroundCheck(
+  List<Channel> channels, {
+  required void Function(String channelId, bool isWorking) onResult,
+  Map<String, bool>? alreadyChecked,
+}) async {
+  if (_isRunning) return;
+  _isRunning = true;
+
+  final checkedIds = alreadyChecked?.keys.toSet() ?? <String>{};
+  final toCheck =
+      channels.where((c) => !checkedIds.contains(c.id)).toList();
+
+  if (toCheck.isEmpty) {
+    _isRunning = false;
+    return;
   }
 
-  // ==========================================================
-  //  إحصائيات
-  // ==========================================================
-  Future<int> getWorkingCount() async {
-    final results = await loadResults();
-    return results.values.where((v) => v == true).length;
+  for (int i = 0; i < toCheck.length; i += backgroundBatchSize) {
+    while (_isPaused) {
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    if (!_isRunning) break;
+
+    final batch = toCheck.skip(i).take(backgroundBatchSize).toList();
+    final results = await Future.wait(batch.map(checkOne));
+
+    final batchMap = <String, bool>{};
+    for (int j = 0; j < batch.length; j++) {
+      onResult(batch[j].id, results[j]);
+      batchMap[batch[j].id] = results[j];
+    }
+    await _saveBatchResults(batchMap);
+
+    if (i + backgroundBatchSize < toCheck.length) {
+      await Future.delayed(backgroundDelay);
+    }
   }
 
-  Future<int> getDeadCount() async {
-    final results = await loadResults();
-    return results.values.where((v) => v == false).length;
-  }
-
+  _isRunning = false;
+}
   // ==========================================================
+//  تحديد قناة/عدة قنوات كـ ميتة أو شغّالة
+// ==========================================================
+Future<void> markDead(String channelId) async {
+  await _saveBatchResults({channelId: false});
+}
+
+Future<void> markDeadMultiple(List<String> channelIds) async {
+  if (channelIds.isEmpty) return;
+  final map = {for (final id in channelIds) id: false};
+  await _saveBatchResults(map);
+}
+
+Future<void> markWorking(String channelId) async {
+  await _saveBatchResults({channelId: true});
+}
+
+Future<void> markWorkingMultiple(List<String> channelIds) async {
+  if (channelIds.isEmpty) return;
+  final map = {for (final id in channelIds) id: true};
+  await _saveBatchResults(map);
+}
+
+// ==========================================================
+//  حفظ دفعة نتائج
+// ==========================================================
+Future<void> _saveBatchResults(Map<String, bool> results) async {
+  if (results.isEmpty) return;
+  await init();
+  if (_box == null) return;
+
+  try {
+    final raw = _box!.get(_kResults);
+    Map<String, dynamic> map =
+        raw != null ? Map<String, dynamic>.from(raw as Map) : {};
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    results.forEach((id, isWorking) {
+      map[id] = {'ok': isWorking, 'at': now};
+    });
+
+    if (map.length > maxSavedResults) {
+      final entries = map.entries.toList()
+        ..sort((a, b) {
+          final ta = (a.value['at'] as int?) ?? 0;
+          final tb = (b.value['at'] as int?) ?? 0;
+          return tb.compareTo(ta);
+        });
+      map = Map.fromEntries(entries.take(maxSavedResults));
+    }
+
+    await _box!.put(_kResults, map);
+    await _box!.put(_kTimestamp, now);
+  } catch (_) {}
+}
+
+// ==========================================================
+//  تحميل النتائج
+// ==========================================================
+Future<Map<String, bool>> loadResults() async {
+  if (_box == null) await init();
+  if (_box == null) return {};
+
+  try {
+    final raw = _box!.get(_kResults);
+    if (raw == null) return {};
+
+    final map = Map<String, dynamic>.from(raw as Map);
+    final result = <String, bool>{};
+    map.forEach((k, v) {
+      if (v is Map && v['ok'] is bool) {
+        result[k] = v['ok'] as bool;
+      }
+    });
+    return result;
+  } catch (_) {
+    return {};
+  }
+}
+
+DateTime? getLastCheckTime() {
+  if (_box == null) return null;
+  final ts = _box!.get(_kTimestamp);
+  if (ts == null) return null;
+  return DateTime.fromMillisecondsSinceEpoch(ts as int);
+}
+
+// ==========================================================
+//  إحصائيات
+// ==========================================================
+Future<int> getWorkingCount() async {
+  final results = await loadResults();
+  return results.values.where((v) => v == true).length;
+}
+
+Future<int> getDeadCount() async {
+  final results = await loadResults();
+  return results.values.where((v) => v == false).length;
+}
+    // ==========================================================
   //  التحكم
   // ==========================================================
   void pause() => _isPaused = true;
@@ -315,7 +307,7 @@ class StreamChecker {
   bool get isPaused => _isPaused;
 
   // ==========================================================
-  //  صيانة
+  //  صيانة الكاش
   // ==========================================================
   Future<void> maintainCache() async {
     if (_box == null) await init();
@@ -360,6 +352,9 @@ class StreamChecker {
     }
   }
 
+  // ==========================================================
+  //  مسح النتائج
+  // ==========================================================
   Future<void> clear() async {
     if (_box == null) await init();
     if (_box == null) return;
@@ -371,6 +366,9 @@ class StreamChecker {
     await clear();
   }
 
+  // ==========================================================
+  //  تنظيف الموارد
+  // ==========================================================
   void dispose() {
     stop();
     _dio.close();
