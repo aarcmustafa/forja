@@ -16,13 +16,20 @@ import 'data/providers/favorites_provider.dart';
 import 'data/providers/history_provider.dart';
 import 'data/config/app_config.dart';
 import 'data/local/remote_config.dart';
+import 'data/services/notification_service.dart';
 
 // ==========================================================
 //  نقطة انطلاق التطبيق
 // ==========================================================
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+
+  // ✅ تهيئة خدمة الإشعارات
+  try {
+    await NotificationService().init();
+  } catch (_) {}
+
   runApp(
     const ProviderScope(
       child: EstetnFarjaTvApp(),
@@ -107,6 +114,12 @@ class _MainShellState extends ConsumerState<MainShell> {
       await storage.maintain();
     } catch (_) {}
 
+    // تطبيق حالة الإشعارات
+    try {
+      final settings = ref.read(settingsProvider);
+      NotificationService().setEnabled(settings.matchNotifications);
+    } catch (_) {}
+
     try {
       final remote = RemoteConfig();
       final cached = await remote.loadCached();
@@ -141,9 +154,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
-  // ==========================================================
-  //  الشريط الجانبي
-  // ==========================================================
   Widget _buildSidebar() {
     final favCount = ref.watch(favoritesProvider).length;
 
@@ -374,9 +384,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
   
-  // ==========================================================
-  //  المحتوى
-  // ==========================================================
   Widget _buildContent() {
     switch (_selectedIndex) {
       case _idxHome:
