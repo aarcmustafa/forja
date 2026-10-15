@@ -11,7 +11,11 @@ class LocalStorage {
   static const String _kTimestamp = 'saved_at';
   static const String _kVersion = 'schema_version';
   static const String _kInitialCheckDone = 'initial_check_done';
+  static const String _kInitialCheckAt = 'initial_check_at';  // ✅ جديد
   static const int _currentVersion = 2;
+
+  /// ✅ إعادة الفحص الأولي إذا مضى أكثر من 7 أيام
+  static const Duration initialCheckValidity = Duration(days: 7);
 
   static const int maxSavedChannels = 100000;
 
@@ -28,6 +32,7 @@ class LocalStorage {
       await _box.delete(_kChannelsLegacy);
       await _box.put(_kVersion, _currentVersion);
       await _box.put(_kInitialCheckDone, false);
+      await _box.delete(_kInitialCheckAt);
     }
 
     _initialized = true;
@@ -38,20 +43,44 @@ class LocalStorage {
   // ==========================================================
   //  علم الفحص الأولي
   // ==========================================================
+  /// ✅ يعيد true إذا كان الفحص الأولي قد تم مؤخرًا (< 7 أيام)
   bool hasInitialCheckDone() {
     if (!_initialized) return false;
-    return (_box.get(_kInitialCheckDone, defaultValue: false) as bool?) ??
-        false;
+
+    final done =
+        (_box.get(_kInitialCheckDone, defaultValue: false) as bool?) ?? false;
+    if (!done) return false;
+
+    final ts = _box.get(_kInitialCheckAt);
+    if (ts is! int) return false;
+
+    final checkedAt = DateTime.fromMillisecondsSinceEpoch(ts);
+    final elapsed = DateTime.now().difference(checkedAt);
+
+    // إذا مضى أكثر من 7 أيام → الفحص قديم، أعد الفحص
+    return elapsed < initialCheckValidity;
   }
 
   Future<void> markInitialCheckDone() async {
     if (!_initialized) await init();
     await _box.put(_kInitialCheckDone, true);
+    await _box.put(
+      _kInitialCheckAt,
+      DateTime.now().millisecondsSinceEpoch,
+    );
   }
 
   Future<void> resetInitialCheck() async {
     if (!_initialized) await init();
     await _box.put(_kInitialCheckDone, false);
+    await _box.delete(_kInitialCheckAt);
+  }
+
+  DateTime? getInitialCheckTime() {
+    if (!_initialized) return null;
+    final ts = _box.get(_kInitialCheckAt);
+    if (ts is! int) return null;
+    return DateTime.fromMillisecondsSinceEpoch(ts);
   }
 
   // ==========================================================
@@ -128,7 +157,9 @@ class LocalStorage {
       return null;
     }
   }
-
+    // ==========================================================
+  //  بيانات وصفية
+  // ==========================================================
   bool hasSavedData() {
     if (!_initialized) return false;
     return _box.containsKey(_kChannelsJson) ||
@@ -142,17 +173,39 @@ class LocalStorage {
     return DateTime.fromMillisecondsSinceEpoch(ts as int);
   }
 
+  /// ✅ عدّ القنوات المحفوظة (سريع — لا يفك الترميز)
   int getSavedCount() {
     if (!_initialized) return 0;
     try {
       final raw = _box.get(_kChannelsJson);
       if (raw is! String || raw.isEmpty) return 0;
-      return '"id"'.allMatches(raw).length;
+
+      // عدّ المفتاح "id" — كل قناة تحتوي على id واحد
+      int count = 0;
+      int idx = 0;
+      const needle = '"id":';
+      while (true) {
+        final found = raw.indexOf(needle, idx);
+        if (found == -1) break;
+        count++;
+        idx = found + needle.length;
+      }
+      return count;
     } catch (_) {
       return 0;
     }
   }
 
+  /// ✅ هل الكاش حديث؟ (آخر حفظ أقل من مدة معينة)
+  bool isCacheFresh({Duration maxAge = const Duration(hours: 12)}) {
+    final last = getLastSaveTime();
+    if (last == null) return false;
+    return DateTime.now().difference(last) < maxAge;
+  }
+
+  // ==========================================================
+  //  مسح / إعادة تعيين
+  // ==========================================================
   Future<void> clear() async {
     if (!_initialized) await init();
     await _box.clear();
@@ -160,6 +213,13 @@ class LocalStorage {
     await _box.put(_kInitialCheckDone, false);
   }
 
+  Future<void> reset() async {
+    await clear();
+  }
+
+  // ==========================================================
+  //  معلومات للتصحيح (Debug)
+  // ==========================================================
   Map<String, dynamic> getInfo() {
     return {
       'ready': _initialized,
@@ -167,9 +227,13 @@ class LocalStorage {
       'count': getSavedCount(),
       'lastSave': getLastSaveTime()?.toIso8601String(),
       'initialCheckDone': hasInitialCheckDone(),
+      'initialCheckAt': getInitialCheckTime()?.toIso8601String(),
     };
   }
 
+  // ==========================================================
+  //  صيانة دورية
+  // ==========================================================
   Future<void> maintain() async {
     if (!_initialized) await init();
     try {
@@ -178,9 +242,5 @@ class LocalStorage {
         await clear();
       }
     } catch (_) {}
-  }
-
-  Future<void> reset() async {
-    await clear();
   }
 }
