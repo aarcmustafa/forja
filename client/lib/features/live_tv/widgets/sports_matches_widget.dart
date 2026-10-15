@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/channel.dart';
 import '../../../data/providers/playlist_provider.dart';
 import '../../../data/services/sports_service.dart';
+import '../../../data/services/notification_service.dart';
 
 /// صندوق مباريات الرياضة — يظهر في قسم "رياضة"
 class SportsMatchesWidget extends ConsumerStatefulWidget {
@@ -49,6 +51,14 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
         _matches = filtered;
         _isLoading = false;
       });
+
+      // ✅ جدولة إشعارات المباريات القادمة
+      try {
+        final notifService = NotificationService();
+        if (notifService.isEnabled) {
+          await notifService.scheduleMatches(filtered);
+        }
+      } catch (_) {}
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -60,7 +70,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // إذا لا مباريات ولا تحميل → لا نعرض شيئاً
     if (!_isLoading && _matches.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -90,7 +99,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ============ العنوان ============
           Row(
             children: [
               Container(
@@ -128,10 +136,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
                 _RefreshButton(onPressed: _loadMatches),
             ],
           ),
-
           const SizedBox(height: 16),
-
-          // ============ المحتوى ============
           if (_isLoading && _matches.isEmpty)
             _buildLoading()
           else if (_hasError)
@@ -144,7 +149,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
                 'الآن على الشاشة',
                 Icons.fiber_manual_record,
                 const Color(0xFFFF1744),
-                pulse: true,
               ),
               const SizedBox(height: 10),
               for (final match in liveMatches) _buildMatchCard(match),
@@ -164,13 +168,8 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       ),
     );
   }
-  
-  Widget _buildSectionTitle(
-    String title,
-    IconData icon,
-    Color color, {
-    bool pulse = false,
-  }) {
+
+  Widget _buildSectionTitle(String title, IconData icon, Color color) {
     return Row(
       children: [
         Icon(icon, color: color, size: 16),
@@ -248,10 +247,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       ),
     );
   }
-
-  // ==========================================================
-  //  بطاقة المباراة
-  // ==========================================================
+  
   Widget _buildMatchCard(SportMatch match) {
     final channels = _findChannels(match);
 
@@ -271,10 +267,8 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ============ المباراة ============
           Row(
             children: [
-              // الفريق الأول
               Expanded(
                 child: Text(
                   match.homeTeam,
@@ -289,8 +283,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
                 ),
               ),
               const SizedBox(width: 8),
-
-              // النتيجة / VS
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -312,8 +304,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
                 ),
               ),
               const SizedBox(width: 8),
-
-              // الفريق الثاني
               Expanded(
                 child: Text(
                   match.awayTeam,
@@ -329,10 +319,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
               ),
             ],
           ),
-
           const SizedBox(height: 10),
-
-          // ============ معلومات ============
           Row(
             children: [
               if (match.league.isNotEmpty) ...[
@@ -366,7 +353,9 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
               ),
               const SizedBox(width: 4),
               Text(
-                match.isLive ? 'مباشر' : '${match.formattedTime} • ${match.timeUntilStart}',
+                match.isLive
+                    ? 'مباشر'
+                    : '${match.formattedTime} • ${match.timeUntilStart}',
                 style: TextStyle(
                   color: match.isLive
                       ? const Color(0xFFFF1744)
@@ -377,8 +366,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
               ),
             ],
           ),
-
-          // ============ القنوات الناقلة ============
           if (channels.isNotEmpty) ...[
             const SizedBox(height: 12),
             const Divider(color: Color(0xFF2A3350), height: 1),
@@ -419,24 +406,17 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
     );
   }
 
-  // ==========================================================
-  //  البحث عن القنوات الناقلة في قائمة القنوات
-  // ==========================================================
   List<Channel> _findChannels(SportMatch match) {
     final all = ref.read(playlistProvider).allChannels;
-
-    // إذا كان لدى المباراة قناة محددة → ابحث عنها
     final searchTerms = <String>[];
 
     if (match.channel != null && match.channel!.isNotEmpty) {
       searchTerms.add(match.channel!.toLowerCase());
     }
 
-    // إضافة الفرق للبحث
     searchTerms.add(match.homeTeam.toLowerCase());
     searchTerms.add(match.awayTeam.toLowerCase());
 
-    // إضافة اسم الدوري
     if (match.league.isNotEmpty) {
       searchTerms.add(match.league.toLowerCase());
     }
@@ -452,11 +432,9 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       final group = channel.group.toLowerCase();
       final text = '$name $group';
 
-      // مطابقة اسم القناة من API
       if (match.channel != null && match.channel!.isNotEmpty) {
         final apiChannel = match.channel!.toLowerCase();
 
-        // البحث عن beIN Sports مثلاً
         if (apiChannel.contains('bein') && name.contains('bein')) {
           if (seenIds.add(channel.id)) {
             result.add(channel);
@@ -466,7 +444,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
         }
       }
 
-      // مطابقة عامة مع الفرق/الدوري
       for (final term in searchTerms) {
         if (term.length < 3) continue;
         if (text.contains(term)) {
@@ -479,7 +456,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       }
     }
 
-    // إذا لم نجد → اعرض أول 4 قنوات رياضية (beIN/Arabsat)
     if (result.isEmpty) {
       for (final channel in all) {
         if (channel.contentType != 'live') continue;
@@ -500,9 +476,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
     return result;
   }
 
-  // ==========================================================
-  //  شريحة قناة قابلة للتشغيل
-  // ==========================================================
   Widget _buildChannelChip(Channel channel) {
     return _ChannelPlayChip(
       channel: channel,
@@ -512,7 +485,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
 }
 
 // ==========================================================
-//  شريحة قناة قابلة للتركيز
+//  شريحة قناة
 // ==========================================================
 class _ChannelPlayChip extends StatefulWidget {
   final Channel channel;
@@ -559,14 +532,6 @@ class _ChannelPlayChipState extends State<_ChannelPlayChip> {
                   : const Color(0xFF4CAF50).withOpacity(0.4),
               width: _isFocused ? 2 : 1,
             ),
-            boxShadow: _isFocused
-                ? [
-                    BoxShadow(
-                      color: const Color(0xFF4CAF50).withOpacity(0.5),
-                      blurRadius: 12,
-                    ),
-                  ]
-                : [],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -584,7 +549,9 @@ class _ChannelPlayChipState extends State<_ChannelPlayChip> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: _isFocused ? Colors.white : const Color(0xFF4CAF50),
+                    color: _isFocused
+                        ? Colors.white
+                        : const Color(0xFF4CAF50),
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
                   ),
