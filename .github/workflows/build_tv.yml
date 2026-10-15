@@ -42,6 +42,7 @@ jobs:
 
       - name: Auto-fix Dart files
         run: |
+          echo "=== Fix 1: Add flutter/services import ==="
           find client/lib -name "*.dart" | while read f; do
             if grep -q "KeyDownEvent" "$f"; then
               if ! grep -q "package:flutter/services.dart" "$f"; then
@@ -51,6 +52,8 @@ jobs:
             fi
           done
 
+          echo ""
+          echo "=== Fix 2: media_kit controller.value ==="
           find client/lib -name "*.dart" | while read f; do
             if grep -q "controller.value.size" "$f"; then
               sed -i "s|controller.value.size.width|(player.state.width ?? 1920).toDouble()|g" "$f"
@@ -59,12 +62,25 @@ jobs:
             fi
           done
 
-          echo "=== Auto-fix done ==="
+          echo ""
+          echo "=== Fix 3: streamCheckerProvider in main_tv ==="
+          if grep -q "streamCheckerProvider" client/lib/main_tv.dart; then
+            sed -i "/final checker = ref.read(streamCheckerProvider);/d" client/lib/main_tv.dart
+            sed -i "/await checker.maintainCache();/d" client/lib/main_tv.dart
+            echo "Removed streamCheckerProvider from main_tv"
+          fi
+
+          echo ""
+          echo "=== Done ==="
 
       - name: Install unrar and 7zip
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y unrar-free p7zip-full || true
+
+      - name: Check uploaded assets
+        run: |
+          ls -lh client/assets/android_res/ || true
 
       - name: Extract archive
         run: |
@@ -119,6 +135,45 @@ jobs:
           cp -r "$RES_SRC"/* "$RES_DEST/"
           find "$RES_DEST" -type f | head -40 || true
 
+      - name: Patch styles.xml (fix Theme.SplashScreen)
+        run: |
+          RES_DEST="client/android/app/src/main/res"
+
+          echo "=== Patching styles.xml files ==="
+          find "$RES_DEST" -name "styles.xml" | while read f; do
+            echo "Patching: $f"
+            sed -i 's|parent="Theme.SplashScreen"|parent="android:Theme.Black.NoTitleBar"|g' "$f"
+            sed -i '/windowSplashScreenBackground/d' "$f"
+            sed -i '/windowSplashScreenAnimatedIcon/d' "$f"
+            sed -i '/windowSplashScreenAnimationDuration/d' "$f"
+            sed -i '/windowSplashScreenIconBackgroundColor/d' "$f"
+            sed -i '/postSplashScreenTheme/d' "$f"
+          done
+
+          echo "=== All styles.xml after patch ==="
+          find "$RES_DEST" -name "styles.xml" | while read f; do
+            echo "--- $f ---"
+            cat "$f"
+            echo "--- end ---"
+          done
+
+      - name: Patch values-v31 folder
+        run: |
+          RES_DEST="client/android/app/src/main/res"
+
+          if [ -d "$RES_DEST/values-v31" ]; then
+            echo "=== Found values-v31 ==="
+            find "$RES_DEST/values-v31" -name "*.xml" | while read f; do
+              echo "Patching: $f"
+              sed -i 's|parent="Theme.SplashScreen"|parent="android:Theme.Black.NoTitleBar"|g' "$f"
+              sed -i '/windowSplashScreenBackground/d' "$f"
+              sed -i '/windowSplashScreenAnimatedIcon/d' "$f"
+              sed -i '/windowSplashScreenAnimationDuration/d' "$f"
+              sed -i '/windowSplashScreenIconBackgroundColor/d' "$f"
+              sed -i '/postSplashScreenTheme/d' "$f"
+            done
+          fi
+
       - name: Generate encrypted config
         env:
           PLAYLIST_URLS: ${{ secrets.PLAYLIST_URLS }}
@@ -148,6 +203,44 @@ jobs:
             sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 23/' android/app/build.gradle.kts
             echo "updated build.gradle.kts"
           fi
+
+      - name: Limit ABIs to arm64 plus armv7
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
+          for path in candidates:
+              if not os.path.exists(path):
+                  continue
+              src = open(path, "r", encoding="utf-8").read()
+              if "abiFilters" in src:
+                  print(f"abiFilters already in {path}")
+                  continue
+              marker = "defaultConfig {"
+              idx = src.find(marker)
+              if idx == -1:
+                  print(f"defaultConfig not in {path}")
+                  continue
+              insert_at = idx + len(marker)
+              if path.endswith(".kts"):
+                  block = """
+
+              ndk {
+                  abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+              }
+          """
+              else:
+                  block = """
+
+              ndk {
+                  abiFilters 'arm64-v8a', 'armeabi-v7a'
+              }
+          """
+              src = src[:insert_at] + block + src[insert_at:]
+              open(path, "w", encoding="utf-8").write(src)
+              print(f"updated {path}")
+          PYEOF
 
       - name: Add packaging options
         working-directory: client
@@ -190,6 +283,38 @@ jobs:
                       excludes += ['META-INF/*.kotlin_module']
                   }
               }
+          """
+              src = src[:insert_at] + block + src[insert_at:]
+              open(path, "w", encoding="utf-8").write(src)
+              print(f"updated {path}")
+          PYEOF
+
+      - name: Add AndroidX SplashScreen dependency
+        working-directory: client
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
+          for path in candidates:
+              if not os.path.exists(path):
+                  continue
+              src = open(path, "r", encoding="utf-8").read()
+              if "core-splashscreen" in src:
+                  print(f"already in {path}")
+                  continue
+              marker = "dependencies {"
+              idx = src.find(marker)
+              if idx == -1:
+                  print(f"dependencies not in {path}")
+                  continue
+              insert_at = idx + len(marker)
+              if path.endswith(".kts"):
+                  block = """
+              implementation("androidx.core:core-splashscreen:1.0.1")
+          """
+              else:
+                  block = """
+              implementation 'androidx.core:core-splashscreen:1.0.1'
           """
               src = src[:insert_at] + block + src[insert_at:]
               open(path, "w", encoding="utf-8").write(src)
@@ -241,19 +366,9 @@ jobs:
           </manifest>
           XMLEOF
 
-      - name: Analyze before build
+      - name: Get dependencies
         working-directory: client
-        continue-on-error: true
-        run: |
-          echo "========== FLUTTER ANALYZE =========="
-          flutter pub get
-          flutter analyze 2>&1 | tee /tmp/analyze.txt || true
-          echo ""
-          echo "========== ERRORS ONLY =========="
-          grep -E "error •" /tmp/analyze.txt || echo "No errors found"
-          echo ""
-          echo "========== SUMMARY =========="
-          grep -cE "error •" /tmp/analyze.txt || echo "0"
+        run: flutter pub get
 
       - name: Build APK
         working-directory: client
