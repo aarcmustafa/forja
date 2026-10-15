@@ -105,7 +105,7 @@ class _MainShellState extends ConsumerState<MainShell> {
   }
 
   // ==========================================================
-  //  ✅ التحميل الجديد (نفس منطق Mobile لكن مع maintainCache)
+  //  التحميل: صيانة الكاش + SecureConfig + RemoteConfig
   // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
     // 1) صيانة الكاش
@@ -143,7 +143,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       }
     }
 
-    // 5) تحديث الروابط من RemoteConfig
+    // 5) تحديث من RemoteConfig
     try {
       final remote = RemoteConfig();
       final remoteUrls = await remote.fetchRemote();
@@ -445,6 +445,9 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
+  // ==========================================================
+  //  ✅ تمرير extras إلى المشغل (Cookies + Headers)
+  // ==========================================================
   void _openChannel(Channel channel) {
     ref.read(historyProvider.notifier).record(channel);
     Navigator.push(
@@ -454,6 +457,7 @@ class _MainShellState extends ConsumerState<MainShell> {
           streamUrl: channel.streamUrl,
           channelName: channel.name,
           channelLogo: channel.logo,
+          extras: channel.extras,  // ✅ جديد
         ),
       ),
     );
