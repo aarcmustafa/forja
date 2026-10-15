@@ -11,10 +11,10 @@ class LocalStorage {
   static const String _kTimestamp = 'saved_at';
   static const String _kVersion = 'schema_version';
   static const String _kInitialCheckDone = 'initial_check_done';
-  static const String _kInitialCheckAt = 'initial_check_at';  // ✅ جديد
+  static const String _kInitialCheckAt = 'initial_check_at';
   static const int _currentVersion = 2;
 
-  /// ✅ إعادة الفحص الأولي إذا مضى أكثر من 7 أيام
+  /// إعادة الفحص بعد 7 أيام
   static const Duration initialCheckValidity = Duration(days: 7);
 
   static const int maxSavedChannels = 100000;
@@ -43,7 +43,6 @@ class LocalStorage {
   // ==========================================================
   //  علم الفحص الأولي
   // ==========================================================
-  /// ✅ يعيد true إذا كان الفحص الأولي قد تم مؤخرًا (< 7 أيام)
   bool hasInitialCheckDone() {
     if (!_initialized) return false;
 
@@ -55,10 +54,7 @@ class LocalStorage {
     if (ts is! int) return false;
 
     final checkedAt = DateTime.fromMillisecondsSinceEpoch(ts);
-    final elapsed = DateTime.now().difference(checkedAt);
-
-    // إذا مضى أكثر من 7 أيام → الفحص قديم، أعد الفحص
-    return elapsed < initialCheckValidity;
+    return DateTime.now().difference(checkedAt) < initialCheckValidity;
   }
 
   Future<void> markInitialCheckDone() async {
@@ -104,12 +100,8 @@ class LocalStorage {
     return channels;
   }
 
-  // ==========================================================
-  //  حفظ
-  // ==========================================================
   Future<void> saveChannels(List<Channel> channels) async {
     if (!_initialized) await init();
-
     try {
       final jsonStr = await compute(_encodeChannels, channels);
       await _box.put(_kChannelsJson, jsonStr);
@@ -117,19 +109,13 @@ class LocalStorage {
     } catch (_) {}
   }
 
-  // ==========================================================
-  //  قراءة
-  // ==========================================================
   Future<List<Channel>?> loadChannels({bool checkValidity = false}) async {
     if (!_initialized) await init();
-
     try {
       final jsonStr = _box.get(_kChannelsJson);
-
       if (jsonStr == null || jsonStr is! String || jsonStr.isEmpty) {
         return _tryLoadLegacy();
       }
-
       final channels = await compute(_decodeChannels, jsonStr);
       return channels.isEmpty ? null : channels;
     } catch (_) {
@@ -149,7 +135,6 @@ class LocalStorage {
           channels.add(Channel.fromJson(map));
         } catch (_) {}
       }
-
       if (channels.isEmpty) return null;
       _box.delete(_kChannelsLegacy);
       return channels;
@@ -157,9 +142,7 @@ class LocalStorage {
       return null;
     }
   }
-    // ==========================================================
-  //  بيانات وصفية
-  // ==========================================================
+
   bool hasSavedData() {
     if (!_initialized) return false;
     return _box.containsKey(_kChannelsJson) ||
@@ -173,14 +156,12 @@ class LocalStorage {
     return DateTime.fromMillisecondsSinceEpoch(ts as int);
   }
 
-  /// ✅ عدّ القنوات المحفوظة (سريع — لا يفك الترميز)
   int getSavedCount() {
     if (!_initialized) return 0;
     try {
       final raw = _box.get(_kChannelsJson);
       if (raw is! String || raw.isEmpty) return 0;
 
-      // عدّ المفتاح "id" — كل قناة تحتوي على id واحد
       int count = 0;
       int idx = 0;
       const needle = '"id":';
@@ -196,16 +177,12 @@ class LocalStorage {
     }
   }
 
-  /// ✅ هل الكاش حديث؟ (آخر حفظ أقل من مدة معينة)
   bool isCacheFresh({Duration maxAge = const Duration(hours: 12)}) {
     final last = getLastSaveTime();
     if (last == null) return false;
     return DateTime.now().difference(last) < maxAge;
   }
 
-  // ==========================================================
-  //  مسح / إعادة تعيين
-  // ==========================================================
   Future<void> clear() async {
     if (!_initialized) await init();
     await _box.clear();
@@ -217,9 +194,6 @@ class LocalStorage {
     await clear();
   }
 
-  // ==========================================================
-  //  معلومات للتصحيح (Debug)
-  // ==========================================================
   Map<String, dynamic> getInfo() {
     return {
       'ready': _initialized,
@@ -231,9 +205,6 @@ class LocalStorage {
     };
   }
 
-  // ==========================================================
-  //  صيانة دورية
-  // ==========================================================
   Future<void> maintain() async {
     if (!_initialized) await init();
     try {
