@@ -20,9 +20,10 @@ dependencies:
   hive_flutter: ^1.1.0
   path_provider: ^2.1.4
   flutter_native_splash: ^2.4.1
-  # ✅ إشعارات المباريات
   flutter_local_notifications: ^17.2.3
   timezone: ^0.9.4
+  # ✅ جديد: مراقبة الشبكة
+  connectivity_plus: ^6.0.5
 
 dev_dependencies:
   flutter_test:
