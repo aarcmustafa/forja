@@ -134,7 +134,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void pauseBackgroundCheck() => _checker.pause();
   void resumeBackgroundCheck() => _checker.resume();
   // ==========================================================
-//  التحميل الرئيسي (تحميل متدرج + فحص أولي)
+//  التحميل الرئيسي (متدرج + فحص أولي)
 // ==========================================================
 Future<void> loadPlaylists(
   List<String> urls, {
@@ -153,7 +153,7 @@ Future<void> loadPlaylists(
 
   final saved = await _checker.loadResults();
 
-  // 1) محاولة التحميل من الكاش أولاً
+  // 1) الكاش
   if (!forceRefresh) {
     final cached = await _storage.loadChannels();
     if (cached != null && cached.isNotEmpty) {
@@ -169,7 +169,7 @@ Future<void> loadPlaylists(
     }
   }
 
-  // 2) تحميل من الشبكة مع عرض متدرج
+  // 2) الشبكة
   state = state.copyWith(isLoading: true, clearError: true);
 
   final channels = await _fetchAllStreaming(
@@ -200,7 +200,7 @@ Future<void> loadPlaylists(
 }
 
 // ==========================================================
-//  التحميل المتدرج (Stream من Futures)
+//  التحميل المتدرج
 // ==========================================================
 Future<List<Channel>?> _fetchAllStreaming(
   List<String> urls, {
@@ -233,7 +233,6 @@ Future<List<Channel>?> _fetchAllStreaming(
 
     if (sportOnly.isEmpty) continue;
 
-    // أول دفعة: اعرض فوراً (بحد أقصى 300)
     if (!firstDelivered) {
       firstDelivered = true;
       final initial = sportOnly.length > firstBatchTarget
@@ -354,7 +353,7 @@ Future<void> _runInitialCheckIfNeeded(Map<String, bool> saved) async {
 }
 
 // ==========================================================
-//  الفحص الخلفي للقنوات الجديدة
+//  الفحص الخلفي
 // ==========================================================
 void _startBackgroundCheckIfNeeded() {
   if (_backgroundCheckStarted) return;
@@ -397,7 +396,7 @@ Future<void> _runBackgroundCheck() async {
 }
 
 // ==========================================================
-//  وضع علامة "ميتة" على قناة
+//  markDeadByUrl
 // ==========================================================
 Future<void> markDeadByUrl(String streamUrl) async {
   try {
@@ -420,8 +419,9 @@ Future<void> markDeadByUrl(String streamUrl) async {
     _applyFilters();
   } catch (_) {}
 }
-  // ==========================================================
-//  البناء والفلترة
+
+// ==========================================================
+//  _setChannels
 // ==========================================================
 void _setChannels(
   List<Channel> channels, {
@@ -435,8 +435,7 @@ void _setChannels(
   );
   _applyFilters();
 }
-
-// ==========================================================
+  // ==========================================================
 //  الترتيب (beIN أولاً، VOD آخراً)
 // ==========================================================
 List<Channel> _sortChannels(List<Channel> channels) {
@@ -460,7 +459,7 @@ int _sortPriority(Channel c) {
     return 9500;
   }
 
-  // 2) beIN Sports (غير VOD) — أول شيء
+  // 2) beIN Sports
   final isBein = text.contains('bein') ||
       text.contains('بين سبورت') ||
       text.contains('بين سبور') ||
@@ -469,7 +468,6 @@ int _sortPriority(Channel c) {
   if (isBein) {
     final match = RegExp(r'(\d{1,3})').firstMatch(name);
     final num = int.tryParse(match?.group(1) ?? '0') ?? 0;
-
     if (name.contains('max') || name.contains('ماكس')) {
       return 1100 + num;
     }
@@ -479,7 +477,7 @@ int _sortPriority(Channel c) {
     return 1000 + num;
   }
 
-  // 3) الباقات الرياضية الأخرى
+  // 3) باقات أخرى
   if (text.contains('ssc')) return 2000;
   if (text.contains('ad sport') ||
       text.contains('abu dhabi sport') ||
@@ -543,17 +541,14 @@ void search(String query) {
 void _applyFilters() {
   List<Channel> filtered = List.from(state.allChannels);
 
-  // 1) الرياضة فقط
   filtered = filtered.where(_isSportChannel).toList();
 
-  // 2) فلتر البالغين
   if (_filterAdult) {
     filtered = filtered
         .where((c) => !isAdultContent(c.name, c.group))
         .toList();
   }
 
-  // 3) إخفاء الميتة
   if (state.workingStatus.isNotEmpty) {
     filtered = filtered.where((c) {
       final status = state.workingStatus[c.id];
@@ -561,7 +556,6 @@ void _applyFilters() {
     }).toList();
   }
 
-  // 4) الباقة الفرعية
   if (state.selectedSubCategorySlug != null) {
     final slug = state.selectedSubCategorySlug!.toLowerCase();
     final selectedCat = state.categories.firstWhere(
@@ -585,7 +579,6 @@ void _applyFilters() {
     }).toList();
   }
 
-  // 5) البحث
   if (state.searchQuery.trim().isNotEmpty) {
     final q = state.searchQuery.trim().toLowerCase();
     filtered = filtered
@@ -595,7 +588,6 @@ void _applyFilters() {
         .toList();
   }
 
-  // 6) الترتيب
   filtered = _sortChannels(filtered);
 
   state = state.copyWith(filteredChannels: filtered);
