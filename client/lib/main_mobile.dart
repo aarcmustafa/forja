@@ -11,18 +11,12 @@ import 'features/player/player_screen.dart';
 import 'features/search/unified_search_screen.dart';
 import 'data/models/channel.dart';
 import 'data/providers/playlist_provider.dart';
-import 'data/providers/favorites_provider.dart';
 import 'data/providers/history_provider.dart';
-import 'data/local/secure_config.dart';
+import 'data/config/app_config.dart';
 import 'data/local/remote_config.dart';
 
 // ==========================================================
-//  روابط M3U
-// ==========================================================
-List<String> kPlaylistUrls = SecureConfig.urls;
-
-// ==========================================================
-//  نقطة الانطلاق
+//  نقطة انطلاق التطبيق
 // ==========================================================
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,7 +52,7 @@ class EstetnFarjaMobileApp extends StatelessWidget {
 }
 
 // ==========================================================
-//  الشاشة الرئيسية للجوال (Bottom Navigation)
+//  الشاشة الرئيسية للهاتف
 // ==========================================================
 class MobileShell extends ConsumerStatefulWidget {
   const MobileShell({super.key});
@@ -69,12 +63,6 @@ class MobileShell extends ConsumerStatefulWidget {
 
 class _MobileShellState extends ConsumerState<MobileShell> {
   int _selectedIndex = 0;
-
-  static const int _idxHome = 0;
-  static const int _idxLive = 1;
-  static const int _idxMatches = 2;
-  static const int _idxFavorites = 3;
-  static const int _idxSettings = 4;
 
   final List<String> _titles = const [
     'الرئيسية',
@@ -102,13 +90,6 @@ class _MobileShellState extends ConsumerState<MobileShell> {
 
   Future<void> _loadPlaylistsIfNeeded() async {
     try {
-      final repo = ref.read(m3uRepositoryProvider);
-      await repo.maintainCache();
-      final storage = ref.read(localStorageProvider);
-      await storage.maintain();
-    } catch (_) {}
-
-    try {
       final remote = RemoteConfig();
       final cached = await remote.loadCached();
       if (cached.isNotEmpty) {
@@ -132,110 +113,100 @@ class _MobileShellState extends ConsumerState<MobileShell> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: const Color(0xFF141A2E),
-          elevation: 0,
-          title: Row(
-            children: [
-              const Icon(
-                Icons.sports_soccer_rounded,
-                color: Color(0xFF00C8FF),
-                size: 26,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _titles[_selectedIndex],
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.search, color: Colors.white70),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const UnifiedSearchScreen(),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
+        backgroundColor: const Color(0xFF0A0E1A),
         body: _buildContent(),
-        bottomNavigationBar: Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF141A2E),
-            border: Border(
-              top: BorderSide(color: Color(0xFF2A3350), width: 1),
-            ),
-          ),
-          child: BottomNavigationBar(
-            currentIndex: _selectedIndex,
-            onTap: (i) => setState(() => _selectedIndex = i),
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            type: BottomNavigationBarType.fixed,
-            selectedItemColor: const Color(0xFF00C8FF),
-            unselectedItemColor: Colors.white54,
-            selectedFontSize: 11,
-            unselectedFontSize: 10,
-            items: [
-              for (int i = 0; i < _titles.length; i++)
-                BottomNavigationBarItem(
-                  icon: Icon(_icons[i]),
-                  label: _titles[i],
-                ),
-            ],
-          ),
-        ),
+        bottomNavigationBar: _buildBottomBar(),
       ),
     );
   }
 
   Widget _buildContent() {
     switch (_selectedIndex) {
-      case _idxHome:
+      case 0:
         return const HomeScreen();
 
-      case _idxLive:
+      case 1:
         return LiveTvScreen(
           playlistUrls: kPlaylistUrls,
           onChannelTap: _openChannel,
         );
 
-      case _idxMatches:
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: SafeArea(
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  const SizedBox(height: 12),
-                  SportsMatchesWidget(
-                    onChannelTap: _openChannel,
-                  ),
-                  const SizedBox(height: 20),
-                ],
-              ),
-            ),
-          ),
-        );
+      case 2:
+        return _buildMatchesScreen();
 
-      case _idxFavorites:
+      case 3:
         return const FavoritesScreen();
 
-      case _idxSettings:
+      case 4:
         return const SettingsScreen();
 
       default:
         return const HomeScreen();
     }
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF141A2E),
+        border: Border(
+          top: BorderSide(color: Color(0xFF2A3350), width: 1),
+        ),
+      ),
+      child: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        onTap: (i) => setState(() => _selectedIndex = i),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: const Color(0xFF00C8FF),
+        unselectedItemColor: Colors.white54,
+        selectedFontSize: 11,
+        unselectedFontSize: 10,
+        items: List.generate(
+          _titles.length,
+          (i) => BottomNavigationBarItem(
+            icon: Icon(_icons[i]),
+            label: _titles[i],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMatchesScreen() {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0A0E1A),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF141A2E),
+        elevation: 0,
+        title: const Text(
+          'مباريات اليوم',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.search, color: Colors.white70),
+            onPressed: _openSearch,
+          ),
+        ],
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            const SizedBox(height: 16),
+            SportsMatchesWidget(
+              onChannelTap: _openChannel,
+            ),
+            const SizedBox(height: 40),
+          ],
+        ),
+      ),
+    );
   }
 
   void _openChannel(Channel channel) {
@@ -248,6 +219,15 @@ class _MobileShellState extends ConsumerState<MobileShell> {
           channelName: channel.name,
           channelLogo: channel.logo,
         ),
+      ),
+    );
+  }
+
+  void _openSearch() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const UnifiedSearchScreen(),
       ),
     );
   }
