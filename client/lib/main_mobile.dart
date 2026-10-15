@@ -57,7 +57,9 @@ class EstetnFarjaMobileApp extends StatelessWidget {
     );
   }
 }
-
+// ==========================================================
+//  الشاشة الرئيسية
+// ==========================================================
 class MobileShell extends ConsumerStatefulWidget {
   const MobileShell({super.key});
 
@@ -92,29 +94,48 @@ class _MobileShellState extends ConsumerState<MobileShell> {
     });
   }
 
+  // ==========================================================
+  //  ✅ التحميل الجديد: نبدأ مباشرة من SecureConfig،
+  //  ونحدّث الروابط من RemoteConfig في الخلفية.
+  // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
+    // 1) حالة الإشعارات
     try {
       final settings = ref.read(settingsProvider);
       NotificationService().setEnabled(settings.matchNotifications);
     } catch (_) {}
 
+    // 2) تأكد أن لدينا روابط من SecureConfig (المولّد أثناء البناء)
+    if (kPlaylistUrls.isEmpty) {
+      // محاولة قراءة كاش RemoteConfig
+      try {
+        final remote = RemoteConfig();
+        final cached = await remote.loadCached();
+        if (cached.isNotEmpty) {
+          kPlaylistUrls = cached;
+        }
+      } catch (_) {}
+    }
+
+    // 3) ابدأ التحميل — سيستخدم الكاش إن وُجد
+    if (kPlaylistUrls.isNotEmpty) {
+      final state = ref.read(playlistProvider);
+      if (state.allChannels.isEmpty && !state.isLoading) {
+        // لا await — ندع الواجهة تظهر ثم تُحدَّث تدريجيًا
+        ref
+            .read(playlistProvider.notifier)
+            .loadPlaylists(kPlaylistUrls);
+      }
+    }
+
+    // 4) اجلب روابط RemoteConfig في الخلفية (لتحديث مستقبلي)
     try {
       final remote = RemoteConfig();
-      final cached = await remote.loadCached();
-      if (cached.isNotEmpty) {
-        kPlaylistUrls = cached;
+      final remoteUrls = await remote.fetchRemote();
+      if (remoteUrls != null && remoteUrls.isNotEmpty) {
+        kPlaylistUrls = remoteUrls;
       }
-      remote.fetchRemote().then((remoteUrls) {
-        if (remoteUrls != null && remoteUrls.isNotEmpty) {
-          kPlaylistUrls = remoteUrls;
-        }
-      });
     } catch (_) {}
-
-    if (kPlaylistUrls.isEmpty) return;
-    final state = ref.read(playlistProvider);
-    if (state.allChannels.isNotEmpty || state.isLoading) return;
-    await ref.read(playlistProvider.notifier).loadPlaylists(kPlaylistUrls);
   }
 
   @override
