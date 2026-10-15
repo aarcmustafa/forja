@@ -1,13 +1,15 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../data/providers/playlist_provider.dart';
 
-/// شاشة المشغل — محاولات صامتة (دائرة تحميل فقط) + إخفاء القنوات المتعثرة نهائياً
+/// شاشة المشغل — دائرة تحميل فقط حتى تظهر القناة
+/// - إعادة محاولة صامتة (بدون إشعارات)
+/// - علّم القناة كـ ميتة بعد 3 محاولات فاشلة
 class PlayerScreen extends ConsumerStatefulWidget {
   final String streamUrl;
   final String channelName;
@@ -27,12 +29,15 @@ class PlayerScreen extends ConsumerStatefulWidget {
 class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   late final Player player;
   late final VideoController controller;
-  late final PlaylistNotifier _playlist;
 
   bool _isLoading = true;
   bool _showControls = true;
+  bool _firstFrameReady = false;
+  String? _error;
   Timer? _hideControlsTimer;
+  Timer? _retryTimer;
   Timer? _volumeBarTimer;
+  Timer? _maxLoadTimer;
 
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -45,63 +50,27 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   int _aspectMode = 0;
   bool _showVolumeBar = false;
 
-  // ✅ مسارات الترجمة فقط
+  int _retryCount = 0;
+  static const int _maxRetries = 3;
+  bool _markedDead = false;
+
   List<SubtitleTrack> _subtitleTracks = [];
   SubtitleTrack? _currentSubtitleTrack;
 
   final List<double> _speedOptions = const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
-  // ==========================================================
-  //  ✅ التشغيل الصامت (بدون أي رسالة للمستخدم)
-  //  كل محاولة = User-Agent مختلف، والمحاولات تتم خلف دائرة التحميل
-  // ==========================================================
-  static const List<String> _userAgents = [
-    'VLC/3.0.20 LibVLC/3.0.20',
-    'Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 '
-        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'ExoPlayer/2.19.1 (Linux; Android 11) ExoPlayerLib/2.19.1',
-  ];
-
-  /// مهلة كل محاولة بالثواني (الأولى أطول قليلاً)
-  static const List<int> _attemptSeconds = [12, 10, 10];
-
-  /// أقصى عدد مرات إعادة التشغيل إذا انقطع البث أثناء المشاهدة
-  static const int _maxMidPlayDrops = 3;
-
-  final List<StreamSubscription> _subs = [];
-  Completer<bool>? _attemptCompleter;
-  bool _disposed = false;
-  bool _hasStarted = false;
-  bool _recovering = false;
-  bool _gaveUp = false;
-  int _dropCount = 0;
-
   @override
   void initState() {
     super.initState();
-    _playlist = ref.read(playlistProvider.notifier);
-    // ⏸️ إيقاف الفحص الخلفي أثناء المشاهدة
-    Future.microtask(() {
-      try {
-        _playlist.pauseBackgroundCheck();
-      } catch (_) {}
-    });
     _initializePlayer();
   }
 
   @override
   void dispose() {
-    _disposed = true;
-    final c = _attemptCompleter;
-    if (c != null && !c.isCompleted) c.complete(false);
-    for (final s in _subs) {
-      s.cancel();
-    }
     _hideControlsTimer?.cancel();
+    _retryTimer?.cancel();
     _volumeBarTimer?.cancel();
-    try {
-      _playlist.resumeBackgroundCheck();
-    } catch (_) {}
+    _maxLoadTimer?.cancel();
     player.dispose();
     super.dispose();
   }
@@ -110,200 +79,154 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   //  التهيئة
   // ==========================================================
   Future<void> _initializePlayer() async {
-    // ملاحظة: إنشاء player و controller يجب أن يتم قبل أي await
-    player = Player(
-      configuration: const PlayerConfiguration(
-        bufferSize: 96 * 1024 * 1024,
-        logLevel: MPVLogLevel.error,
-        protocolWhitelist: [
-          'http', 'https', 'hls', 'm3u8',
-          'mpegts', 'ts', 'dash', 'mpd',
-          'rtsp', 'rtsps', 'rtmp', 'rtmps', 'rtmpt', 'rtmpe',
-          'udp', 'rtp', 'mms', 'mmsh', 'mmst',
-          'tcp', 'tls', 'crypto', 'file', 'concat', 'data',
-          'srt', 'rist',
-        ],
-      ),
-    );
-    controller = VideoController(player);
-
-    _subs.add(player.stream.playing.listen((playing) {
-      if (!mounted) return;
-      setState(() => _isPlaying = playing);
-    }));
-
-    _subs.add(player.stream.buffering.listen((buffering) {
-      if (!mounted) return;
-      setState(() => _isBuffering = buffering);
-    }));
-
-    _subs.add(player.stream.position.listen((pos) {
-      if (!mounted) return;
-      setState(() => _position = pos);
-      // ظهور تقدّم في الزمن = القناة اشتغلت (يشمل البث الصوتي فقط)
-      if (pos >= const Duration(seconds: 1)) _signalStarted();
-    }));
-
-    _subs.add(player.stream.duration.listen((dur) {
-      if (!mounted) return;
-      setState(() => _duration = dur);
-    }));
-
-    // ظهور صورة = القناة اشتغلت
-    _subs.add(player.stream.width.listen((w) {
-      if (w != null && w > 0) _signalStarted();
-    }));
-
-    _subs.add(player.stream.error.listen(_onPlayerError));
-
-    // ✅ مسارات الترجمة
-    _subs.add(player.stream.tracks.listen((tracks) {
-      if (!mounted) return;
-      setState(() => _subtitleTracks = tracks.subtitle);
-    }));
-
-    _subs.add(player.stream.track.listen((track) {
-      if (!mounted) return;
-      setState(() => _currentSubtitleTrack = track.subtitle);
-    }));
-
-    _startHideControlsTimer();
-
     try {
-      final ok = await _playWithFallback();
-      if (!ok) await _giveUp(markDead: true);
-    } catch (_) {
-      await _giveUp(markDead: false);
-    }
-  }
-
-  // ==========================================================
-  //  المحاولات الصامتة
-  // ==========================================================
-  void _signalStarted() {
-    final c = _attemptCompleter;
-    if (c != null && !c.isCompleted) c.complete(true);
-  }
-
-  void _onPlayerError(String error) {
-    if (_disposed) return;
-    final c = _attemptCompleter;
-    if (c != null && !c.isCompleted) {
-      // فشلت المحاولة الحالية → ننتقل فوراً للتالية
-      c.complete(false);
-      return;
-    }
-    // انقطاع بعد أن كانت القناة تعمل
-    if (_hasStarted) _recoverFromDrop();
-  }
-
-  /// يجرّب كل الـ User-Agents بالتتابع. true = اشتغلت القناة.
-  Future<bool> _playWithFallback() async {
-    for (var i = 0; i < _userAgents.length; i++) {
-      if (_disposed) return false;
-      final ok = await _tryOpen(i);
-      if (ok) {
-        _hasStarted = true;
-        if (mounted) setState(() => _isLoading = false);
-        return true;
-      }
-    }
-    return false;
-  }
-
-  Future<bool> _tryOpen(int index) async {
-    try {
-      await player.stop();
-    } catch (_) {}
-    // مهلة قصيرة حتى تصل أي أخطاء متأخرة من المحاولة السابقة ونتجاهلها
-    await Future.delayed(const Duration(milliseconds: 250));
-    if (_disposed) return false;
-
-    final completer = Completer<bool>();
-    _attemptCompleter = completer;
-
-    final timer = Timer(Duration(seconds: _attemptSeconds[index]), () {
-      if (!completer.isCompleted) completer.complete(false);
-    });
-
-    try {
-      await player.open(
-        Media(
-          widget.streamUrl,
-          httpHeaders: _buildHeaders(widget.streamUrl, _userAgents[index]),
+      player = Player(
+        configuration: const PlayerConfiguration(
+          bufferSize: 96 * 1024 * 1024,
+          logLevel: MPVLogLevel.error,
+          protocolWhitelist: [
+            'http', 'https', 'hls', 'm3u8',
+            'mpegts', 'ts', 'dash', 'mpd',
+            'rtsp', 'rtsps', 'rtmp', 'rtmps', 'rtmpt', 'rtmpe',
+            'udp', 'rtp', 'mms', 'mmsh', 'mmst',
+            'tcp', 'tls', 'crypto', 'file', 'concat', 'data',
+            'srt', 'rist',
+          ],
         ),
-        play: true,
       );
-    } catch (_) {
-      if (!completer.isCompleted) completer.complete(false);
-    }
 
-    final ok = await completer.future;
-    timer.cancel();
-    if (identical(_attemptCompleter, completer)) _attemptCompleter = null;
-    return ok;
+      controller = VideoController(player);
+
+      // playing → إخفاء الدائرة عند التشغيل الفعلي
+      player.stream.playing.listen((playing) {
+        if (!mounted) return;
+        setState(() {
+          _isPlaying = playing;
+          if (playing) {
+            _firstFrameReady = true;
+            _isLoading = false;
+          }
+        });
+      });
+
+      player.stream.buffering.listen((buffering) {
+        if (!mounted) return;
+        setState(() {
+          _isBuffering = buffering;
+        });
+      });
+
+      player.stream.position.listen((pos) {
+        if (!mounted) return;
+        setState(() => _position = pos);
+      });
+
+      player.stream.duration.listen((dur) {
+        if (!mounted) return;
+        setState(() => _duration = dur);
+      });
+
+      // الأخطاء → إعادة محاولة صامتة
+      player.stream.error.listen((error) {
+        if (!mounted) return;
+        _handleErrorSilently(error);
+      });
+
+      player.stream.tracks.listen((tracks) {
+        if (!mounted) return;
+        setState(() => _subtitleTracks = tracks.subtitle);
+      });
+
+      player.stream.track.listen((track) {
+        if (!mounted) return;
+        setState(() => _currentSubtitleTrack = track.subtitle);
+      });
+
+      await _openStream();
+      _startHideControlsTimer();
+
+      // مهلة قصوى: إذا لم تفتح القناة خلال 25 ثانية → خطأ
+      _maxLoadTimer = Timer(const Duration(seconds: 25), () {
+        if (mounted && _isLoading && !_firstFrameReady && !_markedDead) {
+          _handleErrorSilently('Timeout');
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
+    }
   }
 
-  Map<String, String> _buildHeaders(String url, String userAgent) {
+  Future<void> _openStream() async {
+    final headers = _buildHeaders(widget.streamUrl);
+    await player.open(
+      Media(widget.streamUrl, httpHeaders: headers),
+      play: true,
+    );
+    _retryCount = 0;
+  }
+
+  Map<String, String> _buildHeaders(String url) {
     final headers = <String, String>{
-      'User-Agent': userAgent,
+      'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
       'Accept': '*/*',
       'Connection': 'keep-alive',
       'Icy-MetaData': '1',
     };
-
     try {
       final uri = Uri.parse(url);
       final origin = '${uri.scheme}://${uri.host}';
       headers['Referer'] = '$origin/';
       headers['Origin'] = origin;
     } catch (_) {}
-
     return headers;
   }
 
-  /// انقطاع أثناء المشاهدة → دائرة التحميل + إعادة تشغيل صامتة
-  Future<void> _recoverFromDrop() async {
-    if (_recovering || _disposed || _gaveUp) return;
-    if (_dropCount >= _maxMidPlayDrops) {
-      await _giveUp(markDead: false);
-      return;
-    }
-    _recovering = true;
-    _dropCount++;
-    _hasStarted = false;
-    if (mounted) setState(() => _isLoading = true);
+  // ==========================================================
+  //  إعادة محاولة صامتة (بدون إشعار)
+  // ==========================================================
+  Future<void> _handleErrorSilently(String error) async {
+    if (!mounted) return;
+    if (_firstFrameReady) return; // بعد التشغيل، تجاهل
+    if (_markedDead) return;
 
-    final ok = await _playWithFallback();
-    _recovering = false;
-    if (!ok && !_disposed) await _giveUp(markDead: false);
+    if (_retryCount < _maxRetries) {
+      _retryCount++;
+      _retryTimer?.cancel();
+      _retryTimer = Timer(const Duration(seconds: 2), () async {
+        if (!mounted) return;
+        try {
+          await _openStream();
+        } catch (_) {
+          if (_retryCount >= _maxRetries) {
+            await _markDeadAndShowError();
+          }
+        }
+      });
+    } else {
+      await _markDeadAndShowError();
+    }
   }
 
-  /// فشل نهائي: نخفي القناة من القوائم (إن كان الإنترنت يعمل) ونعود للخلف
-  Future<void> _giveUp({required bool markDead}) async {
-    if (_gaveUp || _disposed) return;
-    _gaveUp = true;
+  /// ✅ علّم القناة كـ ميتة + أظهر الخطأ
+  Future<void> _markDeadAndShowError() async {
+    if (_markedDead) return;
+    _markedDead = true;
 
-    if (markDead && await _hasInternet()) {
-      if (!_disposed) {
-        await _playlist.markDeadByUrl(widget.streamUrl);
-      }
-    }
+    // علّمها كـ ميتة في playlist_provider
+    try {
+      final playlist = ref.read(playlistProvider.notifier);
+      await playlist.markDeadByUrl(widget.streamUrl);
+    } catch (_) {}
 
     if (!mounted) return;
-    Navigator.of(context).pop();
-  }
-
-  /// نتأكد أن الفشل من القناة وليس من انقطاع إنترنت المستخدم
-  Future<bool> _hasInternet() async {
-    for (final host in const ['google.com', 'cloudflare.com']) {
-      try {
-        final r = await InternetAddress.lookup(host)
-            .timeout(const Duration(seconds: 4));
-        if (r.isNotEmpty) return true;
-      } catch (_) {}
-    }
-    return false;
+    setState(() {
+      _error = 'تعذر تشغيل القناة';
+      _isLoading = false;
+    });
   }
 
   // ==========================================================
@@ -383,14 +306,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
 
   BoxFit _getBoxFit() {
     switch (_aspectMode) {
-      case 0:
-        return BoxFit.contain;
-      case 1:
-        return BoxFit.cover;
-      case 2:
-        return BoxFit.fill;
-      default:
-        return BoxFit.contain;
+      case 0: return BoxFit.contain;
+      case 1: return BoxFit.cover;
+      case 2: return BoxFit.fill;
+      default: return BoxFit.contain;
     }
   }
 
@@ -400,429 +319,399 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
     return '${d.inMinutes.toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
   }
-    // ==========================================================
-  //  ✅ قائمة اختيار الترجمة
-  // ==========================================================
-  void _showSubtitleSheet() {
-    _hideControlsTimer?.cancel();
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF141A2E),
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: StatefulBuilder(
-            builder: (context, setSheetState) {
-              return Container(
-                constraints: const BoxConstraints(maxHeight: 500),
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+  
+// ==========================================================
+//  قائمة الترجمة
+// ==========================================================
+void _showSubtitleSheet() {
+  _hideControlsTimer?.cancel();
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: const Color(0xFF141A2E),
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) => Directionality(
+      textDirection: TextDirection.rtl,
+      child: StatefulBuilder(
+        builder: (context, setSheetState) {
+          return Container(
+            constraints: const BoxConstraints(maxHeight: 500),
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    // العنوان
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.subtitles_rounded,
-                          color: Color(0xFF00C8FF),
-                          size: 24,
-                        ),
-                        const SizedBox(width: 10),
-                        const Text(
-                          'الترجمة',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF00C8FF).withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            _subtitleTracks.isEmpty
-                                ? 'لا توجد'
-                                : '${_subtitleTracks.length} خيارات',
-                            style: const TextStyle(
-                              color: Color(0xFF00C8FF),
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
+                    const Icon(Icons.subtitles_rounded,
+                        color: Color(0xFF00C8FF), size: 24),
+                    const SizedBox(width: 10),
+                    const Text(
+                      'الترجمة',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                    const SizedBox(height: 20),
-
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // خيار "بلا ترجمة"
-                            _sheetOption(
-                              label: 'بلا ترجمة',
-                              isSelected:
-                                  _currentSubtitleTrack == null ||
-                                      _currentSubtitleTrack!.id == 'no',
-                              onTap: () async {
-                                await player.setSubtitleTrack(
-                                  SubtitleTrack.no(),
-                                );
-                                setSheetState(() {});
-                                _startHideControlsTimer();
-                              },
-                            ),
-
-                            // قائمة الترجمات المتاحة
-                            if (_subtitleTracks.isNotEmpty) ...[
-                              const SizedBox(height: 10),
-                              const Divider(color: Color(0xFF2A3350)),
-                              const SizedBox(height: 10),
-                              ..._subtitleTracks.asMap().entries.map((entry) {
-                                final idx = entry.key;
-                                final track = entry.value;
-                                final isSelected =
-                                    _currentSubtitleTrack?.id == track.id;
-                                return _sheetOption(
-                                  label: _subtitleTrackLabel(track, idx),
-                                  isSelected: isSelected,
-                                  onTap: () async {
-                                    await player.setSubtitleTrack(track);
-                                    setSheetState(() {});
-                                    _startHideControlsTimer();
-                                  },
-                                );
-                              }),
-                            ] else ...[
-                              const SizedBox(height: 20),
-                              const Center(
-                                child: Column(
-                                  children: [
-                                    Icon(
-                                      Icons.subtitles_off_rounded,
-                                      color: Colors.white24,
-                                      size: 60,
-                                    ),
-                                    SizedBox(height: 12),
-                                    Text(
-                                      'لا توجد ترجمات متاحة لهذه القناة',
-                                      style: TextStyle(
-                                        color: Colors.white54,
-                                        fontSize: 14,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ],
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00C8FF).withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        _subtitleTracks.isEmpty
+                            ? 'لا توجد'
+                            : '${_subtitleTracks.length} خيارات',
+                        style: const TextStyle(
+                          color: Color(0xFF00C8FF),
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
                   ],
                 ),
-              );
-            },
-          ),
-        );
-      },
-    ).then((_) {
-      if (mounted) _startHideControlsTimer();
-    });
-  }
-
-  // ==========================================================
-  //  خيار في القائمة
-  // ==========================================================
-  Widget _sheetOption({
-    required String label,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Material(
-        color: isSelected
-            ? const Color(0xFF00C8FF).withOpacity(0.15)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 14,
+                const SizedBox(height: 20),
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _subtitleOption(
+                          label: 'بلا ترجمة',
+                          isSelected: _currentSubtitleTrack == null ||
+                              _currentSubtitleTrack!.id == 'no',
+                          onTap: () async {
+                            await player
+                                .setSubtitleTrack(SubtitleTrack.no());
+                            setSheetState(() {});
+                            _startHideControlsTimer();
+                          },
+                        ),
+                        if (_subtitleTracks.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          const Divider(color: Color(0xFF2A3350)),
+                          const SizedBox(height: 10),
+                          ..._subtitleTracks.asMap().entries.map((entry) {
+                            final idx = entry.key;
+                            final track = entry.value;
+                            final isSelected =
+                                _currentSubtitleTrack?.id == track.id;
+                            return _subtitleOption(
+                              label: _subtitleTrackLabel(track, idx),
+                              isSelected: isSelected,
+                              onTap: () async {
+                                await player.setSubtitleTrack(track);
+                                setSheetState(() {});
+                                _startHideControlsTimer();
+                              },
+                            );
+                          }),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
+          );
+        },
+      ),
+    ),
+  ).then((_) {
+    if (mounted) _startHideControlsTimer();
+  });
+}
+
+Widget _subtitleOption({
+  required String label,
+  required bool isSelected,
+  required VoidCallback onTap,
+}) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Material(
+      color: isSelected
+          ? const Color(0xFF00C8FF).withOpacity(0.15)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected
+                  ? const Color(0xFF00C8FF)
+                  : const Color(0xFF2A3350),
+              width: isSelected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                isSelected
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_unchecked_rounded,
                 color: isSelected
                     ? const Color(0xFF00C8FF)
-                    : const Color(0xFF2A3350),
-                width: isSelected ? 1.5 : 1,
+                    : Colors.white38,
+                size: 20,
               ),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  isSelected
-                      ? Icons.radio_button_checked_rounded
-                      : Icons.radio_button_unchecked_rounded,
-                  color: isSelected
-                      ? const Color(0xFF00C8FF)
-                      : Colors.white38,
-                  size: 20,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    label,
-                    style: TextStyle(
-                      color: isSelected ? Colors.white : Colors.white70,
-                      fontSize: 14,
-                      fontWeight:
-                          isSelected ? FontWeight.bold : FontWeight.normal,
-                    ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: isSelected ? Colors.white : Colors.white70,
+                    fontSize: 14,
+                    fontWeight:
+                        isSelected ? FontWeight.bold : FontWeight.normal,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
-    );
+    ),
+  );
+}
+
+String _subtitleTrackLabel(SubtitleTrack track, int index) {
+  final lang = track.language ?? '';
+  String? langName;
+  if (lang.startsWith('ar')) langName = 'عربي';
+  else if (lang.startsWith('en')) langName = 'إنجليزي';
+  else if (lang.startsWith('fr')) langName = 'فرنسي';
+  else if (lang.startsWith('es')) langName = 'إسباني';
+  else if (lang.startsWith('de')) langName = 'ألماني';
+  else if (lang.startsWith('tr')) langName = 'تركي';
+  else if (lang.startsWith('hi')) langName = 'هندي';
+
+  if (track.title != null && track.title!.isNotEmpty) {
+    return track.title! + (langName != null ? ' ($langName)' : '');
   }
+  if (langName != null) return langName;
+  if (lang.isNotEmpty) return lang.toUpperCase();
+  return 'ترجمة ${index + 1}';
+}
 
-  // ==========================================================
-  //  تسميات الترجمات
-  // ==========================================================
-  String _subtitleTrackLabel(SubtitleTrack track, int index) {
-    final lang = track.language ?? '';
-
-    // ترجمة اللغات الشائعة
-    String? langName;
-    if (lang.startsWith('ar')) langName = 'عربي';
-    else if (lang.startsWith('en')) langName = 'إنجليزي';
-    else if (lang.startsWith('fr')) langName = 'فرنسي';
-    else if (lang.startsWith('es')) langName = 'إسباني';
-    else if (lang.startsWith('de')) langName = 'ألماني';
-    else if (lang.startsWith('tr')) langName = 'تركي';
-    else if (lang.startsWith('hi')) langName = 'هندي';
-
-    if (track.title != null && track.title!.isNotEmpty) {
-      return track.title! + (langName != null ? ' ($langName)' : '');
-    }
-    if (langName != null) return langName;
-    if (lang.isNotEmpty) return lang.toUpperCase();
-    return 'ترجمة ${index + 1}';
-  }
-    // ==========================================================
-  //  BUILD
-  // ==========================================================
-  @override
-  Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Focus(
-          autofocus: true,
-          onKeyEvent: (node, event) {
-            if (event is KeyDownEvent) {
-              final key = event.logicalKey.keyLabel;
-              if (key == 'Select' ||
-                  key == 'Enter' ||
-                  key == 'Media Play Pause') {
-                _togglePlayPause();
-                return KeyEventResult.handled;
-              }
-              if (key == 'Escape' || key == 'Go Back') {
-                Navigator.pop(context);
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Right') {
-                _seekForward();
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Left') {
-                _seekBackward();
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Up') {
-                _setVolume((_volume + 10).clamp(0, 100));
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Down') {
-                _setVolume((_volume - 10).clamp(0, 100));
-                return KeyEventResult.handled;
-              }
+// ==========================================================
+//  BUILD
+// ==========================================================
+@override
+Widget build(BuildContext context) {
+  return Directionality(
+    textDirection: TextDirection.rtl,
+    child: Scaffold(
+      backgroundColor: Colors.black,
+      body: Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent) {
+            final key = event.logicalKey.keyLabel;
+            if (key == 'Select' ||
+                key == 'Enter' ||
+                key == 'Media Play Pause') {
+              _togglePlayPause();
+              return KeyEventResult.handled;
             }
-            return KeyEventResult.ignored;
-          },
-          child: GestureDetector(
-            onTap: _toggleControls,
-            child: Stack(
-              children: [
-                Center(
-                  child: SizedBox.expand(
-                    child: FittedBox(
-                      fit: _getBoxFit(),
-                      child: SizedBox(
-                        width: controller.value.size.width,
-                        height: controller.value.size.height,
-                        child: Video(
-                          controller: controller,
-                          controls: NoVideoControls,
+            if (key == 'Escape' || key == 'Go Back') {
+              Navigator.pop(context);
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Right') {
+              _seekForward();
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Left') {
+              _seekBackward();
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Up') {
+              _setVolume((_volume + 10).clamp(0, 100));
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Down') {
+              _setVolume((_volume - 10).clamp(0, 100));
+              return KeyEventResult.handled;
+            }
+          }
+          return KeyEventResult.ignored;
+        },
+        child: GestureDetector(
+          onTap: _toggleControls,
+          child: Stack(
+            children: [
+              // الفيديو
+              Center(
+                child: _error != null
+                    ? _buildError()
+                    : SizedBox.expand(
+                        child: FittedBox(
+                          fit: _getBoxFit(),
+                          child: SizedBox(
+                            width:
+                                (player.state.width ?? 1920).toDouble(),
+                            height:
+                                (player.state.height ?? 1080).toDouble(),
+                            child: Video(
+                              controller: controller,
+                              controls: NoVideoControls,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                ),
-                if (_isLoading) _buildLoading(),
-                if (_isBuffering && !_isLoading) _buildBuffering(),
-                if (_showVolumeBar) _buildVolumeOverlay(),
-                if (_showControls) ...[
-                  _buildTopBar(context),
-                  _buildBottomBar(context),
-                ],
+              ),
+
+              // دائرة التحميل (تبقى حتى تشغيل القناة)
+              if (_isLoading && _error == null) _buildLoading(),
+
+              // Buffering (فقط بعد أول إطار)
+              if (_isBuffering &&
+                  !_isLoading &&
+                  _firstFrameReady &&
+                  _error == null)
+                _buildBufferingIndicator(),
+
+              // مؤشر الصوت
+              if (_showVolumeBar) _buildVolumeOverlay(),
+
+              // أزرار التحكم
+              if (_showControls && _error == null) ...[
+                _buildTopBar(context),
+                _buildBottomBar(context),
               ],
-            ),
+            ],
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
-  Widget _buildLoading() {
-    return Container(
-      color: Colors.black.withOpacity(0.85),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const SizedBox(
-              width: 70,
-              height: 70,
-              child: CircularProgressIndicator(
-                color: Color(0xFF00C8FF),
-                strokeWidth: 4,
-              ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'جارٍ التحميل...',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 60),
-              child: Text(
-                widget.channelName,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white54,
-                  fontSize: 14,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBuffering() {
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: Container(
-          color: Colors.black.withOpacity(0.4),
-          child: const Center(
-            child: SizedBox(
-              width: 55,
-              height: 55,
-              child: CircularProgressIndicator(
-                color: Color(0xFF00C8FF),
-                strokeWidth: 3,
-              ),
+Widget _buildLoading() {
+  return Container(
+    color: Colors.black.withOpacity(0.9),
+    child: Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 70,
+            height: 70,
+            child: CircularProgressIndicator(
+              color: Color(0xFF00C8FF),
+              strokeWidth: 4,
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildVolumeOverlay() {
-    return Positioned(
-      top: 40,
-      left: 40,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.75),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              _isMuted || _volume == 0
-                  ? Icons.volume_off_rounded
-                  : _volume < 50
-                      ? Icons.volume_down_rounded
-                      : Icons.volume_up_rounded,
+          const SizedBox(height: 24),
+          const Text(
+            'جارٍ التحميل...',
+            style: TextStyle(
               color: Colors.white,
-              size: 22,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
             ),
-            const SizedBox(width: 10),
-            SizedBox(
-              width: 100,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: _volume / 100,
-                  minHeight: 6,
-                  backgroundColor: Colors.white24,
-                  valueColor: const AlwaysStoppedAnimation(
-                    Color(0xFF00C8FF),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              '${_volume.toInt()}%',
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 60),
+            child: Text(
+              widget.channelName,
+              textAlign: TextAlign.center,
               style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
+                color: Colors.white54,
+                fontSize: 14,
               ),
             ),
-          ],
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _buildBufferingIndicator() {
+  return Positioned.fill(
+    child: IgnorePointer(
+      child: Container(
+        color: Colors.black.withOpacity(0.3),
+        child: const Center(
+          child: SizedBox(
+            width: 50,
+            height: 50,
+            child: CircularProgressIndicator(
+              color: Color(0xFF00C8FF),
+              strokeWidth: 3,
+            ),
+          ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
+Widget _buildVolumeOverlay() {
+  return Positioned(
+    top: 40,
+    left: 40,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.75),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            _isMuted || _volume == 0
+                ? Icons.volume_off_rounded
+                : _volume < 50
+                    ? Icons.volume_down_rounded
+                    : Icons.volume_up_rounded,
+            color: Colors.white,
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 100,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: _volume / 100,
+                minHeight: 6,
+                backgroundColor: Colors.white24,
+                valueColor:
+                    const AlwaysStoppedAnimation(Color(0xFF00C8FF)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '${_volume.toInt()}%',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+  
   Widget _buildTopBar(BuildContext context) {
     return Positioned(
       top: 0,
@@ -834,10 +723,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Colors.black.withOpacity(0.85),
-              Colors.transparent,
-            ],
+            colors: [Colors.black.withOpacity(0.85), Colors.transparent],
           ),
         ),
         child: Row(
@@ -882,9 +768,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
               Container(
                 margin: const EdgeInsets.only(left: 12),
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
+                    horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: const Color(0xFF00C8FF),
                   borderRadius: BorderRadius.circular(8),
@@ -900,10 +784,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
               ),
             Container(
               margin: const EdgeInsets.only(left: 12),
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 6,
-              ),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                 color: const Color(0xFFFF1744),
                 borderRadius: BorderRadius.circular(6),
@@ -947,10 +829,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
-            colors: [
-              Colors.black.withOpacity(0.85),
-              Colors.transparent,
-            ],
+            colors: [Colors.black.withOpacity(0.85), Colors.transparent],
           ),
         ),
         child: Column(
@@ -1029,13 +908,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           size: 40,
           onPressed: _toggleMute,
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 18),
         _CircleButton(
           icon: Icons.replay_10,
           size: 40,
           onPressed: _seekBackward,
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 18),
         _CircleButton(
           icon: _isPlaying
               ? Icons.pause_rounded
@@ -1044,26 +923,25 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           filled: true,
           onPressed: _togglePlayPause,
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 18),
         _CircleButton(
           icon: Icons.forward_10,
           size: 40,
           onPressed: _seekForward,
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 18),
         _CircleButton(
           icon: Icons.speed_rounded,
           size: 40,
           onPressed: _changeSpeed,
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 18),
         _CircleButton(
           icon: Icons.aspect_ratio_rounded,
           size: 40,
           onPressed: _changeAspect,
         ),
-        const SizedBox(width: 14),
-        // 💬 زر الترجمة
+        const SizedBox(width: 18),
         _CircleButton(
           icon: Icons.subtitles_rounded,
           size: 40,
@@ -1071,6 +949,89 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
           hasBadge: _subtitleTracks.isNotEmpty,
         ),
       ],
+    );
+  }
+
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(40),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.error_outline,
+              color: Color(0xFFFF5252),
+              size: 80,
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'تعذر تشغيل القناة',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Text(
+                _error ?? 'خطأ غير معروف',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _isLoading = true;
+                      _error = null;
+                      _retryCount = 0;
+                      _markedDead = false;
+                      _firstFrameReady = false;
+                    });
+                    _initializePlayer();
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('إعادة المحاولة'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00C8FF),
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  label: const Text(
+                    'إغلاق',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: Colors.white54),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1157,7 +1118,6 @@ class _CircleButtonState extends State<_CircleButton> {
                 size: widget.size * 0.5,
               ),
             ),
-            // ✅ Badge يظهر عند وجود ترجمات
             if (widget.hasBadge)
               Positioned(
                 top: 0,
