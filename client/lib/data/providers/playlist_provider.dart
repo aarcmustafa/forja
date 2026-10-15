@@ -38,8 +38,8 @@ class PlaylistState {
   final String searchQuery;
   final bool isLoading;
   final bool isRefreshing;
-  final double loadProgress;   // 0.0 → 1.0
-  final String loadLabel;      // نص شريط التحميل
+  final double loadProgress;
+  final String loadLabel;
   final String? error;
   final DateTime? lastUpdate;
 
@@ -109,7 +109,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   bool _filterAdult = true;
   bool _backgroundCheckStarted = false;
 
-  // ✅ Sets للبحث السريع
   Set<String> _sportIds = {};
   Set<String> _adultIds = {};
 
@@ -124,6 +123,42 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 
   void pauseBackgroundCheck() => _checker.pause();
   void resumeBackgroundCheck() => _checker.resume();
+
+  // ==========================================================
+  //  ✅ علّم قناة كـ ميتة (عند فشل التشغيل)
+  // ==========================================================
+  Future<void> markDeadByUrl(String url) async {
+    if (url.isEmpty) return;
+    try {
+      final deadIds = state.allChannels
+          .where((c) => c.streamUrl == url)
+          .map((c) => c.id)
+          .toList();
+
+      if (deadIds.isEmpty) return;
+
+      final newWorking = <String, bool>{...state.workingStatus};
+      for (final id in deadIds) {
+        newWorking[id] = false;
+      }
+      state = state.copyWith(workingStatus: newWorking);
+      _applyFilters();
+
+      await _checker.markDeadMultiple(deadIds);
+    } catch (_) {}
+  }
+
+  /// علّم قناة كـ ميتة بـ ID
+  Future<void> markDead(String channelId) async {
+    if (channelId.isEmpty) return;
+    try {
+      final newWorking = <String, bool>{...state.workingStatus};
+      newWorking[channelId] = false;
+      state = state.copyWith(workingStatus: newWorking);
+      _applyFilters();
+      await _checker.markDead(channelId);
+    } catch (_) {}
+  }
 
   // ==========================================================
   //  التحميل الرئيسي
@@ -146,9 +181,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     final saved = await _checker.loadResults();
     final initialCheckDone = _storage.hasInitialCheckDone();
 
-    // ==========================================================
-    //  1) عرض Cache فوراً (إذا كان الفحص الأولي قد تم)
-    // ==========================================================
+    // 1) عرض Cache فوراً إذا تم الفحص الأولي
     if (!forceRefresh && initialCheckDone) {
       final cached = await _storage.loadChannels();
 
@@ -164,9 +197,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }
     }
 
-    // ==========================================================
-    //  2) الفحص الأولي (يحدث مرة واحدة)
-    // ==========================================================
+    // 2) الفحص الأولي
     state = state.copyWith(
       isLoading: true,
       clearError: true,
@@ -174,12 +205,11 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       loadLabel: 'جارٍ تحميل القنوات...',
     );
 
-    // 2-1) جلب القنوات
     final channels = await _fetchAll(
       urls,
       onUrlProgress: (done, total) {
         state = state.copyWith(
-          loadProgress: (done / total) * 0.3, // 30% للتحميل
+          loadProgress: (done / total) * 0.3,
           loadLabel: 'تحميل القنوات ($done/$total)...',
         );
       },
@@ -194,7 +224,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       return;
     }
 
-    // 2-2) الفحص الأولي (3 محاولات لكل قناة)
+    // 2-2) الفحص الأولي
     if (!initialCheckDone) {
       state = state.copyWith(
         loadProgress: 0.3,
@@ -204,7 +234,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       final checkResults = await _checker.checkInitial(
         channels,
         onProgress: (done, total) {
-          // 30% → 95%
           final p = 0.3 + (done / total) * 0.65;
           state = state.copyWith(
             loadProgress: p,
@@ -213,15 +242,12 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
         },
       );
 
-      // إخفاء القنوات الميتة
       final working = channels
           .where((c) => checkResults[c.id] == true)
           .toList();
 
-      // ترتيب القنوات
       final sorted = _sortChannels(working);
 
-      // حفظ
       await _storage.saveChannels(sorted);
       await _storage.markInitialCheckDone();
 
@@ -241,7 +267,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       return;
     }
 
-    // إذا كان الفحص الأولي قد تم لكن لا Cache (حالة نادرة)
+    // 3) فحص تم لكن لا cache
     final sorted = _sortChannels(channels);
     await _storage.saveChannels(sorted);
     _setChannels(sorted, workingStatus: saved);
@@ -254,9 +280,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     _startBackgroundCheckIfNeeded();
   }
 
-  // ==========================================================
-  //  جلب من الروابط (بدون طباعة)
-  // ==========================================================
   Future<List<Channel>?> _fetchAll(
     List<String> urls, {
     bool refreshCache = false,
@@ -279,7 +302,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 
       if (all.isEmpty) return null;
 
-      // فلترة رياضية
       final sportOnly = all.where((c) => _isSportChannel(c)).toList();
       return _removeDuplicates(sportOnly);
     } catch (_) {
@@ -308,9 +330,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     }
   }
 
-  // ==========================================================
-  //  فحص رياضي
-  // ==========================================================
   bool _isSportChannel(Channel c) {
     if (c.category == 'sport') return true;
 
@@ -332,7 +351,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   }
 
   // ==========================================================
-  //  ✅ الترتيب: beIN أولاً + Live قبل VOD + جودة تصاعدية
+  //  الترتيب: beIN أولاً + Live قبل VOD + جودة تصاعدية
   // ==========================================================
   List<Channel> _sortChannels(List<Channel> channels) {
     final list = List<Channel>.from(channels);
@@ -351,7 +370,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     final bVod = _isVod(b);
     if (aVod != bVod) return aVod ? 1 : -1;
 
-    // 3) الجودة تصاعدياً (SD → 4K)
+    // 3) الجودة تصاعدياً
     final qa = _qualityScore(a);
     final qb = _qualityScore(b);
     if (qa != qb) return qa.compareTo(qb);
@@ -369,13 +388,11 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     return c.contentType == 'movie' || c.contentType == 'series';
   }
 
-  /// 1 = SD | 2 = HD | 3 = FHD | 4 = 4K
   int _qualityScore(Channel c) {
     final t = '${c.name} ${c.streamUrl}'.toLowerCase();
     if (t.contains('4k') || t.contains('uhd')) return 4;
     if (t.contains('fhd') || t.contains('1080')) return 3;
-    if (t.contains('720') ||
-        RegExp(r'\bhd\b').hasMatch(t)) {
+    if (t.contains('720') || RegExp(r'\bhd\b').hasMatch(t)) {
       return 2;
     }
     return 1;
@@ -408,7 +425,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
         newWorkingStatus[channelId] = isWorking;
         state = state.copyWith(workingStatus: newWorkingStatus);
 
-        // كل 100 نتيجة
         if (newWorkingStatus.length % 100 == 0) {
           _applyFilters();
         }
@@ -454,17 +470,14 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void _applyFilters() {
     List<Channel> filtered = List.from(state.allChannels);
 
-    // 1) رياضة فقط
     if (_sportIds.isNotEmpty) {
       filtered = filtered.where((c) => _sportIds.contains(c.id)).toList();
     }
 
-    // 2) فلتر البالغين
     if (_filterAdult && _adultIds.isNotEmpty) {
       filtered = filtered.where((c) => !_adultIds.contains(c.id)).toList();
     }
 
-    // 3) إخفاء الميتة
     if (state.workingStatus.isNotEmpty) {
       filtered = filtered.where((c) {
         final status = state.workingStatus[c.id];
@@ -472,7 +485,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }).toList();
     }
 
-    // 4) الباقة الفرعية
     if (state.selectedSubCategorySlug != null) {
       final slug = state.selectedSubCategorySlug!.toLowerCase();
       filtered = filtered.where((c) {
@@ -482,7 +494,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }).toList();
     }
 
-    // 5) البحث
     if (state.searchQuery.trim().isNotEmpty) {
       final q = state.searchQuery.trim().toLowerCase();
       filtered = filtered.where((c) {
@@ -494,9 +505,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     state = state.copyWith(filteredChannels: filtered);
   }
 
-  // ==========================================================
-  //  تعيين القنوات
-  // ==========================================================
   void _setChannels(
     List<Channel> channels, {
     Map<String, bool>? workingStatus,
@@ -520,9 +528,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     }
   }
 
-  // ==========================================================
-  //  مساعدات
-  // ==========================================================
   List<Channel> _removeDuplicates(List<Channel> channels) {
     final Map<String, Channel> unique = {};
     for (final ch in channels) {
@@ -592,7 +597,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     await loadPlaylists(urls, forceRefresh: true);
   }
 
-  /// إعادة الفحص الأولي
   Future<void> resetInitialCheck() async {
     await _storage.resetInitialCheck();
   }
