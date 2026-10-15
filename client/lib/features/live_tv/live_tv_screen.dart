@@ -65,9 +65,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
           child: Column(
             children: [
               _buildTopBar(state, notifier),
-              // ✅ شريط تقدم الفحص الأولي
               if (state.isInitialChecking) _buildInitialCheckBar(state),
-              // ✅ مؤشر "جارٍ جلب قنوات أكثر..."
               if (state.isLoadingMore) _buildLoadingMoreBar(),
               const SizedBox(height: 16),
               _buildCategorySection(state),
@@ -159,7 +157,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
   }
 
   // ==========================================================
-  //  شريط "جارٍ جلب المزيد من القنوات"
+  //  شريط جلب المزيد
   // ==========================================================
   Widget _buildLoadingMoreBar() {
     return Container(
@@ -337,7 +335,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
     );
   }
   // ==========================================================
-//  الجسم الرئيسي
+//  الجسم
 // ==========================================================
 Widget _buildBody(PlaylistState state, PlaylistNotifier notifier) {
   if (state.isLoading && state.allChannels.isEmpty) {
@@ -370,9 +368,6 @@ Widget _buildBody(PlaylistState state, PlaylistNotifier notifier) {
   return _buildGrid(state);
 }
 
-// ==========================================================
-//  جسم الرياضة
-// ==========================================================
 Widget _buildSportsBody(PlaylistState state) {
   return CustomScrollView(
     slivers: [
@@ -439,9 +434,6 @@ Widget _buildSportsBody(PlaylistState state) {
   );
 }
 
-// ==========================================================
-//  عرض السجل + الشبكة
-// ==========================================================
 Widget _buildBodyWithRecent(PlaylistState state, List<String> recentIds) {
   final map = {for (final c in state.allChannels) c.id: c};
   final recent = recentIds
@@ -588,7 +580,7 @@ Widget _buildBodyWithRecent(PlaylistState state, List<String> recentIds) {
   );
 }
     // ==========================================================
-  //  حالة التحميل — Shimmer
+  //  التحميل + الخطأ + الفارغ
   // ==========================================================
   Widget _buildLoading() {
     return Padding(
@@ -683,9 +675,6 @@ Widget _buildBodyWithRecent(PlaylistState state, List<String> recentIds) {
     );
   }
 
-  // ==========================================================
-  //  شبكة القنوات — Pagination
-  // ==========================================================
   Widget _buildGrid(PlaylistState state) {
     final filterKey = '${state.selectedCategorySlug ?? "all"}_'
         '${state.selectedSubCategorySlug ?? "all"}_'
