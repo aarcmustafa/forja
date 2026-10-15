@@ -517,5 +517,21 @@ final isRefreshingProvider = Provider<bool>((ref) {
 });
 
 final errorProvider = Provider<String?>((ref) {
-  return ref.watch(errorProviderSource).error;
+  return ref.watch(playlistProvider).error;
+});
+
+final selectedCategoryProvider = Provider<String?>((ref) {
+  return ref.watch(playlistProvider).selectedCategorySlug;
+});
+
+final selectedSubCategoryProvider = Provider<String?>((ref) {
+  return ref.watch(playlistProvider).selectedSubCategorySlug;
+});
+
+final searchQueryProvider = Provider<String>((ref) {
+  return ref.watch(playlistProvider).searchQuery;
+});
+
+final lastUpdateProvider = Provider<DateTime?>((ref) {
+  return ref.watch(playlistProvider).lastUpdate;
 });
