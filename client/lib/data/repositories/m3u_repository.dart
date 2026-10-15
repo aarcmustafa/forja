@@ -1,18 +1,20 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 import 'xtream_client.dart';
 
+/// مستودع رياضي محسّن
+/// - Xtream Live فقط (رياضة)
+/// - M3U مع Fallback مبسّط (بدون طباعة مزعجة)
+/// - تحليل M3U في Isolate
 class M3uRepository {
   static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
 
-  /// ✅ ترتيب جديد: okhttp أولاً (كما اقترح pcapDroid)
+  // UAs احتياطية محدودة
   static const List<String> fallbackUserAgents = [
-    'okhttp/4.9.0',
-    'IPTV Smarters Pro',
-    'TiviMate/4.7.0',
     'VLC/3.0.20 LibVLC/3.0.20',
-    'Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'IPTV Smarters Pro',
   ];
 
   static const int maxInMemoryEntries = 15;
@@ -61,27 +63,50 @@ class M3uRepository {
     } catch (_) {}
   }
 
+  static String extractReferer(String url) {
+    try {
+      final uri = Uri.parse(url);
+      final portPart = uri.hasPort ? ':${uri.port}' : '';
+      return '${uri.scheme}://${uri.host}$portPart/';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static String extractOrigin(String url) {
+    try {
+      final uri = Uri.parse(url);
+      final portPart = uri.hasPort ? ':${uri.port}' : '';
+      return '${uri.scheme}://${uri.host}$portPart';
+    } catch (_) {
+      return '';
+    }
+  }
+
   final Dio _dio;
   final Map<String, List<Channel>> _cache = {};
 
   M3uRepository({Dio? dio})
       : _dio = dio ??
             Dio(BaseOptions(
-              // ✅ مهلة اتصال قصيرة (5 ثوانٍ)
-              connectTimeout: const Duration(seconds: 5),
+              connectTimeout: const Duration(seconds: 25),
               receiveTimeout: const Duration(seconds: 120),
-              sendTimeout: const Duration(seconds: 10),
+              sendTimeout: const Duration(seconds: 25),
               followRedirects: true,
               maxRedirects: 5,
               validateStatus: (status) => status != null && status < 500,
               headers: {
-                'User-Agent': 'okhttp/4.9.0',
+                'User-Agent': vlcUserAgent,
                 'Accept': '*/*',
                 'Accept-Encoding': 'gzip, deflate',
                 'Connection': 'keep-alive',
+                'Icy-MetaData': '1',
               },
             ));
 
+  // ==========================================================
+  //  الدالة الرئيسية
+  // ==========================================================
   Future<List<Channel>> loadFromUrl(
     String url, {
     bool forceRefresh = false,
@@ -106,6 +131,9 @@ class M3uRepository {
     return channels;
   }
 
+  // ==========================================================
+  //  إدارة الكاش
+  // ==========================================================
   void _trimInMemoryCache() {
     if (_cache.length <= maxInMemoryEntries) return;
     final toRemove = _cache.length - maxInMemoryEntries;
@@ -159,141 +187,127 @@ class M3uRepository {
     };
   }
   
-  // ==========================================================
-  //  تحميل من Xtream — ✅ بدون Referer/Origin
-  // ==========================================================
-  Future<List<Channel>> _loadFromXtream(
-    XtreamCredentials credentials,
-  ) async {
-    final client = XtreamClient(credentials);
-    final all = <Channel>[];
+// ==========================================================
+//  تحميل من Xtream — Live رياضي فقط
+// ==========================================================
+Future<List<Channel>> _loadFromXtream(
+  XtreamCredentials credentials,
+) async {
+  final client = XtreamClient(credentials);
+  final all = <Channel>[];
 
+  try {
+    // القنوات المباشرة فقط
     try {
-      try {
-        final liveCats = await client.getLiveCategories();
-        final live = await client.getLiveStreams(categories: liveCats);
+      final liveCats = await client.getLiveCategories();
+      final live = await client.getLiveStreams(categories: liveCats);
 
-        final sport = live.where((c) => _isSportChannel(c)).toList();
-        all.addAll(sport);
+      // فلترة رياضية
+      final sport = live.where((c) => isSportChannel(c)).toList();
+      all.addAll(sport);
+    } catch (_) {}
 
-        // ignore: avoid_print
-        print('Xtream Live: ${live.length} → Sport: ${sport.length}');
-      } catch (e) {
-        // ignore: avoid_print
-        print('فشل جلب القنوات: $e');
-      }
-
-      if (all.isEmpty) {
-        return await _loadFromM3u(
-          '${credentials.server}/get.php?username=${credentials.username}&password=${credentials.password}&type=m3u_plus&output=m3u8',
-        );
-      }
-
-      return all;
-    } finally {
-      client.dispose();
+    // Fallback إلى M3U إذا فشل كل شيء
+    if (all.isEmpty) {
+      return await _loadFromM3u(
+        '${credentials.server}/get.php?username=${credentials.username}&password=${credentials.password}&type=m3u_plus&output=m3u8',
+      );
     }
+
+    return all;
+  } finally {
+    client.dispose();
+  }
+}
+
+// ==========================================================
+//  تحميل من M3U — مع Isolate + Fallback مبسّط
+// ==========================================================
+Future<List<Channel>> _loadFromM3u(String url) async {
+  final data = await _fetchWithFallback(url);
+
+  if (data == null || data.isEmpty) {
+    return const [];
   }
 
-  bool _isSportChannel(Channel c) {
-    if (c.category == 'sport') return true;
+  // تحليل في Isolate (لا يجمّد الواجهة)
+  final all = await compute(parseM3uContent, data);
 
-    final name = c.name.toLowerCase();
-    final group = c.group.toLowerCase();
-    final text = '$name $group';
+  // فلترة رياضية
+  return all.where((c) => isSportChannel(c)).toList();
+}
 
-    const sportKeywords = [
-      'bein', 'sport', 'ssc', 'رياض', 'كورة', 'alkass',
-      'dubai sport', 'ad sport', 'ksa sport', 'alwan',
-      'sky sport', 'espn', 'dazn', 'nba', 'nfl',
-      'shahid sport', 'shasha', '1001', 'sportv',
-      'فورمولا', 'moto', 'ufc', 'wwe', 'fight',
-      'fifa', 'uefa', 'caf', 'afc',
-    ];
-
-    for (final keyword in sportKeywords) {
-      if (text.contains(keyword)) return true;
-    }
-    return false;
+// ==========================================================
+//  Fallback مبسّط: cached + VLC + IPTV Smarters فقط
+// ==========================================================
+Future<String?> _fetchWithFallback(String url) async {
+  // 1) جرّب أفضل UA محفوظ أولاً
+  final bestUa = await _getBestUa(url);
+  if (bestUa != null) {
+    final data = await _tryFetch(url, bestUa);
+    if (data != null) return data;
   }
 
-  // ==========================================================
-  //  تحميل من M3U
-  // ==========================================================
-  Future<List<Channel>> _loadFromM3u(String url) async {
-    final data = await _fetchWithFallback(url);
-
-    if (data == null || data.isEmpty) {
-      throw Exception('فشل تحميل الملف');
-    }
-
-    final all = parseM3uContent(data);
-    return all.where((c) => _isSportChannel(c)).toList();
+  // 2) جرّب VLC
+  const vlcUa = 'VLC/3.0.20 LibVLC/3.0.20';
+  final data1 = await _tryFetch(url, vlcUa);
+  if (data1 != null) {
+    await _saveBestUa(url, vlcUa);
+    return data1;
   }
 
-  Future<String?> _fetchWithFallback(String url) async {
-    final bestUa = await _getBestUa(url);
-    if (bestUa != null) {
-      final data = await _tryFetch(url, bestUa);
-      if (data != null) return data;
+  // 3) جرّب IPTV Smarters كاحتياطي وحيد
+  const iptvUa = 'IPTV Smarters Pro';
+  final data2 = await _tryFetch(url, iptvUa);
+  if (data2 != null) {
+    await _saveBestUa(url, iptvUa);
+    return data2;
+  }
+
+  // فشل كلي
+  return null;
+}
+
+Future<String?> _tryFetch(String url, String ua) async {
+  try {
+    final headers = <String, String>{
+      'User-Agent': ua,
+      'Accept': '*/*',
+      'Accept-Encoding': 'gzip, deflate',
+      'Connection': 'keep-alive',
+      'Icy-MetaData': '1',
+    };
+
+    final referer = extractReferer(url);
+    if (referer.isNotEmpty) {
+      headers['Referer'] = referer;
+      headers['Origin'] = extractOrigin(url);
     }
 
-    for (int i = 0; i < fallbackUserAgents.length; i++) {
-      final ua = fallbackUserAgents[i];
-      final data = await _tryFetch(url, ua);
+    final response = await _dio.get<String>(
+      url,
+      options: Options(
+        responseType: ResponseType.plain,
+        headers: headers,
+      ),
+    );
 
-      if (data != null) {
-        await _saveBestUa(url, ua);
-        return data;
-      }
-
-      await Future.delayed(const Duration(milliseconds: 500));
+    if (response.statusCode == 200 &&
+        response.data != null &&
+        response.data!.isNotEmpty) {
+      return response.data;
     }
     return null;
+  } catch (_) {
+    return null;
   }
-
-  /// ✅ بدون Referer/Origin للروابط Xtream (لتجنب 511)
-  Future<String?> _tryFetch(String url, String ua) async {
-    try {
-      final headers = <String, String>{
-        'User-Agent': ua,
-        'Accept': '*/*',
-        'Connection': 'keep-alive',
-      };
-
-      // ✅ لا نضيف Referer/Origin لـ Xtream
-      final isXtream = XtreamDetector.isXtream(url);
-
-      if (!isXtream) {
-        try {
-          final uri = Uri.parse(url);
-          headers['Referer'] = '${uri.scheme}://${uri.host}/';
-        } catch (_) {}
-      }
-
-      final response = await _dio.get<String>(
-        url,
-        options: Options(
-          responseType: ResponseType.plain,
-          headers: headers,
-        ),
-      );
-
-      if (response.statusCode == 200 &&
-          response.data != null &&
-          response.data!.isNotEmpty) {
-        return response.data;
-      }
-      return null;
-    } catch (_) {
-      return null;
-    }
-  }
-
+}
+  
   // ==========================================================
-  //  تحليل M3U
+  //  كل دوال التحليل static (مطلوبة لـ compute)
   // ==========================================================
-  List<Channel> parseM3uContent(String content) {
+
+  static List<Channel> parseM3uContent(String content) {
     final lines = content.split('\n');
     final channels = <Channel>[];
     Map<String, String>? currentInfo;
@@ -327,7 +341,7 @@ class M3uRepository {
     return channels;
   }
 
-  Map<String, String> _parseExtInf(String line) {
+  static Map<String, String> _parseExtInf(String line) {
     final info = <String, String>{};
     final regex = RegExp(r'([a-zA-Z0-9\-_]+)="([^"]*)"');
     for (final match in regex.allMatches(line)) {
@@ -336,7 +350,7 @@ class M3uRepository {
     return info;
   }
 
-  String _extractName(String line) {
+  static String _extractName(String line) {
     final commaIndex = line.lastIndexOf(',');
     if (commaIndex == -1 || commaIndex == line.length - 1) {
       return 'قناة';
@@ -344,7 +358,7 @@ class M3uRepository {
     return line.substring(commaIndex + 1).trim();
   }
 
-  Channel _buildChannel({
+  static Channel _buildChannel({
     required String name,
     required String url,
     required Map<String, String> info,
@@ -356,6 +370,7 @@ class M3uRepository {
     final customReferer = info['referer'] ?? info['http-referrer'] ?? '';
     final customUA = info['user-agent'] ?? info['http-user-agent'] ?? '';
 
+    final category = _inferCategory(name, group);
     final countryCode = _inferCountry(name, group);
     final priority = _calculatePriority(url);
 
@@ -369,7 +384,7 @@ class M3uRepository {
       logo: logo,
       streamUrl: url,
       group: group,
-      category: 'sport',
+      category: category,
       language: 'ara',
       countryCode: countryCode,
       contentType: 'live',
@@ -380,13 +395,51 @@ class M3uRepository {
     );
   }
 
-  String _inferCountry(String name, String group) {
+  // ==========================================================
+  //  فحص رياضي (static)
+  // ==========================================================
+  static bool isSportChannel(Channel c) {
+    if (c.category == 'sport') return true;
+
+    final text = '${c.name.toLowerCase()} ${c.group.toLowerCase()}';
+
+    const sportKeywords = [
+      'bein', 'sport', 'ssc', 'رياض', 'كورة', 'alkass',
+      'dubai sport', 'ad sport', 'ksa sport', 'alwan',
+      'sky sport', 'espn', 'dazn', 'nba', 'nfl',
+      'shahid sport', 'shasha', '1001', 'sportv',
+      'فورمولا', 'moto', 'ufc', 'wwe', 'fight',
+      'fifa', 'uefa', 'caf', 'afc',
+    ];
+
+    for (final keyword in sportKeywords) {
+      if (text.contains(keyword)) return true;
+    }
+    return false;
+  }
+
+  // ==========================================================
+  //  التصنيف — رياضة فقط
+  // ==========================================================
+  static String _inferCategory(String name, String group) {
+    return 'sport';
+  }
+
+  static String _inferCountry(String name, String group) {
     final text = '${name.toLowerCase()} ${group.toLowerCase()}';
 
-    if (text.contains('saudi') || text.contains('ksa') ||
-        text.contains('سعودي')) return 'SA';
-    if (text.contains('emarat') || text.contains('uae') ||
-        text.contains('امارات') || text.contains('dubai')) return 'AE';
+    if (text.contains('saudi') ||
+        text.contains('ksa') ||
+        text.contains('سعودي')) {
+      return 'SA';
+    }
+    if (text.contains('emarat') ||
+        text.contains('uae') ||
+        text.contains('امارات') ||
+        text.contains('dubai') ||
+        text.contains('abu dhabi')) {
+      return 'AE';
+    }
     if (text.contains('egypt') || text.contains('مصر')) return 'EG';
     if (text.contains('morocco') || text.contains('مغرب')) return 'MA';
     if (text.contains('algeria') || text.contains('جزائر')) return 'DZ';
@@ -396,21 +449,29 @@ class M3uRepository {
     if (text.contains('qatar') || text.contains('قطر')) return 'QA';
     if (text.contains('jordan') || text.contains('أردن')) return 'JO';
 
+    final codeMatch = RegExp(
+      r'\b(SA|AE|EG|MA|DZ|TN|IQ|KW|QA|JO)\b',
+    ).firstMatch(group.toUpperCase());
+    if (codeMatch != null) return codeMatch.group(1)!;
+
     return '';
   }
 
-  String _generateId(String name, String url) {
+  // ==========================================================
+  //  أدوات مساعدة (static)
+  // ==========================================================
+  static String _generateId(String name, String url) {
     return '${name.hashCode}_${url.hashCode}';
   }
 
-  String _cleanName(String name) {
+  static String _cleanName(String name) {
     return name
         .replaceAll(RegExp(r'^\s*[-•·|]+\s*'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
 
-  int _calculatePriority(String url) {
+  static int _calculatePriority(String url) {
     int priority = 0;
     final lower = url.toLowerCase();
 
@@ -426,11 +487,16 @@ class M3uRepository {
     if (lower.contains('token=') || lower.contains('exp=')) priority += 3;
     if (lower.contains('4k') || lower.contains('uhd')) priority += 6;
     if (lower.contains('1080') || lower.contains('fhd')) priority += 4;
-    if (lower.contains('720') || lower.contains('hd')) priority += 2;
+    if (lower.contains('720') || RegExp(r'\bhd\b').hasMatch(lower)) {
+      priority += 2;
+    }
 
     return priority;
   }
 
+  // ==========================================================
+  //  أدوات عامة
+  // ==========================================================
   void clearCache() => _cache.clear();
   void dispose() => _dio.close();
 }
