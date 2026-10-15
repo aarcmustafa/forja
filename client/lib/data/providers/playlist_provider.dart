@@ -260,9 +260,15 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     List<Channel> channels, {
     Map<String, bool>? workingStatus,
   }) {
-    final categories = _buildCategoriesFromChannels(channels);
+    // ✅ قنوات beIN Sports الموسومة VOD هي قنوات رياضية → تُعامل كقنوات مباشرة
+    final fixed = channels
+        .map((c) => (_isBeinSports(c) && c.contentType != 'live')
+            ? c.copyWith(contentType: 'live')
+            : c)
+        .toList();
+    final categories = _buildCategoriesFromChannels(fixed);
     state = state.copyWith(
-      allChannels: channels,
+      allChannels: fixed,
       categories: categories,
       workingStatus: workingStatus ?? state.workingStatus,
     );
@@ -285,26 +291,33 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   }
 
   Future<void> _runBackgroundCheck() async {
-    final channels = state.allChannels;
-    if (channels.isEmpty) {
+    final all = state.allChannels;
+    if (all.isEmpty) {
       state = state.copyWith(isBackgroundChecking: false);
       return;
     }
 
-    // التحديث الفوري عند وصول نتائج الدفعات
+    // ترتيب الفحص: beIN Sports أولاً ثم القنوات المباشرة ثم الباقي
+    final channels = <Channel>[
+      ...all.where(_isBeinSports),
+      ...all.where((c) => !_isBeinSports(c) && c.contentType == 'live'),
+      ...all.where((c) => !_isBeinSports(c) && c.contentType != 'live'),
+    ];
+
     final newWorkingStatus = <String, bool>{...state.workingStatus};
+    var sinceApply = 0;
 
     await _checker.startBackgroundCheck(
       channels,
       alreadyChecked: state.workingStatus,
       onResult: (channelId, isWorking) {
         newWorkingStatus[channelId] = isWorking;
-
-        // تحديث الحالة (بدون إعادة بناء كل شيء)
         state = state.copyWith(workingStatus: newWorkingStatus);
 
-        // تطبيق الفلاتر عند كل 50 نتيجة
-        if (newWorkingStatus.length % 50 == 0) {
+        // تطبيق الفلاتر كل 25 نتيجة (فتختفي الميتة تباعاً)
+        sinceApply++;
+        if (sinceApply >= 25) {
+          sinceApply = 0;
           _applyFilters();
         }
       },
@@ -313,6 +326,35 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     // تحديث نهائي
     _applyFilters();
     state = state.copyWith(isBackgroundChecking: false);
+  }
+
+  // ==========================================================
+  //  ✅ قنوات beIN Sports أولاً (في كل القوائم)
+  // ==========================================================
+  static final RegExp _beinRe = RegExp(
+    r'(bein\s*sports?|beinsports?|bein\s*\d|بي\s*[اإ]ن\s*سبورت|بين\s*سبورت)',
+    caseSensitive: false,
+  );
+
+  bool _isBeinSports(Channel c) => _beinRe.hasMatch('${c.name} ${c.group}');
+
+  int _beinNumber(Channel c) {
+    final m = RegExp(r'\d+').firstMatch(c.name);
+    return int.tryParse(m?.group(0) ?? '') ?? 999;
+  }
+
+  List<Channel> _beinFirst(List<Channel> list) {
+    final bein = <Channel>[];
+    final rest = <Channel>[];
+    for (final c in list) {
+      (_isBeinSports(c) ? bein : rest).add(c);
+    }
+    if (bein.isEmpty) return list;
+    bein.sort((a, b) {
+      final d = _beinNumber(a).compareTo(_beinNumber(b));
+      return d != 0 ? d : a.name.compareTo(b.name);
+    });
+    return [...bein, ...rest];
   }
 
   // ==========================================================
@@ -414,7 +456,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
           .toList();
     }
 
-    state = state.copyWith(filteredChannels: filtered);
+    state = state.copyWith(filteredChannels: _beinFirst(filtered));
   }
 
   // ==========================================================
