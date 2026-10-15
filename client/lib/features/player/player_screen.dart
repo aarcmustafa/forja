@@ -291,12 +291,6 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
     }
 
     if (!mounted) return;
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(
-        content: Text('هذه القناة غير متاحة حاليًا'),
-        duration: Duration(seconds: 2),
-      ),
-    );
     Navigator.of(context).pop();
   }
 
