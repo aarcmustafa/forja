@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 
@@ -18,8 +17,14 @@ import 'data/providers/history_provider.dart';
 import 'data/local/secure_config.dart';
 import 'data/local/remote_config.dart';
 
+// ==========================================================
+//  روابط M3U — مشفّرة + تُحدَّث عن بعد
+// ==========================================================
 List<String> kPlaylistUrls = SecureConfig.urls;
 
+// ==========================================================
+//  نقطة انطلاق التطبيق
+// ==========================================================
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
@@ -53,6 +58,9 @@ class EstetnFarjaTvApp extends StatelessWidget {
   }
 }
 
+// ==========================================================
+//  الشاشة الرئيسية
+// ==========================================================
 class MainShell extends ConsumerStatefulWidget {
   const MainShell({super.key});
 
@@ -62,9 +70,6 @@ class MainShell extends ConsumerStatefulWidget {
 
 class _MainShellState extends ConsumerState<MainShell> {
   int _selectedIndex = 0;
-
-  // ✅ للخروج المزدوج
-  DateTime? _lastBackPress;
 
   static const int _idxHome = 0;
   static const int _idxLive = 1;
@@ -103,96 +108,39 @@ class _MainShellState extends ConsumerState<MainShell> {
     try {
       final repo = ref.read(m3uRepositoryProvider);
       await repo.maintainCache();
+      final storage = ref.read(localStorageProvider);
+      await storage.maintain();
     } catch (_) {}
 
-    if (kPlaylistUrls.isEmpty) return;
-
-    final state = ref.read(playlistProvider);
-    if (state.allChannels.isNotEmpty || state.isLoading) return;
-
-    await ref.read(playlistProvider.notifier).loadPlaylists(kPlaylistUrls);
-
-    Future.delayed(const Duration(seconds: 5), () async {
-      try {
-        final remote = RemoteConfig();
-        final cached = await remote.loadCached();
-        if (cached.isNotEmpty) {
-          kPlaylistUrls = cached;
-        }
-        final remoteUrls = await remote.fetchRemote();
+    try {
+      final remote = RemoteConfig();
+      final cached = await remote.loadCached();
+      if (cached.isNotEmpty) {
+        kPlaylistUrls = cached;
+      }
+      remote.fetchRemote().then((remoteUrls) {
         if (remoteUrls != null && remoteUrls.isNotEmpty) {
           kPlaylistUrls = remoteUrls;
         }
-      } catch (_) {}
-    });
+      });
+    } catch (_) {}
+
+    if (kPlaylistUrls.isEmpty) return;
+    final state = ref.read(playlistProvider);
+    if (state.allChannels.isNotEmpty || state.isLoading) return;
+    await ref.read(playlistProvider.notifier).loadPlaylists(kPlaylistUrls);
   }
 
-  // ==========================================================
-  //  ✅ BUILD مع PopScope
-  // ==========================================================
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop) return;
-        _handleBackPress();
-      },
-      child: Directionality(
-        textDirection: TextDirection.rtl,
-        child: Scaffold(
-          body: Row(
-            children: [
-              _buildSidebar(),
-              Expanded(child: _buildContent()),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ==========================================================
-  //  ✅ خروج مزدوج الضغط
-  // ==========================================================
-  void _handleBackPress() {
-    // إذا لم نكن على الرئيسية → ارجع للرئيسية
-    if (_selectedIndex != _idxHome) {
-      setState(() => _selectedIndex = _idxHome);
-      return;
-    }
-
-    // نحن على الرئيسية → خروج مزدوج
-    final now = DateTime.now();
-
-    if (_lastBackPress == null ||
-        now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
-      _lastBackPress = now;
-      _showExitMessage();
-      return;
-    }
-
-    // الضغط الثاني خلال ثانيتين → خروج
-    SystemNavigator.pop();
-  }
-
-  void _showExitMessage() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Directionality(
-          textDirection: TextDirection.rtl,
-          child: Text(
-            'اضغط مرة أخرى للخروج',
-            style: TextStyle(color: Colors.white, fontSize: 14),
-          ),
-        ),
-        backgroundColor: const Color(0xFF141A2E),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-        margin: const EdgeInsets.all(20),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: Color(0xFF00C8FF), width: 1.5),
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        body: Row(
+          children: [
+            _buildSidebar(),
+            Expanded(child: _buildContent()),
+          ],
         ),
       ),
     );
@@ -240,10 +188,13 @@ class _MainShellState extends ConsumerState<MainShell> {
           ),
           const Divider(color: Color(0xFF2A3350)),
           const SizedBox(height: 8),
+
           _buildSearchButton(),
           const SizedBox(height: 8),
+
           for (int i = 0; i < _menuItems.length; i++)
             _buildMenuItem(i, badge: i == _idxFavorites ? favCount : 0),
+
           const Spacer(),
           const Divider(color: Color(0xFF2A3350)),
           const SizedBox(height: 12),
