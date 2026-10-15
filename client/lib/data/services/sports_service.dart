@@ -35,12 +35,8 @@ class SportMatch {
   });
 
   bool get isLive =>
-      status == '1H' ||
-      status == '2H' ||
-      status == 'HT' ||
-      status == 'ET' ||
-      status == 'P' ||
-      status == 'LIVE';
+      status == '1H' || status == '2H' || status == 'HT' ||
+      status == 'ET' || status == 'P' || status == 'LIVE';
 
   bool get isFinished =>
       status == 'FT' || status == 'AET' || status == 'PEN';
@@ -74,10 +70,8 @@ class SportMatch {
   String get timeUntilStart {
     if (isLive) return 'الآن';
     if (isFinished) return 'انتهت';
-
     final diff = startTime.difference(DateTime.now());
     if (diff.isNegative) return 'بدأت';
-
     if (diff.inDays > 0) return 'بعد ${diff.inDays} يوم';
     if (diff.inHours > 0) {
       return 'بعد ${diff.inHours}س ${diff.inMinutes % 60}د';
@@ -162,14 +156,10 @@ class SportsService {
     } catch (_) {}
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  جلب المباريات (اليوم + غدًا) مع كاش
-  // ══════════════════════════════════════════════════════════
   Future<List<SportMatch>> getTodayFootballMatches({
     bool forceRefresh = false,
   }) async {
     await _initCache();
-
     final cacheKey = 'matches_${_dateKey(DateTime.now())}';
 
     if (!forceRefresh && _box != null) {
@@ -201,9 +191,7 @@ class SportsService {
 
     if (_box != null && all.isNotEmpty) {
       try {
-        final jsonStr = jsonEncode(
-          all.map((m) => m.toJson()).toList(),
-        );
+        final jsonStr = jsonEncode(all.map((m) => m.toJson()).toList());
         await _box!.put(cacheKey, jsonStr);
         await _box!.put(
           '${cacheKey}_at',
@@ -220,12 +208,10 @@ class SportsService {
       final d = '${date.year}-'
           '${date.month.toString().padLeft(2, '0')}-'
           '${date.day.toString().padLeft(2, '0')}';
-
       final url = '$_baseUrl/eventsday.php?d=$d&s=Soccer';
       final response = await _dio.get(url);
 
       if (response.statusCode != 200 || response.data == null) return [];
-
       final events = response.data['events'];
       if (events is! List) return [];
 
@@ -261,11 +247,8 @@ class SportsService {
     try {
       final date = DateTime.parse(dateStr);
       final parts = timeStr.split(':');
-
       final utc = DateTime.utc(
-        date.year,
-        date.month,
-        date.day,
+        date.year, date.month, date.day,
         int.tryParse(parts[0]) ?? 0,
         int.tryParse(parts[1]) ?? 0,
       );
@@ -291,7 +274,7 @@ class SportsService {
   }
 
   // ══════════════════════════════════════════════════════════
-  //  فلترة مباريات الجزائر والدوريات الأوروبية الكبرى
+  //  فلترة: الجزائر + الدوريات الأوروبية الكبرى
   // ══════════════════════════════════════════════════════════
   List<SportMatch> filterImportant(List<SportMatch> matches) {
     final filtered = matches.where((m) {
@@ -340,11 +323,9 @@ class SportsService {
     for (final club in clubs) {
       if (home.contains(club) || away.contains(club)) return true;
     }
-
     if (league.contains('algerian')) return true;
     if (league.contains('ligue 1 mobilis')) return true;
     if (league.contains('ligue professionnelle 1')) return true;
-
     return false;
   }
 
@@ -375,22 +356,16 @@ class SportsService {
 
     if (league.contains('english premier league')) return true;
     if (league == 'premier league') return true;
-
     if (league.contains('spanish la liga')) return true;
     if (league == 'la liga') return true;
-
     if (league.contains('italian serie a')) return true;
     if (league == 'serie a') return true;
-
     if (league.contains('german bundesliga')) return true;
     if (league == 'bundesliga') return true;
-
     if (league.contains('french ligue 1')) return true;
     if (league == 'ligue 1') return true;
-
     if (league.contains('portuguese primeira liga')) return true;
     if (league == 'primeira liga') return true;
-
     if (league.contains('dutch eredivisie')) return true;
     if (league == 'eredivisie') return true;
 
@@ -415,7 +390,6 @@ class SportsService {
     }
     if (league.contains('confederations cup')) return true;
     if (league.contains('club world cup')) return true;
-
     return false;
   }
 
