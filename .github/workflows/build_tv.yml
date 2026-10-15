@@ -253,7 +253,6 @@ jobs:
               print(f"updated {path}")
           PYEOF
 
-      # ✅ جديد: تمكين Core Library Desugaring (مطلوب لـ flutter_local_notifications)
       - name: Enable Core Library Desugaring
         working-directory: client
         run: |
@@ -268,20 +267,30 @@ jobs:
               src = open(path, "r", encoding="utf-8").read()
               is_kts = path.endswith(".kts")
 
-              # 1) إضافة coreLibraryDesugaring إلى dependencies
-              if "coreLibraryDesugaring" not in src:
-                  marker = "dependencies {"
-                  idx = src.find(marker)
-                  if idx != -1:
-                      insert_at = idx + len(marker)
-                      if is_kts:
-                          block = '\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")'
-                      else:
-                          block = "\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'"
-                      src = src[:insert_at] + block + src[insert_at:]
-                      print(f"Added coreLibraryDesugaring to {path}")
+              dep_line = (
+                  'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")'
+                  if is_kts
+                  else "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'"
+              )
 
-              # 2) تمكين desugaring داخل compileOptions
+              # ─────────────────────────────────────────
+              #  الخطوة 1: أضف dependency
+              # ─────────────────────────────────────────
+              if "desugar_jdk_libs" not in src:
+                  if "dependencies {" in src:
+                      idx = src.find("dependencies {")
+                      insert_at = idx + len("dependencies {")
+                      src = src[:insert_at] + "\n    " + dep_line + src[insert_at:]
+                      print(f"[1] Added desugar dependency to existing dependencies block in {path}")
+                  else:
+                      src = src.rstrip() + f"\n\ndependencies {{\n    {dep_line}\n}}\n"
+                      print(f"[1] Created new dependencies block in {path}")
+              else:
+                  print(f"[1] desugar_jdk_libs already present in {path}")
+
+              # ─────────────────────────────────────────
+              #  الخطوة 2: فعّل core library desugaring
+              # ─────────────────────────────────────────
               if is_kts:
                   if "isCoreLibraryDesugaringEnabled" not in src:
                       if "compileOptions {" in src:
@@ -290,21 +299,21 @@ jobs:
                               "compileOptions {\n        isCoreLibraryDesugaringEnabled = true",
                               1,
                           )
-                          print(f"Patched existing compileOptions in {path}")
-                      else:
-                          marker = "android {"
-                          idx = src.find(marker)
-                          if idx != -1:
-                              insert_at = idx + len(marker)
-                              block = """
-          compileOptions {
-              isCoreLibraryDesugaringEnabled = true
-              sourceCompatibility = JavaVersion.VERSION_17
-              targetCompatibility = JavaVersion.VERSION_17
-          }
-          """
-                              src = src[:insert_at] + block + src[insert_at:]
-                              print(f"Created compileOptions in {path}")
+                          print(f"[2] Patched existing compileOptions in {path}")
+                      elif "android {" in src:
+                          idx = src.find("android {")
+                          insert_at = idx + len("android {")
+                          block = """
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+"""
+                          src = src[:insert_at] + block + src[insert_at:]
+                          print(f"[2] Created compileOptions in {path}")
+                  else:
+                      print(f"[2] isCoreLibraryDesugaringEnabled already present in {path}")
               else:
                   if "coreLibraryDesugaringEnabled" not in src:
                       if "compileOptions {" in src:
@@ -313,23 +322,24 @@ jobs:
                               "compileOptions {\n        coreLibraryDesugaringEnabled true",
                               1,
                           )
-                          print(f"Patched existing compileOptions in {path}")
-                      else:
-                          marker = "android {"
-                          idx = src.find(marker)
-                          if idx != -1:
-                              insert_at = idx + len(marker)
-                              block = """
-          compileOptions {
-              coreLibraryDesugaringEnabled true
-              sourceCompatibility JavaVersion.VERSION_17
-              targetCompatibility JavaVersion.VERSION_17
-          }
-          """
-                              src = src[:insert_at] + block + src[insert_at:]
-                              print(f"Created compileOptions in {path}")
+                          print(f"[2] Patched existing compileOptions in {path}")
+                      elif "android {" in src:
+                          idx = src.find("android {")
+                          insert_at = idx + len("android {")
+                          block = """
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+"""
+                          src = src[:insert_at] + block + src[insert_at:]
+                          print(f"[2] Created compileOptions in {path}")
+                  else:
+                      print(f"[2] coreLibraryDesugaringEnabled already present in {path}")
 
               open(path, "w", encoding="utf-8").write(src)
+              print(f"[OK] Saved {path}")
           PYEOF
 
       - name: Override AndroidManifest (TV)
