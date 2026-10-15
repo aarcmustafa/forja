@@ -39,14 +39,12 @@ jobs:
           cp -r /tmp/temp_app/android "$GITHUB_WORKSPACE/client/android"
           echo "Copied android folder"
 
-      - name: Auto-fix Dart files (احتياطي)
+      - name: Auto-fix Dart files
         run: |
-          echo "=== Fix 1: Add flutter/services import ==="
           find client/lib -name "*.dart" | while read f; do
             if grep -q "KeyDownEvent" "$f"; then
               if ! grep -q "package:flutter/services.dart" "$f"; then
                 sed -i "1i import 'package:flutter/services.dart';" "$f"
-                echo "Added import to: $f"
               fi
             fi
           done
@@ -86,7 +84,6 @@ jobs:
           elif [ -d "$BASE/mipmap-hdpi" ]; then RES_PATH="$BASE"
           fi
           echo "RES_PATH=$RES_PATH" >> $GITHUB_OUTPUT
-          echo "Detected: $RES_PATH"
 
       - name: Replace Android res folder
         run: |
@@ -97,14 +94,11 @@ jobs:
           rm -rf "$RES_DEST"
           mkdir -p "$RES_DEST"
           cp -r "$RES_SRC"/* "$RES_DEST/"
-          find "$RES_DEST" -type f | head -40 || true
 
-      - name: Patch styles.xml (fix Theme.SplashScreen)
+      - name: Patch styles.xml
         run: |
           RES_DEST="client/android/app/src/main/res"
-          echo "=== Patching styles.xml files ==="
           find "$RES_DEST" -name "styles.xml" | while read f; do
-            echo "Patching: $f"
             sed -i 's|parent="Theme.SplashScreen"|parent="android:Theme.Black.NoTitleBar"|g' "$f"
             sed -i '/windowSplashScreenBackground/d' "$f"
             sed -i '/windowSplashScreenAnimatedIcon/d' "$f"
@@ -117,9 +111,7 @@ jobs:
         run: |
           RES_DEST="client/android/app/src/main/res"
           if [ -d "$RES_DEST/values-v31" ]; then
-            echo "=== Found values-v31 ==="
             find "$RES_DEST/values-v31" -name "*.xml" | while read f; do
-              echo "Patching: $f"
               sed -i 's|parent="Theme.SplashScreen"|parent="android:Theme.Black.NoTitleBar"|g' "$f"
               sed -i '/windowSplashScreenBackground/d' "$f"
               sed -i '/windowSplashScreenAnimatedIcon/d' "$f"
@@ -135,122 +127,49 @@ jobs:
         run: |
           mkdir -p client/lib/data/local
           python3 client/scripts/gen_config.py > client/lib/data/local/secure_config.dart
-          echo "Generated secure_config.dart"
 
       - name: Verify URLs
         run: |
           count=$(grep -c "^\s*\['" client/lib/data/local/secure_config.dart || echo 0)
-          echo "URLs: $count"
           if [ "$count" -lt 1 ]; then echo "ERROR: no URLs"; exit 1; fi
-          echo "OK"
 
       - name: Bump minSdkVersion to 23
         working-directory: client
         run: |
           if [ -f android/app/build.gradle ]; then
             sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
-            echo "updated build.gradle"
           fi
           if [ -f android/app/build.gradle.kts ]; then
             sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 23/' android/app/build.gradle.kts
-            echo "updated build.gradle.kts"
           fi
 
-      - name: Limit ABIs to arm64 plus armv7
+      - name: Patch build.gradle (ABIs + packaging + splashscreen)
         working-directory: client
         run: |
           python3 - <<'PYEOF'
           import os
-          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
-          for path in candidates:
-              if not os.path.exists(path): continue
+          KTS_NDK = "\nndk { abiFilters += listOf(\"arm64-v8a\", \"armeabi-v7a\") }\n"
+          GR_NDK = "\nndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }\n"
+          KTS_PACK = "\npackaging {\n    jniLibs { useLegacyPackaging = true }\n    resources { excludes += setOf(\"META-INF/*.kotlin_module\") }\n}\n"
+          GR_PACK = "\npackagingOptions {\n    jniLibs { useLegacyPackaging = true }\n    resources { excludes += ['META-INF/*.kotlin_module'] }\n}\n"
+          KTS_SPLASH = "\nimplementation(\"androidx.core:core-splashscreen:1.0.1\")\n"
+          GR_SPLASH = "\nimplementation 'androidx.core:core-splashscreen:1.0.1'\n"
+          for path in ["android/app/build.gradle.kts", "android/app/build.gradle"]:
+              if not os.path.exists(path):
+                  continue
               src = open(path, "r", encoding="utf-8").read()
-              if "abiFilters" in src:
-                  print(f"abiFilters already in {path}")
-                  continue
-              marker = "defaultConfig {"
-              idx = src.find(marker)
-              if idx == -1:
-                  print(f"defaultConfig not in {path}")
-                  continue
-              insert_at = idx + len(marker)
-              if path.endswith(".kts"):
-                  block = """
-          ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
-          """
-              else:
-                  block = """
-          ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
-          """
-              src = src[:insert_at] + block + src[insert_at:]
+              is_kts = path.endswith(".kts")
+              if "abiFilters" not in src and "defaultConfig {" in src:
+                  i = src.find("defaultConfig {") + len("defaultConfig {")
+                  src = src[:i] + (KTS_NDK if is_kts else GR_NDK) + src[i:]
+              if "packagingOptions" not in src and "packaging {" not in src and "android {" in src:
+                  i = src.find("android {") + len("android {")
+                  src = src[:i] + (KTS_PACK if is_kts else GR_PACK) + src[i:]
+              if "core-splashscreen" not in src and "dependencies {" in src:
+                  i = src.find("dependencies {") + len("dependencies {")
+                  src = src[:i] + (KTS_SPLASH if is_kts else GR_SPLASH) + src[i:]
               open(path, "w", encoding="utf-8").write(src)
-              print(f"updated {path}")
-          PYEOF
-
-      - name: Add packaging options
-        working-directory: client
-        run: |
-          python3 - <<'PYEOF'
-          import os
-          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
-          for path in candidates:
-              if not os.path.exists(path): continue
-              src = open(path, "r", encoding="utf-8").read()
-              if "packagingOptions" in src or "packaging {" in src:
-                  print(f"already in {path}")
-                  continue
-              marker = "android {"
-              idx = src.find(marker)
-              if idx == -1: continue
-              insert_at = idx + len(marker)
-              if path.endswith(".kts"):
-                  block = """
-          packaging {
-              jniLibs { useLegacyPackaging = true }
-              resources { excludes += setOf("META-INF/*.kotlin_module") }
-          }
-          """
-              else:
-                  block = """
-          packagingOptions {
-              jniLibs { useLegacyPackaging = true }
-              resources { excludes += ['META-INF/*.kotlin_module'] }
-          }
-          """
-              src = src[:insert_at] + block + src[insert_at:]
-              open(path, "w", encoding="utf-8").write(src)
-              print(f"updated {path}")
-          PYEOF
-
-      - name: Add AndroidX SplashScreen dependency
-        working-directory: client
-        run: |
-          python3 - <<'PYEOF'
-          import os
-          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
-          for path in candidates:
-              if not os.path.exists(path): continue
-              src = open(path, "r", encoding="utf-8").read()
-              if "core-splashscreen" in src:
-                  print(f"already in {path}")
-                  continue
-              marker = "dependencies {"
-              idx = src.find(marker)
-              if idx == -1:
-                  print(f"dependencies not in {path}")
-                  continue
-              insert_at = idx + len(marker)
-              if path.endswith(".kts"):
-                  block = """
-          implementation("androidx.core:core-splashscreen:1.0.1")
-          """
-              else:
-                  block = """
-          implementation 'androidx.core:core-splashscreen:1.0.1'
-          """
-              src = src[:insert_at] + block + src[insert_at:]
-              open(path, "w", encoding="utf-8").write(src)
-              print(f"updated {path}")
+              print("[OK] patched " + path)
           PYEOF
 
       - name: Enable Core Library Desugaring
@@ -258,82 +177,43 @@ jobs:
         run: |
           python3 - <<'PYEOF'
           import os
-
-          candidates = ["android/app/build.gradle.kts", "android/app/build.gradle"]
-          for path in candidates:
+          KTS_DEP = 'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")'
+          GR_DEP = "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'"
+          KTS_CMP = "\n    compileOptions {\n        isCoreLibraryDesugaringEnabled = true\n        sourceCompatibility = JavaVersion.VERSION_17\n        targetCompatibility = JavaVersion.VERSION_17\n    }\n"
+          GR_CMP = "\n    compileOptions {\n        coreLibraryDesugaringEnabled true\n        sourceCompatibility JavaVersion.VERSION_17\n        targetCompatibility JavaVersion.VERSION_17\n    }\n"
+          for path in ["android/app/build.gradle.kts", "android/app/build.gradle"]:
               if not os.path.exists(path):
                   continue
-
               src = open(path, "r", encoding="utf-8").read()
               is_kts = path.endswith(".kts")
-
-              dep_line = (
-                  'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")'
-                  if is_kts
-                  else "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'"
-              )
-
+              dep = KTS_DEP if is_kts else GR_DEP
+              cmp = KTS_CMP if is_kts else GR_CMP
               if "desugar_jdk_libs" not in src:
                   if "dependencies {" in src:
-                      idx = src.find("dependencies {")
-                      insert_at = idx + len("dependencies {")
-                      src = src[:insert_at] + "\n    " + dep_line + src[insert_at:]
-                      print(f"[1] Added desugar dependency to existing dependencies block in {path}")
+                      i = src.find("dependencies {") + len("dependencies {")
+                      src = src[:i] + "\n    " + dep + src[i:]
+                      print("[1] Added dep to " + path)
                   else:
-                      src = src.rstrip() + f"\n\ndependencies {{\n    {dep_line}\n}}\n"
-                      print(f"[1] Created new dependencies block in {path}")
+                      src = src.rstrip() + "\n\ndependencies {\n    " + dep + "\n}\n"
+                      print("[1] Created dependencies in " + path)
               else:
-                  print(f"[1] desugar_jdk_libs already present in {path}")
-
-              if is_kts:
-                  if "isCoreLibraryDesugaringEnabled" not in src:
-                      if "compileOptions {" in src:
-                          src = src.replace(
-                              "compileOptions {",
-                              "compileOptions {\n        isCoreLibraryDesugaringEnabled = true",
-                              1,
-                          )
-                          print(f"[2] Patched existing compileOptions in {path}")
-                      elif "android {" in src:
-                          idx = src.find("android {")
-                          insert_at = idx + len("android {")
-                          block = """
-    compileOptions {
-        isCoreLibraryDesugaringEnabled = true
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-"""
-                          src = src[:insert_at] + block + src[insert_at:]
-                          print(f"[2] Created compileOptions in {path}")
-                  else:
-                      print(f"[2] isCoreLibraryDesugaringEnabled already present in {path}")
+                  print("[1] dep already present in " + path)
+              flag = "isCoreLibraryDesugaringEnabled" if is_kts else "coreLibraryDesugaringEnabled"
+              if flag not in src:
+                  if "compileOptions {" in src:
+                      if is_kts:
+                          src = src.replace("compileOptions {", "compileOptions {\n        isCoreLibraryDesugaringEnabled = true", 1)
+                      else:
+                          src = src.replace("compileOptions {", "compileOptions {\n        coreLibraryDesugaringEnabled true", 1)
+                      print("[2] Patched compileOptions in " + path)
+                  elif "android {" in src:
+                      i = src.find("android {") + len("android {")
+                      src = src[:i] + cmp + src[i:]
+                      print("[2] Created compileOptions in " + path)
               else:
-                  if "coreLibraryDesugaringEnabled" not in src:
-                      if "compileOptions {" in src:
-                          src = src.replace(
-                              "compileOptions {",
-                              "compileOptions {\n        coreLibraryDesugaringEnabled true",
-                              1,
-                          )
-                          print(f"[2] Patched existing compileOptions in {path}")
-                      elif "android {" in src:
-                          idx = src.find("android {")
-                          insert_at = idx + len("android {")
-                          block = """
-    compileOptions {
-        coreLibraryDesugaringEnabled true
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
-"""
-                          src = src[:insert_at] + block + src[insert_at:]
-                          print(f"[2] Created compileOptions in {path}")
-                  else:
-                      print(f"[2] coreLibraryDesugaringEnabled already present in {path}")
-
+                  print("[2] flag already present in " + path)
               open(path, "w", encoding="utf-8").write(src)
-              print(f"[OK] Saved {path}")
+              print("[OK] Saved " + path)
           PYEOF
 
       - name: Override AndroidManifest (TV)
@@ -405,7 +285,6 @@ jobs:
         run: |
           mkdir -p artifacts
           cp client/build/app/outputs/flutter-apk/app-release.apk artifacts/estitn-farja-tv.apk || true
-          ls -lh artifacts/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -418,4 +297,3 @@ jobs:
         if: always()
         run: |
           rm -f "$GITHUB_WORKSPACE/client/lib/data/local/secure_config.dart" || true
-          echo "Cleanup done"
