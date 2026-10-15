@@ -14,13 +14,8 @@ import 'data/models/channel.dart';
 import 'data/providers/playlist_provider.dart';
 import 'data/providers/favorites_provider.dart';
 import 'data/providers/history_provider.dart';
-import 'data/local/secure_config.dart';
+import 'data/config/app_config.dart';
 import 'data/local/remote_config.dart';
-
-// ==========================================================
-//  روابط M3U — مشفّرة + تُحدَّث عن بعد
-// ==========================================================
-List<String> kPlaylistUrls = SecureConfig.urls;
 
 // ==========================================================
 //  نقطة انطلاق التطبيق
@@ -146,6 +141,9 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
+  // ==========================================================
+  //  الشريط الجانبي
+  // ==========================================================
   Widget _buildSidebar() {
     final favCount = ref.watch(favoritesProvider).length;
 
@@ -319,7 +317,9 @@ class _MainShellState extends ConsumerState<MainShell> {
                   horizontal: 16,
                 ),
                 decoration: BoxDecoration(
-                  color: active ? const Color(0xFF00C8FF) : Colors.transparent,
+                  color: active
+                      ? const Color(0xFF00C8FF)
+                      : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Row(
@@ -373,69 +373,3 @@ class _MainShellState extends ConsumerState<MainShell> {
       ),
     );
   }
-  
-  Widget _buildContent() {
-    switch (_selectedIndex) {
-      case _idxHome:
-        return const HomeScreen();
-
-      case _idxLive:
-        return LiveTvScreen(
-          playlistUrls: kPlaylistUrls,
-          onChannelTap: _openChannel,
-        );
-
-      case _idxMatches:
-        return _buildMatchesScreen();
-
-      case _idxFavorites:
-        return const FavoritesScreen();
-
-      case _idxPackages:
-        return const PackagesScreen();
-
-      case _idxSettings:
-        return const SettingsScreen();
-
-      default:
-        return const HomeScreen();
-    }
-  }
-
-  Widget _buildMatchesScreen() {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: const Color(0xFF0A0E1A),
-        body: SafeArea(
-          child: SingleChildScrollView(
-            child: Column(
-              children: [
-                const SizedBox(height: 20),
-                SportsMatchesWidget(
-                  onChannelTap: _openChannel,
-                ),
-                const SizedBox(height: 40),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _openChannel(Channel channel) {
-    ref.read(historyProvider.notifier).record(channel);
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PlayerScreen(
-          streamUrl: channel.streamUrl,
-          channelName: channel.name,
-          channelLogo: channel.logo,
-        ),
-      ),
-    );
-  }
-}
