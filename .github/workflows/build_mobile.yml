@@ -117,6 +117,7 @@ jobs:
         run: |
           RES_DEST="client/android/app/src/main/res"
           if [ -d "$RES_DEST/values-v31" ]; then
+            echo "=== Found values-v31 ==="
             find "$RES_DEST/values-v31" -name "*.xml" | while read f; do
               echo "Patching: $f"
               sed -i 's|parent="Theme.SplashScreen"|parent="android:Theme.Black.NoTitleBar"|g' "$f"
@@ -148,9 +149,11 @@ jobs:
         run: |
           if [ -f android/app/build.gradle ]; then
             sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' android/app/build.gradle
+            echo "updated build.gradle"
           fi
           if [ -f android/app/build.gradle.kts ]; then
             sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 23/' android/app/build.gradle.kts
+            echo "updated build.gradle.kts"
           fi
 
       - name: Limit ABIs to arm64 plus armv7
@@ -162,10 +165,14 @@ jobs:
           for path in candidates:
               if not os.path.exists(path): continue
               src = open(path, "r", encoding="utf-8").read()
-              if "abiFilters" in src: continue
+              if "abiFilters" in src:
+                  print(f"abiFilters already in {path}")
+                  continue
               marker = "defaultConfig {"
               idx = src.find(marker)
-              if idx == -1: continue
+              if idx == -1:
+                  print(f"defaultConfig not in {path}")
+                  continue
               insert_at = idx + len(marker)
               if path.endswith(".kts"):
                   block = """
@@ -177,6 +184,7 @@ jobs:
           """
               src = src[:insert_at] + block + src[insert_at:]
               open(path, "w", encoding="utf-8").write(src)
+              print(f"updated {path}")
           PYEOF
 
       - name: Add packaging options
@@ -188,7 +196,9 @@ jobs:
           for path in candidates:
               if not os.path.exists(path): continue
               src = open(path, "r", encoding="utf-8").read()
-              if "packagingOptions" in src or "packaging {" in src: continue
+              if "packagingOptions" in src or "packaging {" in src:
+                  print(f"already in {path}")
+                  continue
               marker = "android {"
               idx = src.find(marker)
               if idx == -1: continue
@@ -209,6 +219,7 @@ jobs:
           """
               src = src[:insert_at] + block + src[insert_at:]
               open(path, "w", encoding="utf-8").write(src)
+              print(f"updated {path}")
           PYEOF
 
       - name: Add AndroidX SplashScreen dependency
@@ -220,10 +231,14 @@ jobs:
           for path in candidates:
               if not os.path.exists(path): continue
               src = open(path, "r", encoding="utf-8").read()
-              if "core-splashscreen" in src: continue
+              if "core-splashscreen" in src:
+                  print(f"already in {path}")
+                  continue
               marker = "dependencies {"
               idx = src.find(marker)
-              if idx == -1: continue
+              if idx == -1:
+                  print(f"dependencies not in {path}")
+                  continue
               insert_at = idx + len(marker)
               if path.endswith(".kts"):
                   block = """
@@ -235,6 +250,7 @@ jobs:
           """
               src = src[:insert_at] + block + src[insert_at:]
               open(path, "w", encoding="utf-8").write(src)
+              print(f"updated {path}")
           PYEOF
 
       - name: Enable Core Library Desugaring
@@ -257,9 +273,6 @@ jobs:
                   else "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'"
               )
 
-              # ─────────────────────────────────────────
-              #  الخطوة 1: أضف dependency
-              # ─────────────────────────────────────────
               if "desugar_jdk_libs" not in src:
                   if "dependencies {" in src:
                       idx = src.find("dependencies {")
@@ -272,9 +285,6 @@ jobs:
               else:
                   print(f"[1] desugar_jdk_libs already present in {path}")
 
-              # ─────────────────────────────────────────
-              #  الخطوة 2: فعّل core library desugaring
-              # ─────────────────────────────────────────
               if is_kts:
                   if "isCoreLibraryDesugaringEnabled" not in src:
                       if "compileOptions {" in src:
