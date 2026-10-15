@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 /// شاشة المشغل — محسّنة للتلفاز مع دعم كل صيغ IPTV
+/// ✅ لا تعرض أي رسائل خطأ أو محاولات اتصال — دائرة تحميل فقط
 class PlayerScreen extends StatefulWidget {
   final String streamUrl;
   final String channelName;
@@ -27,10 +28,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   bool _isLoading = true;
   bool _showControls = true;
-  String? _error;
+  bool _fatalError = false;    // ✅ خطأ قاتل: يظهر فقط دائرة حمراء
   Timer? _hideControlsTimer;
   Timer? _retryTimer;
   Timer? _volumeBarTimer;
+  Timer? _fatalTimeoutTimer;   // ✅ مهلة نهائية قبل إظهار دائرة حمراء
 
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -44,7 +46,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _showVolumeBar = false;
 
   int _retryCount = 0;
-  static const int _maxRetries = 3;
+  static const int _maxRetries = 5;                          // ✅ زيادة المحاولات
+  static const Duration _retryDelay = Duration(seconds: 3);
+  static const Duration _fatalTimeout = Duration(seconds: 45); // ✅ مهلة نهائية
 
   // مسارات الترجمة
   List<SubtitleTrack> _subtitleTracks = [];
@@ -56,6 +60,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void initState() {
     super.initState();
     _initializePlayer();
+    _startFatalTimeout();
   }
 
   @override
@@ -63,374 +68,382 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hideControlsTimer?.cancel();
     _retryTimer?.cancel();
     _volumeBarTimer?.cancel();
+    _fatalTimeoutTimer?.cancel();
     player.dispose();
     super.dispose();
   }
 
-  // ==========================================================
-  //  التهيئة
-  // ==========================================================
-  Future<void> _initializePlayer() async {
-    try {
-      player = Player(
-        configuration: const PlayerConfiguration(
-          bufferSize: 96 * 1024 * 1024,
-          logLevel: MPVLogLevel.error,
-          protocolWhitelist: [
-            'http', 'https', 'hls', 'm3u8',
-            'mpegts', 'ts', 'dash', 'mpd',
-            'rtsp', 'rtsps', 'rtmp', 'rtmps', 'rtmpt', 'rtmpe',
-            'udp', 'rtp', 'mms', 'mmsh', 'mmst',
-            'tcp', 'tls', 'crypto', 'file', 'concat', 'data',
-            'srt', 'rist',
-          ],
-        ),
-      );
-
-      controller = VideoController(player);
-
-      player.stream.playing.listen((playing) {
-        if (!mounted) return;
-        setState(() => _isPlaying = playing);
-      });
-
-      player.stream.buffering.listen((buffering) {
-        if (!mounted) return;
-        setState(() {
-          _isBuffering = buffering;
-          if (!buffering) _isLoading = false;
-        });
-      });
-
-      player.stream.position.listen((pos) {
-        if (!mounted) return;
-        setState(() => _position = pos);
-      });
-
-      player.stream.duration.listen((dur) {
-        if (!mounted) return;
-        setState(() => _duration = dur);
-      });
-
-      player.stream.error.listen((error) {
-        if (!mounted) return;
-        _handleError(error);
-      });
-
-      player.stream.tracks.listen((tracks) {
-        if (!mounted) return;
-        setState(() {
-          _subtitleTracks = tracks.subtitle;
-        });
-      });
-
-      player.stream.track.listen((track) {
-        if (!mounted) return;
-        setState(() {
-          _currentSubtitleTrack = track.subtitle;
-        });
-      });
-
-      await _openStream();
-      _startHideControlsTimer();
-    } catch (e) {
+  /// ✅ مؤقت أمان: إذا لم يبدأ البث خلال 45 ثانية → حالة فشل
+  void _startFatalTimeout() {
+    _fatalTimeoutTimer?.cancel();
+    _fatalTimeoutTimer = Timer(_fatalTimeout, () {
       if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _isLoading = false;
-      });
-    }
+      if (_isLoading && !_isPlaying) {
+        setState(() => _fatalError = true);
+      }
+    });
   }
-
   // ==========================================================
-  //  فتح البث
-  // ==========================================================
-  Future<void> _openStream() async {
-    final headers = _buildHeaders(widget.streamUrl);
-
-    await player.open(
-      Media(
-        widget.streamUrl,
-        httpHeaders: headers,
+//  التهيئة
+// ==========================================================
+Future<void> _initializePlayer() async {
+  try {
+    player = Player(
+      configuration: const PlayerConfiguration(
+        bufferSize: 96 * 1024 * 1024,
+        logLevel: MPVLogLevel.error,
+        protocolWhitelist: [
+          'http', 'https', 'hls', 'm3u8',
+          'mpegts', 'ts', 'dash', 'mpd',
+          'rtsp', 'rtsps', 'rtmp', 'rtmps', 'rtmpt', 'rtmpe',
+          'udp', 'rtp', 'mms', 'mmsh', 'mmst',
+          'tcp', 'tls', 'crypto', 'file', 'concat', 'data',
+          'srt', 'rist',
+        ],
       ),
-      play: true,
     );
 
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted && _isLoading) {
-        setState(() => _isLoading = false);
+    controller = VideoController(player);
+
+    player.stream.playing.listen((playing) {
+      if (!mounted) return;
+      setState(() => _isPlaying = playing);
+      // ✅ عند بدء التشغيل، أوقف مؤقت الفشل
+      if (playing) {
+        _fatalTimeoutTimer?.cancel();
+        _retryCount = 0;
       }
     });
 
-    _retryCount = 0;
-  }
+    player.stream.buffering.listen((buffering) {
+      if (!mounted) return;
+      setState(() {
+        _isBuffering = buffering;
+        if (!buffering) _isLoading = false;
+      });
+    });
 
-  Map<String, String> _buildHeaders(String url) {
-    final headers = <String, String>{
-      'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
-      'Accept': '*/*',
-      'Connection': 'keep-alive',
-      'Icy-MetaData': '1',
-    };
+    player.stream.position.listen((pos) {
+      if (!mounted) return;
+      setState(() => _position = pos);
+    });
 
-    try {
-      final uri = Uri.parse(url);
-      final origin = '${uri.scheme}://${uri.host}';
-      headers['Referer'] = '$origin/';
-      headers['Origin'] = origin;
-    } catch (_) {}
+    player.stream.duration.listen((dur) {
+      if (!mounted) return;
+      setState(() => _duration = dur);
+    });
 
-    return headers;
-  }
+    // ✅ الأخطاء تُعالج بصمت — لا تُعرض أبدًا
+    player.stream.error.listen((error) {
+      if (!mounted) return;
+      _handleSilentError();
+    });
 
-  // ==========================================================
-  //  معالج الأخطاء (بدون إشعار بصري)
-  // ==========================================================
-  void _handleError(String error) {
+    player.stream.tracks.listen((tracks) {
+      if (!mounted) return;
+      setState(() {
+        _subtitleTracks = tracks.subtitle;
+      });
+    });
+
+    player.stream.track.listen((track) {
+      if (!mounted) return;
+      setState(() {
+        _currentSubtitleTrack = track.subtitle;
+      });
+    });
+
+    await _openStream();
+    _startHideControlsTimer();
+  } catch (_) {
+    // ✅ لا نعرض الخطأ — نحاول مجددًا بصمت
     if (!mounted) return;
+    _handleSilentError();
+  }
+}
 
-    if (_retryCount < _maxRetries) {
-      _retryCount++;
-      setState(() {
-        _error = null;
-      });
+// ==========================================================
+//  فتح البث
+// ==========================================================
+Future<void> _openStream() async {
+  final headers = _buildHeaders(widget.streamUrl);
 
-      _retryTimer?.cancel();
-      _retryTimer = Timer(const Duration(seconds: 3), () async {
-        if (!mounted) return;
-        try {
-          await _openStream();
-        } catch (_) {
-          if (mounted && _retryCount >= _maxRetries) {
-            setState(() {
-              _error = error;
-              _isLoading = false;
-            });
-          }
-        }
-      });
-    } else {
-      setState(() {
-        _error = error;
-        _isLoading = false;
-      });
+  await player.open(
+    Media(
+      widget.streamUrl,
+      httpHeaders: headers,
+    ),
+    play: true,
+  );
+
+  Future.delayed(const Duration(seconds: 3), () {
+    if (mounted && _isLoading && !_fatalError) {
+      setState(() => _isLoading = false);
     }
-  }
+  });
+}
 
-  // ==========================================================
-  //  دوال التحكم
-  // ==========================================================
-  void _startHideControlsTimer() {
-    _hideControlsTimer?.cancel();
-    _hideControlsTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted && _showControls) setState(() => _showControls = false);
-    });
-  }
+Map<String, String> _buildHeaders(String url) {
+  final headers = <String, String>{
+    'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+    'Accept': '*/*',
+    'Connection': 'keep-alive',
+    'Icy-MetaData': '1',
+  };
 
-  void _toggleControls() {
-    setState(() => _showControls = !_showControls);
-    if (_showControls) _startHideControlsTimer();
-  }
+  try {
+    final uri = Uri.parse(url);
+    final origin = '${uri.scheme}://${uri.host}';
+    headers['Referer'] = '$origin/';
+    headers['Origin'] = origin;
+  } catch (_) {}
 
-  void _togglePlayPause() {
-    if (_isPlaying) {
-      player.pause();
-    } else {
-      player.play();
-    }
-    _startHideControlsTimer();
-  }
+  return headers;
+}
 
-  void _seekBackward() {
-    final newPos = _position - const Duration(seconds: 10);
-    player.seek(newPos.isNegative ? Duration.zero : newPos);
-    _startHideControlsTimer();
-  }
+// ==========================================================
+//  ✅ معالج خطأ صامت — بدون أي عرض للخطأ
+// ==========================================================
+void _handleSilentError() {
+  if (!mounted) return;
 
-  void _seekForward() {
-    final newPos = _position + const Duration(seconds: 10);
-    player.seek(newPos > _duration ? _duration : newPos);
-    _startHideControlsTimer();
-  }
-
-  void _setVolume(double v) {
+  // إعادة المحاولة بصمت
+  if (_retryCount < _maxRetries) {
+    _retryCount++;
     setState(() {
-      _volume = v;
-      _isMuted = v == 0;
+      _isLoading = true;
+      _fatalError = false;
     });
-    player.setVolume(v);
-    _showVolumeIndicator();
-  }
 
-  void _toggleMute() {
-    if (_isMuted) {
-      _setVolume(_volume > 0 ? _volume : 50);
-    } else {
-      _setVolume(0);
-    }
-  }
-
-  void _showVolumeIndicator() {
-    setState(() => _showVolumeBar = true);
-    _volumeBarTimer?.cancel();
-    _volumeBarTimer = Timer(const Duration(seconds: 2), () {
-      if (mounted) setState(() => _showVolumeBar = false);
+    _retryTimer?.cancel();
+    _retryTimer = Timer(_retryDelay, () async {
+      if (!mounted) return;
+      try {
+        await _openStream();
+      } catch (_) {
+        if (mounted) _handleSilentError();
+      }
+    });
+  } else {
+    // ✅ بعد كل المحاولات → دائرة حمراء فقط، بدون نص
+    setState(() {
+      _fatalError = true;
+      _isLoading = false;
     });
   }
-
-  void _changeSpeed() {
-    final idx = _speedOptions.indexOf(_playbackSpeed);
-    final nextIdx = (idx + 1) % _speedOptions.length;
-    final newSpeed = _speedOptions[nextIdx];
-    player.setRate(newSpeed);
-    setState(() => _playbackSpeed = newSpeed);
-    _startHideControlsTimer();
-  }
-
-  void _changeAspect() {
-    setState(() => _aspectMode = (_aspectMode + 1) % 3);
-    _startHideControlsTimer();
-  }
-
-  BoxFit _getBoxFit() {
-    switch (_aspectMode) {
-      case 0:
-        return BoxFit.contain;
-      case 1:
-        return BoxFit.cover;
-      case 2:
-        return BoxFit.fill;
-      default:
-        return BoxFit.contain;
-    }
-  }
-
-  String _formatDuration(Duration d) {
-    if (d.inHours > 0) {
-      return '${d.inHours}:${d.inMinutes.remainder(60).toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
-    }
-    return '${d.inMinutes.toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
-  }
-
+}
   // ==========================================================
-  //  BUILD
-  // ==========================================================
-  @override
-  Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Focus(
-          autofocus: true,
-          onKeyEvent: (node, event) {
-            if (event is KeyDownEvent) {
-              final key = event.logicalKey.keyLabel;
-              if (key == 'Select' ||
-                  key == 'Enter' ||
-                  key == 'Media Play Pause') {
-                _togglePlayPause();
-                return KeyEventResult.handled;
-              }
-              if (key == 'Escape' || key == 'Go Back') {
-                Navigator.pop(context);
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Right') {
-                _seekForward();
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Left') {
-                _seekBackward();
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Up') {
-                _setVolume((_volume + 10).clamp(0, 100));
-                return KeyEventResult.handled;
-              }
-              if (key == 'Arrow Down') {
-                _setVolume((_volume - 10).clamp(0, 100));
-                return KeyEventResult.handled;
-              }
+//  دوال التحكم
+// ==========================================================
+void _startHideControlsTimer() {
+  _hideControlsTimer?.cancel();
+  _hideControlsTimer = Timer(const Duration(seconds: 5), () {
+    if (mounted && _showControls) setState(() => _showControls = false);
+  });
+}
+
+void _toggleControls() {
+  setState(() => _showControls = !_showControls);
+  if (_showControls) _startHideControlsTimer();
+}
+
+void _togglePlayPause() {
+  if (_isPlaying) {
+    player.pause();
+  } else {
+    player.play();
+  }
+  _startHideControlsTimer();
+}
+
+void _seekBackward() {
+  final newPos = _position - const Duration(seconds: 10);
+  player.seek(newPos.isNegative ? Duration.zero : newPos);
+  _startHideControlsTimer();
+}
+
+void _seekForward() {
+  final newPos = _position + const Duration(seconds: 10);
+  player.seek(newPos > _duration ? _duration : newPos);
+  _startHideControlsTimer();
+}
+
+void _setVolume(double v) {
+  setState(() {
+    _volume = v;
+    _isMuted = v == 0;
+  });
+  player.setVolume(v);
+  _showVolumeIndicator();
+}
+
+void _toggleMute() {
+  if (_isMuted) {
+    _setVolume(_volume > 0 ? _volume : 50);
+  } else {
+    _setVolume(0);
+  }
+}
+
+void _showVolumeIndicator() {
+  setState(() => _showVolumeBar = true);
+  _volumeBarTimer?.cancel();
+  _volumeBarTimer = Timer(const Duration(seconds: 2), () {
+    if (mounted) setState(() => _showVolumeBar = false);
+  });
+}
+
+void _changeSpeed() {
+  final idx = _speedOptions.indexOf(_playbackSpeed);
+  final nextIdx = (idx + 1) % _speedOptions.length;
+  final newSpeed = _speedOptions[nextIdx];
+  player.setRate(newSpeed);
+  setState(() => _playbackSpeed = newSpeed);
+  _startHideControlsTimer();
+}
+
+void _changeAspect() {
+  setState(() => _aspectMode = (_aspectMode + 1) % 3);
+  _startHideControlsTimer();
+}
+
+BoxFit _getBoxFit() {
+  switch (_aspectMode) {
+    case 0:
+      return BoxFit.contain;
+    case 1:
+      return BoxFit.cover;
+    case 2:
+      return BoxFit.fill;
+    default:
+      return BoxFit.contain;
+  }
+}
+
+String _formatDuration(Duration d) {
+  if (d.inHours > 0) {
+    return '${d.inHours}:${d.inMinutes.remainder(60).toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+  }
+  return '${d.inMinutes.toString().padLeft(2, '0')}:${d.inSeconds.remainder(60).toString().padLeft(2, '0')}';
+}
+
+// ==========================================================
+//  BUILD
+// ==========================================================
+@override
+Widget build(BuildContext context) {
+  return Directionality(
+    textDirection: TextDirection.rtl,
+    child: Scaffold(
+      backgroundColor: Colors.black,
+      body: Focus(
+        autofocus: true,
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent) {
+            final key = event.logicalKey.keyLabel;
+            if (key == 'Select' ||
+                key == 'Enter' ||
+                key == 'Media Play Pause') {
+              _togglePlayPause();
+              return KeyEventResult.handled;
             }
-            return KeyEventResult.ignored;
-          },
-          child: GestureDetector(
-            onTap: _toggleControls,
-            child: Stack(
-              children: [
-                Center(
-                  child: _error != null
-                      ? _buildError()
-                      : SizedBox.expand(
-                          child: FittedBox(
-                            fit: _getBoxFit(),
-                            child: SizedBox(
-                              width: (player.state.width ?? 1920).toDouble(),
-                              height: (player.state.height ?? 1080).toDouble(),
-                              child: Video(
-                                controller: controller,
-                                controls: NoVideoControls,
-                              ),
-                            ),
-                          ),
-                        ),
+            if (key == 'Escape' || key == 'Go Back') {
+              Navigator.pop(context);
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Right') {
+              _seekForward();
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Left') {
+              _seekBackward();
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Up') {
+              _setVolume((_volume + 10).clamp(0, 100));
+              return KeyEventResult.handled;
+            }
+            if (key == 'Arrow Down') {
+              _setVolume((_volume - 10).clamp(0, 100));
+              return KeyEventResult.handled;
+            }
+          }
+          return KeyEventResult.ignored;
+        },
+        child: GestureDetector(
+          onTap: _toggleControls,
+          child: Stack(
+            children: [
+              Center(
+                child: SizedBox.expand(
+                  child: FittedBox(
+                    fit: _getBoxFit(),
+                    child: SizedBox(
+                      width: (player.state.width ?? 1920).toDouble(),
+                      height: (player.state.height ?? 1080).toDouble(),
+                      child: Video(
+                        controller: controller,
+                        controls: NoVideoControls,
+                      ),
+                    ),
+                  ),
                 ),
-                if (_isLoading && _error == null) _buildLoading(),
-                if (_isBuffering && !_isLoading) _buildBuffering(),
-                if (_showVolumeBar) _buildVolumeOverlay(),
-                if (_showControls && _error == null) ...[
-                  _buildTopBar(context),
-                  _buildBottomBar(context),
-                ],
+              ),
+              // ✅ شاشة التحميل
+              if (_isLoading && !_fatalError) _buildLoading(),
+              // ✅ شاشة الفشل — دائرة حمراء فقط بدون نص
+              if (_fatalError) _buildFatalError(),
+              // التخزين المؤقت
+              if (_isBuffering && !_isLoading && !_fatalError)
+                _buildBuffering(),
+              // مؤشر الصوت
+              if (_showVolumeBar) _buildVolumeOverlay(),
+              // أشرطة التحكم
+              if (_showControls && !_fatalError) ...[
+                _buildTopBar(context),
+                _buildBottomBar(context),
               ],
-            ),
+            ],
           ),
         ),
       ),
-    );
-  }
-  
-// ==========================================================
-//  شاشة التحميل
+    ),
+  );
+}
+  // ==========================================================
+//  شاشة التحميل — دائرة تحميل فقط بدون نصوص
 // ==========================================================
 Widget _buildLoading() {
   return Container(
     color: Colors.black.withOpacity(0.85),
-    child: Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const SizedBox(
-            width: 70,
-            height: 70,
-            child: CircularProgressIndicator(
-              color: Color(0xFF00C8FF),
-              strokeWidth: 4,
-            ),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            'جارٍ التحميل...',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 60),
-            child: Text(
-              widget.channelName,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white54,
-                fontSize: 14,
-              ),
-            ),
-          ),
-        ],
+    child: const Center(
+      child: SizedBox(
+        width: 70,
+        height: 70,
+        child: CircularProgressIndicator(
+          color: Color(0xFF00C8FF),
+          strokeWidth: 4,
+        ),
+      ),
+    ),
+  );
+}
+
+// ==========================================================
+//  شاشة الفشل — دائرة حمراء فقط بدون نص
+//  المستخدم يضغط زر الرجوع للخروج
+// ==========================================================
+Widget _buildFatalError() {
+  return Container(
+    color: Colors.black,
+    child: const Center(
+      child: SizedBox(
+        width: 70,
+        height: 70,
+        child: CircularProgressIndicator(
+          color: Color(0xFFFF5252),
+          strokeWidth: 4,
+        ),
       ),
     ),
   );
@@ -769,92 +782,7 @@ Widget _buildControlRow() {
     ],
   );
 }
-
-// ==========================================================
-//  شاشة الخطأ
-// ==========================================================
-Widget _buildError() {
-  return Center(
-    child: Padding(
-      padding: const EdgeInsets.all(40),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.error_outline,
-            color: Color(0xFFFF5252),
-            size: 80,
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'تعذر تشغيل القناة',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
-            child: Text(
-              _error ?? 'خطأ غير معروف',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white54,
-                fontSize: 13,
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ElevatedButton.icon(
-                onPressed: () {
-                  setState(() {
-                    _isLoading = true;
-                    _error = null;
-                    _retryCount = 0;
-                  });
-                  _initializePlayer();
-                },
-                icon: const Icon(Icons.refresh),
-                label: const Text('إعادة المحاولة'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00C8FF),
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.close, color: Colors.white),
-                label: const Text(
-                  'إغلاق',
-                  style: TextStyle(color: Colors.white),
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Colors.white54),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    ),
-  );
-}
-  
-  // ==========================================================
+    // ==========================================================
   //  قائمة الترجمة
   // ==========================================================
   void _showSubtitleSheet() {
