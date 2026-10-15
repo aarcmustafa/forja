@@ -7,9 +7,6 @@ import '../local/local_storage.dart';
 import '../services/stream_checker.dart';
 import '../../features/settings/settings_screen.dart';
 
-// ==========================================================
-//  ✅ إصدار الـ Schema — غيّره لإجبار إعادة البناء
-// ==========================================================
 const int kSportSchemaVersion = 3;
 
 // ==========================================================
@@ -120,30 +117,26 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void resumeBackgroundCheck() => _checker.resume();
 
   // ==========================================================
-  //  ✅ هل القناة رياضية؟ (فلتر محسّن)
+  //  ✅ هل القناة رياضية؟
   // ==========================================================
   bool isSportChannel(Channel c) {
-    // 1. Category
     if (c.category == 'sport') return true;
     if (c.category == 'movie') return false;
     if (c.category == 'series') return false;
     if (c.category == 'news') return false;
     if (c.category == 'kids') return false;
 
-    // 2. Keywords
     final name = c.name.toLowerCase();
     final group = c.group.toLowerCase();
     final text = '$name $group';
 
-    // ✅ كلمات رياضية دقيقة (بدون عامة)
     const strictKeywords = [
-      'bein', 'bein sport', 'ssc', 'ssc sport',
-      'ad sport', 'ad sports',
+      'bein', 'ssc', 'ad sport', 'ad sports',
       'dubai sport', 'ksa sport', 'alkass',
       'alwan sport', 'alwan sports',
       'shahid sport', 'shasha sport',
       '1001 sport', '1001 network sport',
-      'sportv', 'sport tv', 'sportv',
+      'sportv', 'sport tv',
       'sky sport', 'espn', 'dazn',
       'nba', 'nfl', 'ufc', 'wwe',
       'fifa', 'uefa', 'caf', 'afc',
@@ -156,7 +149,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       if (text.contains(k)) return true;
     }
 
-    // ❌ كلمات غير رياضية (استبعاد)
     const excludeKeywords = [
       'movie', 'film', 'أفلام', 'فيلم',
       'series', 'مسلسل', 'دراما',
@@ -175,7 +167,54 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   }
   
 // ==========================================================
-//  التحميل (مع إجبار إعادة البناء عند تغيير Schema)
+//  ✅ markDeadByUrl — تحديد قناة كـ ميتة من رابطها
+// ==========================================================
+Future<void> markDeadByUrl(String streamUrl) async {
+  // ابحث عن القناة
+  Channel? target;
+  for (final c in state.allChannels) {
+    if (c.streamUrl == streamUrl) {
+      target = c;
+      break;
+    }
+  }
+
+  if (target == null) return;
+
+  // حدّدها كـ ميتة
+  await _checker.markDead(target.id);
+
+  // حدّث الحالة
+  final newStatus = {...state.workingStatus};
+  newStatus[target.id] = false;
+  state = state.copyWith(workingStatus: newStatus);
+  _applyFilters();
+}
+
+// ==========================================================
+//  ✅ markDead — تحديد قناة كـ ميتة
+// ==========================================================
+Future<void> markDead(String channelId) async {
+  await _checker.markDead(channelId);
+  final newStatus = {...state.workingStatus};
+  newStatus[channelId] = false;
+  state = state.copyWith(workingStatus: newStatus);
+  _applyFilters();
+}
+
+// ==========================================================
+//  ✅ markWorking — تحديد قناة كـ شغّالة
+// ==========================================================
+Future<void> markWorking(String channelId) async {
+  await _checker.markWorking(channelId);
+  final newStatus = {...state.workingStatus};
+  newStatus[channelId] = true;
+  state = state.copyWith(workingStatus: newStatus);
+  _applyFilters();
+}
+
+// ==========================================================
+//  التحميل
 // ==========================================================
 Future<void> loadPlaylists(
   List<String> urls, {
@@ -192,12 +231,11 @@ Future<void> loadPlaylists(
   await _storage.init();
   await _checker.init();
 
-  // ✅ فحص إصدار الـ Schema
+  // فحص إصدار Schema
   try {
     final prefs = await SharedPreferences.getInstance();
     final savedVersion = prefs.getInt('sport_schema') ?? 0;
     if (savedVersion < kSportSchemaVersion) {
-      // حذف Cache القديم
       await _storage.clear();
       await _checker.clear();
       await prefs.setInt('sport_schema', kSportSchemaVersion);
@@ -207,30 +245,33 @@ Future<void> loadPlaylists(
     forceRefresh = true;
   }
 
-  // ✅ قراءة نتائج الفحص
   final saved = await _checker.loadResults();
 
-  // ✅ محاولة من Cache (بدون force)
+  // ✅ محاولة من Cache (مع await)
   if (!forceRefresh) {
-    final cached = _storage.loadChannels();
-    if (cached != null && cached.isNotEmpty) {
-      // ✅ تطبيق فلتر الرياضة على Cache
-      final sportOnly =
-          cached.where((c) => isSportChannel(c)).toList();
+    try {
+      // ⚠️ loadChannels ليست Future — إن كانت كذلك في مكان آخر
+      // سنستخدمها بشكل متزامن
+      final cached = _storage.loadChannels();
+      if (cached != null && cached.isNotEmpty) {
+        final sportOnly =
+            cached.where((c) => isSportChannel(c)).toList();
 
-      if (sportOnly.isNotEmpty) {
-        _setChannels(sportOnly, workingStatus: saved);
-        state = state.copyWith(
-          isLoading: false,
-          lastUpdate: _storage.getLastSaveTime(),
-        );
-        _startBackgroundCheckIfNeeded();
-        _refreshInBackground(urls);
-        return;
-      } else {
-        // إذا Cache لا يحتوي رياضة → اجلب من الإنترنت
-        forceRefresh = true;
+        if (sportOnly.isNotEmpty) {
+          _setChannels(sportOnly, workingStatus: saved);
+          state = state.copyWith(
+            isLoading: false,
+            lastUpdate: _storage.getLastSaveTime(),
+          );
+          _startBackgroundCheckIfNeeded();
+          _refreshInBackground(urls);
+          return;
+        } else {
+          forceRefresh = true;
+        }
       }
+    } catch (_) {
+      forceRefresh = true;
     }
   }
 
@@ -298,7 +339,6 @@ Future<List<Channel>?> _fetchAll(
 
     if (all.isEmpty) return null;
 
-    // ✅ فلتر الرياضة
     final sportOnly = all.where((c) => isSportChannel(c)).toList();
 
     // ignore: avoid_print
@@ -326,7 +366,7 @@ void _setChannels(
 }
   
   // ==========================================================
-  //  ✅ الفحص الخلفي (بمهلة أطول + لا يعلّم القنوات كـ ميتة بسرعة)
+  //  الفحص الخلفي
   // ==========================================================
   void _startBackgroundCheckIfNeeded() {
     if (_backgroundCheckStarted) return;
@@ -390,23 +430,17 @@ void _setChannels(
     _applyFilters();
   }
 
-  // ==========================================================
-  //  ✅ _applyFilters — لا يخفي الميتة، بل يرتبها في الأسفل
-  // ==========================================================
   void _applyFilters() {
     List<Channel> filtered = List.from(state.allChannels);
 
-    // 1) فلتر الرياضة (للأمان)
     filtered = filtered.where((c) => isSportChannel(c)).toList();
 
-    // 2) فلتر البالغين
     if (_filterAdult) {
       filtered = filtered
           .where((c) => !isAdultContent(c.name, c.group))
           .toList();
     }
 
-    // 3) الباقة الفرعية
     if (state.selectedSubCategorySlug != null) {
       final slug = state.selectedSubCategorySlug!.toLowerCase();
       final selectedCat = state.categories.firstWhere(
@@ -430,7 +464,6 @@ void _setChannels(
       }).toList();
     }
 
-    // 4) البحث
     if (state.searchQuery.trim().isNotEmpty) {
       final q = state.searchQuery.trim().toLowerCase();
       filtered = filtered
@@ -440,16 +473,13 @@ void _setChannels(
           .toList();
     }
 
-    // ✅ 5. ترتيب: الشغّالة أولاً، الميتة آخراً (بدون حذف)
+    // ترتيب: الشغّالة أولاً، الميتة آخراً
     if (state.workingStatus.isNotEmpty) {
       filtered.sort((a, b) {
         final aWorking = state.workingStatus[a.id];
         final bWorking = state.workingStatus[b.id];
-
-        // الشغّالة أولاً (null = لم تُفحص، true = شغّالة)
         final aScore = aWorking == false ? 2 : (aWorking == true ? 0 : 1);
         final bScore = bWorking == false ? 2 : (bWorking == true ? 0 : 1);
-
         return aScore.compareTo(bScore);
       });
     }
@@ -529,7 +559,6 @@ void _setChannels(
     await loadPlaylists(urls, forceRefresh: true);
   }
 
-  /// ✅ مسح كامل للذاكرة
   Future<void> clearAllCache(List<String> urls) async {
     await _storage.clear();
     await _checker.clear();
