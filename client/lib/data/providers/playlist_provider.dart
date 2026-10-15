@@ -6,6 +6,9 @@ import '../local/local_storage.dart';
 import '../services/stream_checker.dart';
 import '../../features/settings/settings_screen.dart';
 
+// ==========================================================
+//  Providers أساسية
+// ==========================================================
 final m3uRepositoryProvider = Provider<M3uRepository>((ref) {
   final repo = M3uRepository();
   ref.onDispose(() => repo.dispose());
@@ -22,6 +25,9 @@ final streamCheckerProvider = Provider<StreamChecker>((ref) {
   return checker;
 });
 
+// ==========================================================
+//  حالة القنوات
+// ==========================================================
 class PlaylistState {
   final List<Channel> allChannels;
   final List<Channel> filteredChannels;
@@ -34,6 +40,7 @@ class PlaylistState {
   final bool isRefreshing;
   final String? error;
   final DateTime? lastUpdate;
+  final bool isBackgroundChecking;
 
   const PlaylistState({
     this.allChannels = const [],
@@ -47,6 +54,7 @@ class PlaylistState {
     this.isRefreshing = false,
     this.error,
     this.lastUpdate,
+    this.isBackgroundChecking = false,
   });
 
   PlaylistState copyWith({
@@ -64,6 +72,7 @@ class PlaylistState {
     String? error,
     bool clearError = false,
     DateTime? lastUpdate,
+    bool? isBackgroundChecking,
   }) {
     return PlaylistState(
       allChannels: allChannels ?? this.allChannels,
@@ -81,30 +90,65 @@ class PlaylistState {
       isRefreshing: isRefreshing ?? this.isRefreshing,
       error: clearError ? null : (error ?? this.error),
       lastUpdate: lastUpdate ?? this.lastUpdate,
+      isBackgroundChecking:
+          isBackgroundChecking ?? this.isBackgroundChecking,
     );
   }
 }
 
+// ==========================================================
+//  Notifier
+// ==========================================================
 class PlaylistNotifier extends StateNotifier<PlaylistState> {
   final M3uRepository _repository;
   final LocalStorage _storage;
   final StreamChecker _checker;
-  bool _filterAdult = false;
+  bool _filterAdult = true;
   bool _backgroundCheckStarted = false;
-  bool _refreshInProgress = false;
 
   PlaylistNotifier(this._repository, this._storage, this._checker)
       : super(const PlaylistState());
 
+  /// فلتر البالغين
   void setAdultFilter(bool value) {
     if (_filterAdult == value) return;
     _filterAdult = value;
     _applyFilters();
   }
 
+  /// معرّفات القنوات التي فشل تشغيلها نهائياً (تُخفى فوراً)
+  final Set<String> _deadIds = {};
+
+  /// ✅ إخفاء قناة فشل تشغيلها نهائياً — تُستدعى من المشغّل
+  Future<void> markDeadByUrl(String url) async {
+    final ids = state.allChannels
+        .where((c) => c.streamUrl == url)
+        .map((c) => c.id)
+        .toList();
+    if (ids.isEmpty) return;
+
+    _deadIds.addAll(ids);
+    for (final id in ids) {
+      await _checker.markResult(id, false);
+    }
+    state = state.copyWith(
+      workingStatus: {
+        ...state.workingStatus,
+        for (final id in ids) id: false,
+      },
+    );
+    _applyFilters();
+  }
+
+  /// إيقاف الفحص مؤقتاً (عند فتح مشغل الفيديو)
   void pauseBackgroundCheck() => _checker.pause();
+
+  /// استئناف الفحص
   void resumeBackgroundCheck() => _checker.resume();
 
+  // ==========================================================
+  //  التحميل
+  // ==========================================================
   Future<void> loadPlaylists(
     List<String> urls, {
     bool forceRefresh = false,
@@ -112,7 +156,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     if (urls.isEmpty) {
       state = state.copyWith(
         isLoading: false,
-        error: 'لا توجد روابط M3U',
+        error: 'لا توجد روابط M3U للتحميل',
       );
       return;
     }
@@ -120,24 +164,23 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     await _storage.init();
     await _checker.init();
 
+    // قراءة نتائج الفحص المحفوظة
+    final saved = await _checker.loadResults();
+
     if (!forceRefresh) {
       final cached = _storage.loadChannels();
       if (cached != null && cached.isNotEmpty) {
-        final saved = await _checker.loadResults();
         _setChannels(cached, workingStatus: saved);
         state = state.copyWith(
           isLoading: false,
           lastUpdate: _storage.getLastSaveTime(),
         );
 
-        Future.delayed(const Duration(seconds: 5), () {
-          _refreshInBackground(urls);
-        });
+        // بدء الفحص الخلفي فوراً
+        _startBackgroundCheckIfNeeded();
 
-        Future.delayed(const Duration(seconds: 15), () {
-          _startBackgroundCheckIfNeeded();
-        });
-
+        // تحديث القنوات في الخلفية
+        _refreshInBackground(urls);
         return;
       }
     }
@@ -155,8 +198,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     }
 
     await _storage.saveChannels(channels);
-
-    final saved = await _checker.loadResults();
     _setChannels(channels, workingStatus: saved);
 
     state = state.copyWith(
@@ -164,12 +205,11 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       lastUpdate: DateTime.now(),
     );
 
+    // بدء الفحص الخلفي
     _startBackgroundCheckIfNeeded();
   }
 
   Future<void> _refreshInBackground(List<String> urls) async {
-    if (_refreshInProgress) return;
-    _refreshInProgress = true;
     state = state.copyWith(isRefreshing: true);
 
     try {
@@ -186,8 +226,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }
     } catch (_) {
       state = state.copyWith(isRefreshing: false);
-    } finally {
-      _refreshInProgress = false;
     }
   }
 
@@ -196,215 +234,64 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     bool refreshCache = false,
   }) async {
     try {
-      final all = <Channel>[];
-      const batchSize = 4;
-
-      for (int i = 0; i < urls.length; i += batchSize) {
-        final batch = urls.skip(i).take(batchSize).toList();
-        final results = await Future.wait(
-          batch.map((url) async {
-            try {
-              return await _repository.loadFromUrl(
-                url,
-                forceRefresh: refreshCache,
-              );
-            } catch (e) {
-              return <Channel>[];
-            }
-          }),
-        );
-
-        for (final list in results) {
-          all.addAll(list);
+      final List<Channel> all = [];
+      for (final url in urls) {
+        try {
+          final channels = await _repository.loadFromUrl(
+            url,
+            forceRefresh: refreshCache,
+          );
+          all.addAll(channels);
+        } catch (e) {
+          // ignore: avoid_print
+          print('فشل تحميل $url: $e');
         }
       }
-
       if (all.isEmpty) return null;
-
-      final sportOnly = all.where((c) => _isSportChannel(c)).toList();
-      return _removeDuplicates(sportOnly);
+      return _removeDuplicates(all);
     } catch (e) {
+      // ignore: avoid_print
+      print('خطأ في الجلب: $e');
       return null;
     }
-  }
-
-  // ==========================================================
-  //  ✅ التصنيف السياقي — يفحص المجموعة أولاً
-  // ==========================================================
-  bool _isSportChannel(Channel c) {
-    final name = c.name.toLowerCase();
-    final group = c.group.toLowerCase();
-
-    // 🚫 المرحلة 1: استبعاد قاطع
-    const nonSportKeywords = [
-      'movie', 'movies', 'film', 'films', 'cinema', 'vod',
-      'فيلم', 'أفلام', 'سينما', 'افلام',
-      'series', 'serie', 'drama', 'soap',
-      'مسلسل', 'مسلسلات', 'دراما',
-      'kids', 'kid', 'cartoon', 'children', 'baby',
-      'أطفال', 'اطفال', 'كرتون',
-      'music', 'mtv', 'أغاني', 'موسيقى',
-      'news', 'أخبار',
-      'documentary', 'وثائقي',
-      'religious', 'quran', 'قرآن', 'دين', 'islamic',
-      'cooking', 'food', 'طبخ',
-      'fashion', 'أزياء',
-      'shopping', 'تسوق',
-      'adult', 'xxx', 'porn', '+18', '18+',
-    ];
-
-    for (final k in nonSportKeywords) {
-      if (group.contains(k)) return false;
-    }
-
-    const nameStrictRejects = [
-      'movie', 'movies', 'film', 'series', 'drama',
-      'kid', 'kids', 'cartoon', 'music', 'news',
-      'adult', 'xxx', 'porn', 'quran',
-      'فيلم', 'أفلام', 'سينما',
-      'مسلسل', 'دراما', 'أطفال', 'كرتون',
-      'أخبار', 'أغاني', 'قرآن',
-    ];
-
-    for (final k in nameStrictRejects) {
-      if (name.contains(k)) {
-        if (!name.contains('sport') && !name.contains('رياض')) {
-          return false;
-        }
-      }
-    }
-
-    // ✅ المرحلة 2: قبول قاطع
-    const sportGroupKeywords = [
-      'sport', 'sports', 'رياض', 'رياضة', 'كورة',
-      'bein sport', 'ssc', 'alkass', 'al kass',
-      'dazn', 'espn', 'ufc', 'wwe', 'nba', 'nfl',
-    ];
-
-    for (final k in sportGroupKeywords) {
-      if (group.contains(k)) return true;
-    }
-
-    const sportNameKeywords = [
-      'bein sport', 'bein sports', 'beinsport',
-      'ssc sport', 'ssc ', 'alkass', 'shahid sport',
-      'alwan sport', 'alwan sp', 'ad sport', 'adsport',
-      'abu dhabi sport', 'dubai sport', 'ksa sport',
-      'shasha sport', '1001 sport',
-      'sky sport', 'espn', 'dazn', 'sportv',
-      'premier league', 'premierleague',
-      'laliga', 'la liga',
-      'bundesliga',
-      'ligue 1', 'ligue1',
-      'serie a',
-      'world cup', 'euro 20',
-      'f1 ', 'formula 1', 'formula1', 'motogp', 'moto gp',
-      'fifa', 'uefa', 'caf ', 'afc ',
-      'الدوري', 'دوري ',
-      'مباريات', 'مباراة',
-      'كورة', 'رياض',
-    ];
-
-    for (final k in sportNameKeywords) {
-      if (name.contains(k)) return true;
-    }
-
-    // ⚠️ المرحلة 3: beIN مع رقم → رياضة
-    final beinNumberPattern = RegExp(r'\bbein\s*(\d+)');
-    if (beinNumberPattern.hasMatch(name)) return true;
-
-    if (name.contains('bein') && name.contains('sport')) return true;
-
-    return false;
   }
 
   void _setChannels(
     List<Channel> channels, {
     Map<String, bool>? workingStatus,
   }) {
-    final sorted = _sortSportsChannels(channels);
-    final categories = _buildCategoriesFromChannels(sorted);
+    final categories = _buildCategoriesFromChannels(channels);
     state = state.copyWith(
-      allChannels: sorted,
+      allChannels: channels,
       categories: categories,
       workingStatus: workingStatus ?? state.workingStatus,
     );
     _applyFilters();
   }
-
-  List<Channel> _sortSportsChannels(List<Channel> channels) {
-    const packageOrder = <String>[
-      'bein',
-      'alwan',
-      'ad sport', 'adsport', 'abu dhabi',
-      'alkass', 'al kass',
-      'premier', 'epl',
-      'bundesliga',
-      'laliga', 'la liga',
-      'ligue1', 'ligue 1',
-    ];
-
-    int packageRank(Channel c) {
-      final text = '${c.name.toLowerCase()} ${c.group.toLowerCase()}';
-      for (int i = 0; i < packageOrder.length; i++) {
-        if (text.contains(packageOrder[i])) return i;
-      }
-      return 999;
-    }
-
-    int qualityRank(String name) {
-      final lower = name.toLowerCase();
-      if (lower.contains('tod')) return 9999;
-      if (lower.contains('8k')) return 8000;
-      if (lower.contains('4k') || lower.contains('uhd')) return 7000;
-      if (lower.contains('fhd')) return 6000;
-      if (lower.contains('hd')) return 5000;
-      return 4000;
-    }
-
-    int extractNumber(String name) {
-      final match = RegExp(r'(\d+)').firstMatch(name);
-      if (match != null) return int.tryParse(match.group(1)!) ?? 9999;
-      return 9999;
-    }
-
-    final sorted = List<Channel>.from(channels);
-    sorted.sort((a, b) {
-      final wa = state.workingStatus[a.id];
-      final wb = state.workingStatus[b.id];
-      final ra = wa == true ? 0 : (wa == false ? 2 : 1);
-      final rb = wb == true ? 0 : (wb == false ? 2 : 1);
-      if (ra != rb) return ra.compareTo(rb);
-
-      final pa = packageRank(a);
-      final pb = packageRank(b);
-      if (pa != pb) return pa.compareTo(pb);
-
-      final qa = qualityRank(a.name);
-      final qb = qualityRank(b.name);
-      if (qa != qb) return qa.compareTo(qb);
-
-      final na = extractNumber(a.name);
-      final nb = extractNumber(b.name);
-      if (na != nb) return na.compareTo(nb);
-
-      return a.name.compareTo(b.name);
-    });
-
-    return sorted;
-  }
-  
+    // ==========================================================
+  //  الفحص الخلفي التلقائي
+  // ==========================================================
   void _startBackgroundCheckIfNeeded() {
     if (_backgroundCheckStarted) return;
     if (state.allChannels.isEmpty) return;
+
     _backgroundCheckStarted = true;
-    _runBackgroundCheck();
+    state = state.copyWith(isBackgroundChecking: true);
+
+    // ابدأ بعد 5 ثوان (حتى يرى المستخدم القنوات أولاً)
+    Future.delayed(const Duration(seconds: 5), () {
+      _runBackgroundCheck();
+    });
   }
 
   Future<void> _runBackgroundCheck() async {
     final channels = state.allChannels;
-    if (channels.isEmpty) return;
+    if (channels.isEmpty) {
+      state = state.copyWith(isBackgroundChecking: false);
+      return;
+    }
 
+    // التحديث الفوري عند وصول نتائج الدفعات
     final newWorkingStatus = <String, bool>{...state.workingStatus};
 
     await _checker.startBackgroundCheck(
@@ -412,21 +299,25 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       alreadyChecked: state.workingStatus,
       onResult: (channelId, isWorking) {
         newWorkingStatus[channelId] = isWorking;
+
+        // تحديث الحالة (بدون إعادة بناء كل شيء)
         state = state.copyWith(workingStatus: newWorkingStatus);
 
-        if (newWorkingStatus.length % 20 == 0) {
-          final reSorted = _sortSportsChannels(state.allChannels);
-          state = state.copyWith(allChannels: reSorted);
+        // تطبيق الفلاتر عند كل 50 نتيجة
+        if (newWorkingStatus.length % 50 == 0) {
           _applyFilters();
         }
       },
     );
 
-    final finalSorted = _sortSportsChannels(state.allChannels);
-    state = state.copyWith(allChannels: finalSorted);
+    // تحديث نهائي
     _applyFilters();
+    state = state.copyWith(isBackgroundChecking: false);
   }
 
+  // ==========================================================
+  //  الفلاتر
+  // ==========================================================
   void selectCategory(String? slug) {
     if (slug == null) {
       state = state.copyWith(
@@ -460,12 +351,36 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void _applyFilters() {
     List<Channel> filtered = List.from(state.allChannels);
 
+    // 1) فلتر البالغين
     if (_filterAdult) {
       filtered = filtered
           .where((c) => !isAdultContent(c.name, c.group))
           .toList();
     }
 
+    // 2-أ) القنوات التي فشل المشغّل في تشغيلها → تُخفى فوراً
+    if (_deadIds.isNotEmpty) {
+      filtered = filtered.where((c) => !_deadIds.contains(c.id)).toList();
+    }
+
+    // 2) إخفاء القنوات الميتة تلقائياً (إذا فُحصت)
+    if (state.workingStatus.isNotEmpty) {
+      filtered = filtered.where((c) {
+        final status = state.workingStatus[c.id];
+        // إذا لم تُفحص → نعرضها (أفضل من إخفائها خطأً)
+        // إذا فُحصت → نعرضها فقط إذا كانت تعمل
+        return status == null || status == true;
+      }).toList();
+    }
+
+    // 3) التصنيف
+    if (state.selectedCategorySlug != null) {
+      filtered = filtered
+          .where((c) => c.category == state.selectedCategorySlug)
+          .toList();
+    }
+
+    // 4) الباقة الفرعية
     if (state.selectedSubCategorySlug != null) {
       final slug = state.selectedSubCategorySlug!.toLowerCase();
       final selectedCat = state.categories.firstWhere(
@@ -489,6 +404,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }).toList();
     }
 
+    // 5) البحث
     if (state.searchQuery.trim().isNotEmpty) {
       final q = state.searchQuery.trim().toLowerCase();
       filtered = filtered
@@ -501,6 +417,9 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     state = state.copyWith(filteredChannels: filtered);
   }
 
+  // ==========================================================
+  //  مساعدات
+  // ==========================================================
   List<Channel> _removeDuplicates(List<Channel> channels) {
     final Map<String, Channel> unique = {};
     for (final ch in channels) {
@@ -524,49 +443,29 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   }
 
   List<Category> _buildCategoriesFromChannels(List<Channel> channels) {
-    const defaultSubs = [
-      SubCategory(id: '1', name: 'beIN Sports', slug: 'bein', order: 1),
-      SubCategory(id: '2', name: 'ألوان', slug: 'alwan', order: 2),
-      SubCategory(id: '3', name: 'أبوظبي', slug: 'adsports', order: 3),
-      SubCategory(id: '4', name: 'الكأس', slug: 'alkass', order: 4),
-      SubCategory(id: '5', name: 'الإنجليزي', slug: 'premier', order: 5),
-      SubCategory(id: '6', name: 'الألماني', slug: 'bundesliga', order: 6),
-      SubCategory(id: '7', name: 'الإسباني', slug: 'laliga', order: 7),
-      SubCategory(id: '8', name: 'الفرنسي', slug: 'ligue1', order: 8),
-      SubCategory(id: '9', name: 'SSC', slug: 'ssc', order: 9),
-      SubCategory(id: '10', name: 'Shahid', slug: 'shahid', order: 10),
-      SubCategory(id: '11', name: '1001', slug: '1001', order: 11),
-    ];
-
-    final subs = <SubCategory>[];
-    for (final sub in defaultSubs) {
-      final count = channels.where((c) {
-        final g = c.group.toLowerCase();
-        final n = c.name.toLowerCase();
-        final s = sub.slug.toLowerCase();
-        final name = sub.name.toLowerCase();
-        return g.contains(s) ||
-            n.contains(s) ||
-            g.contains(name) ||
-            n.contains(name);
-      }).length;
-
-      if (count > 0) {
-        subs.add(sub.copyWith(channelsCount: count));
+    final defaultCats = DefaultCategories.list;
+    final result = <Category>[];
+    for (final cat in defaultCats) {
+      final catChannels =
+          channels.where((c) => c.category == cat.slug).toList();
+      final subs = <SubCategory>[];
+      for (final sub in cat.subCategories) {
+        final count = catChannels.where((c) {
+          final g = c.group.toLowerCase();
+          final s = sub.slug.toLowerCase();
+          final n = sub.name.toLowerCase();
+          return g.contains(s) ||
+              g.contains(n) ||
+              c.name.toLowerCase().contains(n);
+        }).length;
+        if (count > 0) subs.add(sub.copyWith(channelsCount: count));
       }
-    }
-
-    return [
-      Category(
-        id: 'sport',
-        name: 'رياضة',
-        slug: 'sport',
-        iconName: 'sports',
-        order: 1,
+      result.add(cat.copyWith(
         subCategories: subs,
-        channelsCount: channels.length,
-      ),
-    ];
+        channelsCount: catChannels.length,
+      ));
+    }
+    return result;
   }
 
   Future<void> refresh(List<String> urls) async {
@@ -575,6 +474,9 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   }
 }
 
+// ==========================================================
+//  Provider الرئيسي
+// ==========================================================
 final playlistProvider =
     StateNotifierProvider<PlaylistNotifier, PlaylistState>((ref) {
   final repo = ref.watch(m3uRepositoryProvider);
@@ -595,6 +497,9 @@ final playlistProvider =
   return notifier;
 });
 
+// ==========================================================
+//  Providers مساعدة
+// ==========================================================
 final filteredChannelsProvider = Provider<List<Channel>>((ref) {
   return ref.watch(playlistProvider).filteredChannels;
 });
@@ -612,21 +517,5 @@ final isRefreshingProvider = Provider<bool>((ref) {
 });
 
 final errorProvider = Provider<String?>((ref) {
-  return ref.watch(playlistProvider).error;
-});
-
-final selectedCategoryProvider = Provider<String?>((ref) {
-  return ref.watch(playlistProvider).selectedCategorySlug;
-});
-
-final selectedSubCategoryProvider = Provider<String?>((ref) {
-  return ref.watch(playlistProvider).selectedSubCategorySlug;
-});
-
-final searchQueryProvider = Provider<String>((ref) {
-  return ref.watch(playlistProvider).searchQuery;
-});
-
-final lastUpdateProvider = Provider<DateTime?>((ref) {
-  return ref.watch(playlistProvider).lastUpdate;
+  return ref.watch(errorProviderSource).error;
 });
