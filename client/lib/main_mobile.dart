@@ -14,13 +14,20 @@ import 'data/providers/playlist_provider.dart';
 import 'data/providers/history_provider.dart';
 import 'data/config/app_config.dart';
 import 'data/local/remote_config.dart';
+import 'data/services/notification_service.dart';
 
 // ==========================================================
 //  نقطة انطلاق التطبيق
 // ==========================================================
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+
+  // ✅ تهيئة الإشعارات
+  try {
+    await NotificationService().init();
+  } catch (_) {}
+
   runApp(
     const ProviderScope(
       child: EstetnFarjaMobileApp(),
@@ -51,9 +58,6 @@ class EstetnFarjaMobileApp extends StatelessWidget {
   }
 }
 
-// ==========================================================
-//  الشاشة الرئيسية للهاتف
-// ==========================================================
 class MobileShell extends ConsumerStatefulWidget {
   const MobileShell({super.key});
 
@@ -89,6 +93,11 @@ class _MobileShellState extends ConsumerState<MobileShell> {
   }
 
   Future<void> _loadPlaylistsIfNeeded() async {
+    try {
+      final settings = ref.read(settingsProvider);
+      NotificationService().setEnabled(settings.matchNotifications);
+    } catch (_) {}
+
     try {
       final remote = RemoteConfig();
       final cached = await remote.loadCached();
