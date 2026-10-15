@@ -3,22 +3,32 @@ import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
+/// نتيجة فحص واحد
+enum _Probe { ok, dead, retry }
+
 /// خدمة فحص القنوات - تعمل في الخلفية مع إدارة كاش ذكية
 class StreamChecker {
   static const String _boxName = 'stream_checks';
   static const String _kResults = 'results';
   static const String _kTimestamp = 'checked_at';
 
-  static const Duration timeout = Duration(seconds: 4);
-  static const int concurrency = 15;
-  static const int backgroundBatchSize = 10;
-  static const Duration backgroundDelay = Duration(seconds: 8);
+  static const Duration timeout = Duration(seconds: 6);
+  static const int concurrency = 25;
+  static const int backgroundBatchSize = 25;
+  static const Duration backgroundDelay = Duration(seconds: 2);
 
   /// ✅ الحد الأقصى لنتائج الفحص المحفوظة
   static const int maxSavedResults = 30000;
 
   /// ✅ بعد هذه المدة تُعاد محاولة فحص القناة التي سُجّلت ميتة
   static const Duration deadRecheckAfter = Duration(days: 3);
+
+  /// ✅ بعد هذه المدة تُعاد مراجعة القناة التي كانت تعمل
+  static const Duration okRecheckAfter = Duration(days: 7);
+
+  static const String browserUserAgent =
+      'Mozilla/5.0 (Linux; Android 11; Android TV) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
   /// ✅ VLC UA — مقبول من 99% من السيرفرات
   static const String vlcUserAgent = 'VLC/3.0.20 LibVLC/3.0.20';
@@ -59,49 +69,89 @@ class StreamChecker {
   }
 
   // ==========================================================
-  //  فحص قناة واحدة
+  //  فحص قناة واحدة (فحص حقيقي: نقرأ أول بيانات من البث)
   // ==========================================================
   Future<bool> checkOne(Channel channel) async {
+    for (final ua in const [vlcUserAgent, browserUserAgent]) {
+      final r = await _probe(channel, ua);
+      if (r == _Probe.ok) return true;
+      if (r == _Probe.dead) return false;
+      // _Probe.retry → نجرّب User-Agent آخر
+    }
+    return false;
+  }
+
+  Future<_Probe> _probe(Channel channel, String userAgent) async {
+    final cancel = CancelToken();
+    void stopRequest() {
+      if (!cancel.isCancelled) cancel.cancel();
+    }
+
     try {
-      // Referer تلقائي
       final headers = <String, String>{
-        'User-Agent': vlcUserAgent,
+        'User-Agent': userAgent,
         'Accept': '*/*',
+        'Range': 'bytes=0-2047',
       };
       try {
         final uri = Uri.parse(channel.streamUrl);
         headers['Referer'] = '${uri.scheme}://${uri.host}/';
       } catch (_) {}
-
-      // استخدام Referer المخصص إن وُجد
       final customReferer = channel.extras['referer'];
       if (customReferer != null && customReferer.isNotEmpty) {
         headers['Referer'] = customReferer;
       }
 
-      Response response;
-      try {
-        response = await _dio.head(
-          channel.streamUrl,
-          options: Options(headers: headers),
-        );
-      } catch (_) {
-        response = await _dio.get(
-          channel.streamUrl,
-          options: Options(
-            responseType: ResponseType.stream,
-            headers: {
-              ...headers,
-              'Range': 'bytes=0-512',
-            },
-          ),
-        );
-      }
+      final response = await _dio.get<ResponseBody>(
+        channel.streamUrl,
+        cancelToken: cancel,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: headers,
+        ),
+      );
 
       final code = response.statusCode ?? 0;
-      return okStatusCodes.contains(code);
+
+      // رفض بسبب الهوية → نجرّب User-Agent آخر
+      if (code == 401 || code == 403 || code == 405) {
+        stopRequest();
+        return _Probe.retry;
+      }
+      if (code != 200 && code != 206) {
+        stopRequest();
+        return _Probe.dead;
+      }
+
+      final ctype =
+          (response.headers.value('content-type') ?? '').toLowerCase();
+      // صفحة خطأ HTML بدل البث
+      if (ctype.contains('text/html')) {
+        stopRequest();
+        return _Probe.dead;
+      }
+
+      final body = response.data;
+      if (body == null) {
+        stopRequest();
+        return _Probe.dead;
+      }
+
+      // نقرأ أول جزء من البيانات فقط
+      final chunk = await body.stream.first.timeout(timeout);
+      stopRequest();
+      if (chunk.isEmpty) return _Probe.dead;
+
+      final isHls = channel.streamUrl.toLowerCase().contains('.m3u8') ||
+          ctype.contains('mpegurl');
+      if (isHls) {
+        final text = String.fromCharCodes(chunk);
+        return text.contains('#EXTM3U') ? _Probe.ok : _Probe.dead;
+      }
+      return _Probe.ok;
     } catch (_) {
-      return false;
+      stopRequest();
+      return _Probe.dead;
     }
   }
 
@@ -148,7 +198,7 @@ class StreamChecker {
   }
 
   void pause() => _isPaused = true;
-  void resume() => _isPaused = false;
+    void resume() => _isPaused = false;
 
   void stop() {
     _isRunning = false;
@@ -216,8 +266,11 @@ class StreamChecker {
         if (v is Map && v['ok'] is bool) {
           final ok = v['ok'] as bool;
           final at = (v['at'] as int?) ?? 0;
-          // علامة "ميتة" قديمة → نتجاهلها ليُعاد فحصها في الخلفية
-          if (!ok && now - at > deadRecheckAfter.inMilliseconds) return;
+          // نتيجة قديمة → نتجاهلها ليُعاد فحصها في الخلفية
+          final maxAge = ok
+              ? okRecheckAfter.inMilliseconds
+              : deadRecheckAfter.inMilliseconds;
+          if (now - at > maxAge) return;
           result[k] = ok;
         }
       });
