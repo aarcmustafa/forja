@@ -134,7 +134,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     final saved = await _checker.loadResults();
 
     if (!forceRefresh) {
-      // ✅ تصحيح: إضافة await
       final cached = await _storage.loadChannels();
       if (cached != null && cached.isNotEmpty) {
         _setChannels(cached, workingStatus: saved);
@@ -211,7 +210,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
       }
       if (all.isEmpty) return null;
 
-      // ✅ فلترة الرياضة فقط
       final sportOnly = all.where((c) => _isSportChannel(c)).toList();
 
       return _removeDuplicates(sportOnly);
@@ -222,7 +220,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     }
   }
 
-  /// ✅ هل القناة رياضية؟
   bool _isSportChannel(Channel c) {
     if (c.category == 'sport') return true;
 
@@ -258,6 +255,37 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
     _applyFilters();
   }
   
+  // ==========================================================
+  //  ✅ وضع علامة "ميتة" على قناة (من المشغل)
+  // ==========================================================
+  /// تُستدعى من player_screen عند فشل البث
+  Future<void> markDeadByUrl(String streamUrl) async {
+    try {
+      final channel = state.allChannels.firstWhere(
+        (c) => c.streamUrl == streamUrl,
+        orElse: () => Channel(
+          id: '',
+          name: '',
+          streamUrl: '',
+        ),
+      );
+
+      if (channel.id.isEmpty) return;
+
+      final newStatus = <String, bool>{...state.workingStatus};
+      newStatus[channel.id] = false;
+
+      state = state.copyWith(workingStatus: newStatus);
+
+      _applyFilters();
+
+      // ignore: avoid_print
+      print('Marked dead: ${channel.name}');
+    } catch (_) {
+      // تجاهل الأخطاء
+    }
+  }
+
   // ==========================================================
   //  الفحص الخلفي
   // ==========================================================
