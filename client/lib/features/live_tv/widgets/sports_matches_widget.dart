@@ -7,7 +7,7 @@ import '../../../data/providers/playlist_provider.dart';
 import '../../../data/services/sports_service.dart';
 import '../../../data/services/notification_service.dart';
 
-/// صندوق مباريات الرياضة — يظهر في قسم "رياضة"
+/// صندوق مباريات الرياضة
 class SportsMatchesWidget extends ConsumerStatefulWidget {
   final ValueChanged<Channel> onChannelTap;
 
@@ -47,27 +47,23 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       final all = await _service.getTodayFootballMatches(
         forceRefresh: force,
       );
-
       if (!mounted) return;
 
-      // ✅ إذا كانت القائمة فارغة بعد النجاح → خطأ (غالبًا شبكة)
       if (all.isEmpty) {
         setState(() {
           _matches = [];
           _isLoading = false;
-          _hasError = true;   // ← الآن يعمل!
+          _hasError = true;
         });
         return;
       }
 
       final filtered = _service.filterImportant(all);
-
       setState(() {
         _matches = filtered;
         _isLoading = false;
       });
 
-      // جدولة الإشعارات
       try {
         final notif = NotificationService();
         if (notif.isEnabled) {
@@ -85,16 +81,10 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // ✅ لم نُعد نصمت عند غياب المباريات
-    // نُظهر رسالة "لا مباريات" بدل إخفاء القسم
-
     final liveMatches = _matches.where((m) => m.isLive).toList();
-
-    // ✅ المباريات القادمة (بدون شرط isSoon الضيّق)
     final upcomingToday = _matches
         .where((m) => m.isUpcoming && m.isToday)
         .toList();
-
     final upcomingTomorrow = _matches
         .where((m) => m.isUpcoming && m.isTomorrow)
         .toList();
@@ -106,10 +96,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
         gradient: const LinearGradient(
           begin: Alignment.topRight,
           end: Alignment.bottomLeft,
-          colors: [
-            Color(0xFF1A2E1A),
-            Color(0xFF0F1A0F),
-          ],
+          colors: [Color(0xFF1A2E1A), Color(0xFF0F1A0F)],
         ),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
@@ -167,7 +154,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
               upcomingTomorrow.isEmpty)
             _buildNoMatches()
           else ...[
-            // 🔴 مباشر
             if (liveMatches.isNotEmpty) ...[
               _buildSectionTitle(
                 'الآن على الشاشة',
@@ -178,7 +164,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
               for (final m in liveMatches) _buildMatchCard(m),
               const SizedBox(height: 16),
             ],
-            // ⏰ قريبًا اليوم
             if (upcomingToday.isNotEmpty) ...[
               _buildSectionTitle(
                 'اليوم',
@@ -189,7 +174,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
               for (final m in upcomingToday) _buildMatchCard(m),
               const SizedBox(height: 16),
             ],
-            // 📅 غدًا
             if (upcomingTomorrow.isNotEmpty) ...[
               _buildSectionTitle(
                 'غدًا',
@@ -429,22 +413,15 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
     );
   }
 
-  // ==========================================================
-  //  ✅ إيجاد القنوات — مصحّح (لا يشترط category == 'sport')
-  // ==========================================================
   List<Channel> _findChannels(SportMatch match) {
-    // ✅ استخدم filteredChannels (التي مرت عبر _isSportChannel)
     final all = ref.read(playlistProvider).filteredChannels;
     if (all.isEmpty) return [];
 
     final result = <Channel>[];
     final seenIds = <String>{};
 
-    // ✅ 1) إذا كانت القناة معروفة من API
     if (match.channel != null && match.channel!.isNotEmpty) {
       final apiCh = match.channel!.toLowerCase();
-
-      // استخرج كلمة مميزة (bein, ssc, ...)
       for (final keyword in [
         'bein', 'ssc', 'ad sport', 'dubai', 'alkass', 'ksa',
       ]) {
@@ -459,8 +436,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
           }
         }
       }
-
-      // مطابقة مباشرة باسم القناة
       for (final c in all) {
         if (c.name.toLowerCase().contains(apiCh) ||
             apiCh.contains(c.name.toLowerCase())) {
@@ -472,7 +447,6 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
       }
     }
 
-    // ✅ 2) إذا لم نجد قنوات، نستخدم دوري المباراة أو أسماء الفرق
     final searchTerms = <String>[
       match.league.toLowerCase(),
       match.homeTeam.toLowerCase(),
@@ -555,9 +529,7 @@ class _ChannelPlayChipState extends State<_ChannelPlayChip> {
             children: [
               Icon(
                 Icons.play_circle_fill_rounded,
-                color: _isFocused
-                    ? Colors.white
-                    : const Color(0xFF4CAF50),
+                color: _isFocused ? Colors.white : const Color(0xFF4CAF50),
                 size: 16,
               ),
               const SizedBox(width: 6),
