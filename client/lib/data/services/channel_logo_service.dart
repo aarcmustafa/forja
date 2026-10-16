@@ -45,7 +45,8 @@ class ChannelLogoService {
     // ═══════════════════════════════════════════════════════
     if (name.contains('alkass') ||
         name.contains('al kass') ||
-        name.contains('الكأس')) {
+        name.contains('الكأس') ||
+        name.contains('الكاس')) {
       final n = _extractNumber(name);
       if (n != null && n > 0 && n <= 2) {
         return '$_base/qatar/al-kass-$n-qa.png';
