@@ -85,15 +85,55 @@ jobs:
           fi
           echo "RES_PATH=$RES_PATH" >> $GITHUB_OUTPUT
 
-      - name: Replace Android res folder
+      - name: Merge custom res into Flutter res
         run: |
           RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
           RES_DEST="client/android/app/src/main/res"
           if [ -z "$RES_SRC" ]; then echo "no custom res"; exit 0; fi
           if [ ! -d "$RES_SRC" ]; then echo "not a directory"; exit 0; fi
-          rm -rf "$RES_DEST"
-          mkdir -p "$RES_DEST"
-          cp -r "$RES_SRC"/* "$RES_DEST/"
+          # ✅ دمج بدل استبدال
+          cp -r "$RES_SRC"/* "$RES_DEST/" 2>/dev/null || true
+          echo "=== Merged res folder contents ==="
+          ls -la "$RES_DEST"
+          echo "=== values folder ==="
+          ls -la "$RES_DEST/values" 2>/dev/null || echo "no values folder"
+
+      - name: Ensure LaunchTheme and NormalTheme exist
+        run: |
+          RES_DEST="client/android/app/src/main/res"
+          VALUES_DIR="$RES_DEST/values"
+          mkdir -p "$VALUES_DIR"
+
+          STYLES_FILE="$VALUES_DIR/styles.xml"
+
+          if [ ! -f "$STYLES_FILE" ]; then
+            echo "Creating styles.xml from scratch"
+            cat > "$STYLES_FILE" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">@android:color/white</item>
+              </style>
+              <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+                  <item name="android:windowBackground">?android:colorBackground</item>
+              </style>
+          </resources>
+          EOF
+          else
+            # إذا كان موجودًا لكن بدون LaunchTheme، نضيفه
+            if ! grep -q 'name="LaunchTheme"' "$STYLES_FILE"; then
+              echo "Adding LaunchTheme to existing styles.xml"
+              # ابحث عن </resources> وأضف قبله
+              sed -i 's|</resources>|    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">\n        <item name="android:windowBackground">@android:color/white</item>\n    </style>\n</resources>|' "$STYLES_FILE"
+            fi
+            if ! grep -q 'name="NormalTheme"' "$STYLES_FILE"; then
+              echo "Adding NormalTheme to existing styles.xml"
+              sed -i 's|</resources>|    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">\n        <item name="android:windowBackground">?android:colorBackground</item>\n    </style>\n</resources>|' "$STYLES_FILE"
+            fi
+          fi
+
+          echo "=== Final styles.xml ==="
+          cat "$STYLES_FILE"
 
       - name: Patch all splash screen resources
         run: |
@@ -106,13 +146,12 @@ jobs:
           fi
 
           find "$RES_DEST" -type f -name "*.xml" | while read f; do
-            sed -i 's|parent="Theme.SplashScreen"|parent="android:Theme.Black.NoTitleBar"|g' "$f"
+            sed -i 's|parent="Theme.SplashScreen"|parent="@android:style/Theme.Light.NoTitleBar"|g' "$f"
             sed -i '/windowSplashScreenBackground/d' "$f"
             sed -i '/windowSplashScreenAnimatedIcon/d' "$f"
             sed -i '/windowSplashScreenAnimationDuration/d' "$f"
             sed -i '/windowSplashScreenIconBackgroundColor/d' "$f"
             sed -i '/postSplashScreenTheme/d' "$f"
-            sed -i '/<style name="Theme.SplashScreen"/,/<\/style>/d' "$f"
             echo "Patched: $f"
           done
 
@@ -121,6 +160,10 @@ jobs:
           else
             echo "All Theme.SplashScreen references removed"
           fi
+
+          echo "=== Verify LaunchTheme + NormalTheme still exist ==="
+          grep -r "LaunchTheme" "$RES_DEST" || echo "ERROR: LaunchTheme missing!"
+          grep -r "NormalTheme" "$RES_DEST" || echo "ERROR: NormalTheme missing!"
 
       - name: Generate encrypted config
         env:
@@ -153,8 +196,6 @@ jobs:
           GR_NDK = "\nndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }\n"
           KTS_PACK = "\npackaging {\n    jniLibs { useLegacyPackaging = true }\n    resources { excludes += setOf(\"META-INF/*.kotlin_module\") }\n}\n"
           GR_PACK = "\npackagingOptions {\n    jniLibs { useLegacyPackaging = true }\n    resources { excludes += ['META-INF/*.kotlin_module'] }\n}\n"
-          KTS_SPLASH = "\nimplementation(\"androidx.core:core-splashscreen:1.0.1\")\n"
-          GR_SPLASH = "\nimplementation 'androidx.core:core-splashscreen:1.0.1'\n"
           for path in ["android/app/build.gradle.kts", "android/app/build.gradle"]:
               if not os.path.exists(path):
                   continue
@@ -166,9 +207,6 @@ jobs:
               if "packagingOptions" not in src and "packaging {" not in src and "android {" in src:
                   i = src.find("android {") + len("android {")
                   src = src[:i] + (KTS_PACK if is_kts else GR_PACK) + src[i:]
-              if "core-splashscreen" not in src and "dependencies {" in src:
-                  i = src.find("dependencies {") + len("dependencies {")
-                  src = src[:i] + (KTS_SPLASH if is_kts else GR_SPLASH) + src[i:]
               open(path, "w", encoding="utf-8").write(src)
               print("[OK] patched " + path)
           PYEOF
