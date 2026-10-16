@@ -161,7 +161,6 @@ Future<void> loadPlaylists(
         isLoading: false,
         lastUpdate: _storage.getLastSaveTime(),
       );
-
       _runInitialCheckIfNeeded(saved);
       _refreshInBackground(urls);
       return;
@@ -235,7 +234,6 @@ Future<List<Channel>?> _fetchAllStreaming(
           : sportOnly;
 
       _setChannels(initial, workingStatus: state.workingStatus);
-
       state = state.copyWith(
         isLoading: false,
         isLoadingMore: sportOnly.length > firstBatchTarget,
@@ -261,7 +259,6 @@ Future<List<Channel>?> _fetchAllStreaming(
 
 Future<void> _refreshInBackground(List<String> urls) async {
   state = state.copyWith(isRefreshing: true);
-
   try {
     final futures = urls.map((url) async {
       try {
@@ -295,7 +292,7 @@ Future<void> _refreshInBackground(List<String> urls) async {
   }
 }
   // ==========================================================
-//  الفحص مُلغى — نستخدم فقط النتائج المحفوظة
+//  الفحص مُلغى
 // ==========================================================
 Future<void> _runInitialCheckIfNeeded(Map<String, bool> saved) async {
   if (saved.isNotEmpty) {
@@ -306,26 +303,18 @@ Future<void> _runInitialCheckIfNeeded(Map<String, bool> saved) async {
   state = state.copyWith(isInitialChecking: false);
 }
 
-void _startBackgroundCheckIfNeeded() {
-  // لا شيء — الفحص مُلغى
-}
+void _startBackgroundCheckIfNeeded() {}
 
 Future<void> markDeadByUrl(String streamUrl) async {
   try {
     final channel = state.allChannels.firstWhere(
       (c) => c.streamUrl == streamUrl,
-      orElse: () => const Channel(
-        id: '',
-        name: '',
-        streamUrl: '',
-      ),
+      orElse: () => const Channel(id: '', name: '', streamUrl: ''),
     );
-
     if (channel.id.isEmpty) return;
 
     final newStatus = <String, bool>{...state.workingStatus};
     newStatus[channel.id] = false;
-
     state = state.copyWith(workingStatus: newStatus);
     await _checker.markDead(channel.id);
     _applyFilters();
@@ -346,7 +335,7 @@ void _setChannels(
 }
 
 // ==========================================================
-//  الترتيب: beIN العربية أولاً
+//  الترتيب: beIN AR أولاً
 // ==========================================================
 List<Channel> _sortChannels(List<Channel> channels) {
   final sorted = List<Channel>.from(channels);
@@ -361,30 +350,34 @@ int _sortPriority(Channel c) {
 
   final quality = _qualityRank(text);
 
-  // ═══════════════════════════════════════════════════════
-  //  beIN Sports — العربية 1-16 أولاً
-  // ═══════════════════════════════════════════════════════
+  // beIN Sports
   final isBein = text.contains('bein') ||
       text.contains('بين سبورت') ||
       text.contains('بين سبور');
 
   if (isBein) {
+    // ✅ 1) beIN AR أولاً
+    if (_isArBein(name)) {
+      final n = _num(name);
+      return 1 + n;
+    }
+
     final n = _num(name);
 
-    // MAX آخر شيء
+    // MAX
     if (name.contains('max') || name.contains('ماكس')) {
+      return 400 + n;
+    }
+    // Premium
+    if (name.contains('premium') || name.contains('بريميوم')) {
       return 300 + n;
     }
-    // Premium قبل MAX
-    if (name.contains('premium') || name.contains('بريميوم')) {
+    // English
+    if (name.contains('english') || name.contains('إنجليزي')) {
       return 200 + n;
     }
-    // English قبل Premium
-    if (name.contains('english') || name.contains('إنجليزي')) {
-      return 100 + n;
-    }
-    // ✅ العربية beIN Sports 1-16 → القمة المطلقة
-    return 10 + n;
+    // beIN 1-16 العربية
+    return 100 + n;
   }
 
   // Al Kass
@@ -410,8 +403,39 @@ int _sortPriority(Channel c) {
     return 1500 + (n * 10) + quality;
   }
 
-  // الباقي
+  // Alwan Sport
+  if (text.contains('alwan') ||
+      text.contains('ألوان') ||
+      text.contains('الوان')) {
+    final n = _num(name);
+    return 2000 + (n * 10) + quality;
+  }
+
   return 9000 + (name.hashCode.abs() % 900);
+}
+
+/// ✅ كشف قنوات beIN AR
+bool _isArBein(String name) {
+  final lower = name.toLowerCase();
+  final hasBein = lower.contains('bein') || lower.contains('بين');
+  if (!hasBein) return false;
+
+  if (RegExp(r'^ar[\s\-_]', caseSensitive: false).hasMatch(lower)) {
+    return true;
+  }
+  if (RegExp(r'[\s\-_]ar[\s\-_]', caseSensitive: false).hasMatch(lower)) {
+    return true;
+  }
+  if (RegExp(r'[\s\-_]ar\d', caseSensitive: false).hasMatch(lower)) {
+    return true;
+  }
+  if (RegExp(r'^\s*bein\s+ar\b', caseSensitive: false).hasMatch(lower)) {
+    return true;
+  }
+  if (RegExp(r'^ar[\s\-_]*bein', caseSensitive: false).hasMatch(lower)) {
+    return true;
+  }
+  return false;
 }
 
 int _qualityRank(String text) {
@@ -514,7 +538,6 @@ void _applyFilters() {
   }
 
   filtered = _sortChannels(filtered);
-
   state = state.copyWith(filteredChannels: filtered);
 }
     // ==========================================================
@@ -525,15 +548,12 @@ void _applyFilters() {
     final group = c.group.toLowerCase();
     final text = '$name $group';
 
-    // ═══════════════════════════════════════════════════════
-    //  🚫 قائمة سوداء: أي قناة تحتوي هذه → ليست رياضية
-    // ═══════════════════════════════════════════════════════
     const blacklist = [
       'kids', 'أطفال', 'اطفال', 'cartoon', 'كرتون', 'سبيستون',
       'movie', 'أفلام', 'افلام', 'cinema', 'سينما',
       'music', 'موسيقى', 'موسيقية', 'طرب',
       'news', 'أخبار', 'اخبار',
-      'religion', 'ديني', 'قرآن', 'quran', 'قرآن كريم',
+      'religion', 'ديني', 'قرآن', 'quran',
       'cooking', 'طبخ', 'food', 'أكل',
       'shopping', 'تسوق', 'بيع',
       'documentary', 'وثائقي', 'ناشيونال',
@@ -549,11 +569,7 @@ void _applyFilters() {
       if (name.contains(b) || group.contains(b)) return false;
     }
 
-    // ═══════════════════════════════════════════════════════
-    //  ✅ قائمة بيضاء: كلمات رياضية محددة جدًا
-    // ═══════════════════════════════════════════════════════
     const sportKeywords = [
-      // باقات عربية معروفة
       'bein', 'بين سبورت', 'بين سبور',
       'ssc', 'ssc sport',
       'alkass', 'al kass', 'الكأس', 'الكاس',
@@ -563,14 +579,11 @@ void _applyFilters() {
       'alwan sport', 'ألوان الرياضية',
       'shahid sport',
       '1001',
-      // عالمية
       'sky sport', 'espn', 'dazn',
       'eurosport', 'euro sport',
       'sportv', 'sport tv',
-      // رياضات محددة
       'nba', 'nfl', 'ufc', 'wwe',
       'formula 1', 'f1 ', 'moto gp',
-      // كلمات عربية محددة
       'رياضية', 'الرياضية',
       'كورة', 'الكورة',
       'ملاعب',
@@ -580,7 +593,6 @@ void _applyFilters() {
       if (text.contains(k)) return true;
     }
 
-    // القرار النهائي: غير مدرج = غير رياضي
     return false;
   }
 
@@ -606,9 +618,6 @@ void _applyFilters() {
         .trim();
   }
 
-  // ==========================================================
-  //  الباقات: beIN + الكأس + أبوظبي + دبي
-  // ==========================================================
   List<Category> _buildCategoriesFromChannels(List<Channel> channels) {
     const wantedSubs = [
       SubCategory(id: '1', name: 'beIN Sports', slug: 'bein', order: 1),
@@ -631,7 +640,6 @@ void _applyFilters() {
         final text = '${c.name} ${c.group}'.toLowerCase();
         return keywords.any((k) => text.contains(k));
       }).length;
-
       subs.add(sub.copyWith(channelsCount: count));
     }
 
