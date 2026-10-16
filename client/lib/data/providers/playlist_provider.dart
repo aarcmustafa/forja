@@ -109,7 +109,7 @@ class PlaylistState {
 }
 
 // ==========================================================
-//  Notifier — البداية
+//  Notifier
 // ==========================================================
 class PlaylistNotifier extends StateNotifier<PlaylistState> {
   final M3uRepository _repository;
@@ -197,9 +197,6 @@ Future<void> loadPlaylists(
   _startBackgroundCheckIfNeeded();
 }
 
-// ==========================================================
-//  التحميل المتدرج
-// ==========================================================
 Future<List<Channel>?> _fetchAllStreaming(
   List<String> urls, {
   bool refreshCache = false,
@@ -262,9 +259,6 @@ Future<List<Channel>?> _fetchAllStreaming(
   return finalList;
 }
 
-// ==========================================================
-//  تحديث في الخلفية
-// ==========================================================
 Future<void> _refreshInBackground(List<String> urls) async {
   state = state.copyWith(isRefreshing: true);
 
@@ -301,124 +295,26 @@ Future<void> _refreshInBackground(List<String> urls) async {
   }
 }
   // ==========================================================
-//  ✅ الفحص الأولي: beIN أولاً + الباقي بصمت
+//  ✅ الفحص مُلغى — نستخدم فقط النتائج المحفوظة
 // ==========================================================
 Future<void> _runInitialCheckIfNeeded(Map<String, bool> saved) async {
-  if (_storage.hasInitialCheckDone()) return;
-  if (_initialCheckInProgress) return;
-  if (state.allChannels.isEmpty) return;
-
-  _initialCheckInProgress = true;
-
-  final total = state.allChannels.length;
-
-  state = state.copyWith(
-    isInitialChecking: true,
-    initialCheckDone: 0,
-    initialCheckTotal: total,
-  );
-
-  try {
-    // ═══════════════════════════════════════════════════════
-    //  المرحلة 1: فحص الأولويات (beIN و SSC و AD...)
-    // ═══════════════════════════════════════════════════════
-    final priorityResults = await _checker.checkPriority(
-      state.allChannels,
-    );
-
-    if (priorityResults.isNotEmpty) {
-      final merged = <String, bool>{
-        ...saved,
-        ...state.workingStatus,
-        ...priorityResults,
-      };
-      state = state.copyWith(
-        workingStatus: merged,
-        initialCheckDone: priorityResults.length,
-      );
-      _applyFilters();
-    }
-
-    // ═══════════════════════════════════════════════════════
-    //  المرحلة 2: الفحص الكامل بصمت
-    // ═══════════════════════════════════════════════════════
-    await _checker.checkInitial(
-      state.allChannels,
-      batchSize: 20,
-      onProgress: (done, ttl) {
-        state = state.copyWith(
-          initialCheckDone: done,
-          initialCheckTotal: ttl,
-        );
-      },
-      onBatch: (batchResults) {
-        final merged = <String, bool>{
-          ...saved,
-          ...state.workingStatus,
-          ...batchResults,
-        };
-        state = state.copyWith(workingStatus: merged);
-        _applyFilters();
-      },
-    );
-
-    await _storage.markInitialCheckDone();
-    state = state.copyWith(isInitialChecking: false);
-  } catch (e) {
-    // ignore: avoid_print
-    print('خطأ في الفحص الأولي: $e');
-    state = state.copyWith(isInitialChecking: false);
-  } finally {
-    _initialCheckInProgress = false;
+  if (saved.isNotEmpty) {
+    state = state.copyWith(workingStatus: saved);
+    _applyFilters();
   }
+  await _storage.markInitialCheckDone();
+  state = state.copyWith(isInitialChecking: false);
 }
 
-// ==========================================================
-//  الفحص الخلفي
-// ==========================================================
+// ✅ الفحص الخلفي مُلغى
 void _startBackgroundCheckIfNeeded() {
-  if (_backgroundCheckStarted) return;
-  if (state.allChannels.isEmpty) return;
-  if (_initialCheckInProgress) return;
-
-  _backgroundCheckStarted = true;
-
-  Future.delayed(const Duration(seconds: 5), () {
-    if (_initialCheckInProgress) {
-      _backgroundCheckStarted = false;
-      _startBackgroundCheckIfNeeded();
-      return;
-    }
-    _runBackgroundCheck();
-  });
+  // لا شيء — الفحص مُلغى
 }
 
 Future<void> _runBackgroundCheck() async {
-  final channels = state.allChannels;
-  if (channels.isEmpty) return;
-
-  await _checker.startBackgroundCheck(
-    channels,
-    alreadyChecked: state.workingStatus,
-    onResult: (channelId, isWorking) {
-      final merged = <String, bool>{
-        ...state.workingStatus,
-        channelId: isWorking,
-      };
-      state = state.copyWith(workingStatus: merged);
-
-      if (merged.length % 50 == 0) {
-        _applyFilters();
-      }
-    },
-  );
-
-  _applyFilters();
+  // لا شيء — الفحص مُلغى
 }
 
-// ==========================================================
-//  markDeadByUrl
-// ==========================================================
 Future<void> markDeadByUrl(String streamUrl) async {
   try {
     final channel = state.allChannels.firstWhere(
@@ -453,8 +349,9 @@ void _setChannels(
   );
   _applyFilters();
 }
-  // ==========================================================
-//  ✅ الترتيب: beIN أولاً (10-19)، VOD آخراً (9999)
+
+// ==========================================================
+//  ✅ الترتيب: beIN → الكأس → أبوظبي → دبي + الجودة من الأقل للأعلى
 // ==========================================================
 List<Channel> _sortChannels(List<Channel> channels) {
   final sorted = List<Channel>.from(channels);
@@ -467,55 +364,77 @@ int _sortPriority(Channel c) {
   final group = c.group.toLowerCase();
   final text = '$group $name';
 
-  // 1) VOD → آخر شيء
-  if (text.contains('vod') || text.contains('في إتش دي')) {
-    if (text.contains('bein') || text.contains('بين')) {
-      return 9999;
-    }
-    return 9500;
-  }
+  // رتبة الجودة: 0=SD, 1=HD, 2=FHD, 3=4K
+  final quality = _qualityRank(text);
 
-  // 2) beIN Sports → أول شيء
+  // ═══════════════════════════════════════════════════════
+  //  1) beIN Sports
+  // ═══════════════════════════════════════════════════════
   final isBein = text.contains('bein') ||
       text.contains('بين سبورت') ||
       text.contains('بين سبور');
 
   if (isBein) {
-    final match = RegExp(r'(\d{1,3})').firstMatch(name);
-    final num = int.tryParse(match?.group(1) ?? '0') ?? 0;
-
-    if (name.contains('max') || name.contains('ماكس')) {
-      return 5 + num;
-    }
-    if (name.contains('premium') || name.contains('بريميوم')) {
-      return 8 + num;
-    }
-    return 10 + num;
+    final n = _num(name);
+    return (n * 10) + quality;
   }
 
-  // 3) باقات أخرى
-  if (text.contains('ssc')) return 2000;
-  if (text.contains('ad sport') ||
-      text.contains('أبوظبي الرياضية')) {
-    return 2100;
+  // ═══════════════════════════════════════════════════════
+  //  2) Al Kass
+  // ═══════════════════════════════════════════════════════
+  if (text.contains('alkass') ||
+      text.contains('al kass') ||
+      text.contains('الكأس')) {
+    final n = _num(name);
+    return 500 + (n * 10) + quality;
   }
-  if (text.contains('alkass') || text.contains('الكأس')) return 2200;
+
+  // ═══════════════════════════════════════════════════════
+  //  3) Abu Dhabi Sports
+  // ═══════════════════════════════════════════════════════
+  if (text.contains('abu dhabi') ||
+      text.contains('ad sport') ||
+      text.contains('أبوظبي')) {
+    final n = _num(name);
+    return 1000 + (n * 10) + quality;
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  4) Dubai Sports
+  // ═══════════════════════════════════════════════════════
   if (text.contains('dubai sport') ||
       text.contains('دبي الرياضية')) {
-    return 2300;
+    final n = _num(name);
+    return 1500 + (n * 10) + quality;
   }
-  if (text.contains('ksa sport') ||
-      text.contains('السعودية الرياضية')) {
-    return 2400;
-  }
-  if (text.contains('alwan')) return 2500;
-  if (text.contains('shahid')) return 2600;
-  if (text.contains('1001')) return 2700;
-  if (text.contains('sky sport')) return 2800;
-  if (text.contains('espn')) return 2850;
-  if (text.contains('dazn')) return 2900;
 
-  return 5000 + (name.hashCode.abs() % 4000);
+  // ═══════════════════════════════════════════════════════
+  //  الباقي
+  // ═══════════════════════════════════════════════════════
+  return 9000 + (name.hashCode.abs() % 900);
+}
+
+int _qualityRank(String text) {
+  if (text.contains('4k') ||
+      text.contains('uhd') ||
+      text.contains('2160')) {
+    return 3;
+  }
+  if (text.contains('fhd') ||
+      text.contains('full hd') ||
+      text.contains('1080')) {
+    return 2;
+  }
+  if (text.contains('hd') || text.contains('720')) {
+    return 1;
+  }
+  return 0;
+}
+
+int _num(String text) {
+  final m = RegExp(r'(\d{1,2})').firstMatch(text);
+  if (m == null) return 0;
+  return int.tryParse(m.group(1)!) ?? 0;
 }
 
 // ==========================================================
@@ -562,12 +481,8 @@ void _applyFilters() {
         .toList();
   }
 
-  if (state.workingStatus.isNotEmpty) {
-    filtered = filtered.where((c) {
-      final status = state.workingStatus[c.id];
-      return status == null || status == true;
-    }).toList();
-  }
+  // ✅ إلغاء إخفاء الميتة (لأنه لا يوجد فحص)
+  // if (state.workingStatus.isNotEmpty) { ... }
 
   if (state.selectedSubCategorySlug != null) {
     final slug = state.selectedSubCategorySlug!.toLowerCase();
@@ -652,35 +567,33 @@ void _applyFilters() {
         .trim();
   }
 
+  // ==========================================================
+  //  ✅ الباقات: beIN + الكأس + أبوظبي + دبي فقط
+  // ==========================================================
   List<Category> _buildCategoriesFromChannels(List<Channel> channels) {
-    const defaultSubs = [
+    const wantedSubs = [
       SubCategory(id: '1', name: 'beIN Sports', slug: 'bein', order: 1),
-      SubCategory(id: '2', name: 'SSC', slug: 'ssc', order: 2),
-      SubCategory(id: '3', name: 'AD Sports', slug: 'adsports', order: 3),
-      SubCategory(id: '4', name: 'Al Kass', slug: 'alkass', order: 4),
-      SubCategory(id: '5', name: 'Dubai Sports', slug: 'dubai', order: 5),
-      SubCategory(id: '6', name: 'KSA Sports', slug: 'ksa', order: 6),
-      SubCategory(id: '7', name: 'Alwan', slug: 'alwan', order: 7),
-      SubCategory(id: '8', name: 'Shahid', slug: 'shahid', order: 8),
-      SubCategory(id: '9', name: '1001', slug: '1001', order: 9),
+      SubCategory(id: '2', name: 'الكأس', slug: 'alkass', order: 2),
+      SubCategory(id: '3', name: 'أبوظبي الرياضية', slug: 'ad', order: 3),
+      SubCategory(id: '4', name: 'دبي الرياضية', slug: 'dubai', order: 4),
     ];
 
+    const matchMap = <String, List<String>>{
+      'bein': ['bein', 'بين سبورت', 'بين سبور'],
+      'alkass': ['alkass', 'al kass', 'الكأس'],
+      'ad': ['abu dhabi', 'ad sport', 'أبوظبي'],
+      'dubai': ['dubai sport', 'دبي الرياضية'],
+    };
+
     final subs = <SubCategory>[];
-    for (final sub in defaultSubs) {
+    for (final sub in wantedSubs) {
+      final keywords = matchMap[sub.slug] ?? [sub.slug];
       final count = channels.where((c) {
-        final g = c.group.toLowerCase();
-        final n = c.name.toLowerCase();
-        final s = sub.slug.toLowerCase();
-        final subName = sub.name.toLowerCase();
-        return g.contains(s) ||
-            n.contains(s) ||
-            g.contains(subName) ||
-            n.contains(subName);
+        final text = '${c.name} ${c.group}'.toLowerCase();
+        return keywords.any((k) => text.contains(k));
       }).length;
 
-      if (count > 0) {
-        subs.add(sub.copyWith(channelsCount: count));
-      }
+      subs.add(sub.copyWith(channelsCount: count));
     }
 
     return [
