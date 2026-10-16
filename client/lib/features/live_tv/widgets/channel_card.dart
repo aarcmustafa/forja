@@ -25,14 +25,15 @@ class ChannelCard extends StatefulWidget {
 
 class _ChannelCardState extends State<ChannelCard> {
   bool _isFocused = false;
-  bool _logoFailed = false;
+  bool _localLogoFailed = false;
 
   String? get _logoUrl {
-    final local = widget.channel.logo;
-    if (local.isNotEmpty && !_logoFailed) return local;
-
-    final remote = ChannelLogoService.getLogo(widget.channel.name);
-    return remote;
+    // 1) جرّب الشعار المحلي أولاً
+    if (widget.channel.logo.isNotEmpty && !_localLogoFailed) {
+      return widget.channel.logo;
+    }
+    // 2) إذا فشل، استخدم الإنترنت
+    return ChannelLogoService.getLogo(widget.channel.name);
   }
 
   @override
@@ -136,9 +137,10 @@ class _ChannelCardState extends State<ChannelCard> {
         );
       },
       errorBuilder: (_, __, ___) {
-        if (!_logoFailed && widget.channel.logo.isNotEmpty) {
+        // إذا فشل الشعار المحلي → جرّب الإنترنت
+        if (!_localLogoFailed && widget.channel.logo.isNotEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _logoFailed = true);
+            if (mounted) setState(() => _localLogoFailed = true);
           });
         }
         return _buildPlaceholder();
