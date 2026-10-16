@@ -413,59 +413,83 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
     );
   }
 
+  // ==========================================================
+  //  ✅ إيجاد القنوات الناقلة — فقط beIN AR + ألوان سبور
+  // ==========================================================
   List<Channel> _findChannels(SportMatch match) {
     final all = ref.read(playlistProvider).filteredChannels;
     if (all.isEmpty) return [];
 
-    final result = <Channel>[];
-    final seenIds = <String>{};
+    // 1) اجمع القنوات المسموحة
+    final allowed = <Channel>[];
+    for (final c in all) {
+      final name = c.name.toLowerCase();
+      final group = c.group.toLowerCase();
+      final text = '$name $group';
 
+      if (_isAllowedMatchChannel(text, name)) {
+        allowed.add(c);
+      }
+    }
+
+    if (allowed.isEmpty) return [];
+
+    // 2) ترتيب حسب صلة المباراة
+    final result = <Channel>[];
+
+    // أولاً: إذا API ذكر قناة معينة
     if (match.channel != null && match.channel!.isNotEmpty) {
-      final apiCh = match.channel!.toLowerCase();
-      for (final keyword in [
-        'bein', 'ssc', 'ad sport', 'dubai', 'alkass', 'ksa',
-      ]) {
-        if (apiCh.contains(keyword)) {
-          for (final c in all) {
-            if (c.name.toLowerCase().contains(keyword)) {
-              if (seenIds.add(c.id)) {
-                result.add(c);
-                if (result.length >= 6) return result;
-              }
-            }
+      final apiChannel = match.channel!.toLowerCase();
+
+      if (apiChannel.contains('bein')) {
+        for (final c in allowed) {
+          if (c.name.toLowerCase().contains('bein')) {
+            result.add(c);
+            if (result.length >= 8) break;
           }
         }
-      }
-      for (final c in all) {
-        if (c.name.toLowerCase().contains(apiCh) ||
-            apiCh.contains(c.name.toLowerCase())) {
-          if (seenIds.add(c.id)) {
+      } else if (apiChannel.contains('alwan') ||
+          apiChannel.contains('ألوان') ||
+          apiChannel.contains('الوان')) {
+        for (final c in allowed) {
+          if (c.name.toLowerCase().contains('alwan') ||
+              c.name.toLowerCase().contains('ألوان') ||
+              c.name.toLowerCase().contains('الوان')) {
             result.add(c);
-            if (result.length >= 6) return result;
+            if (result.length >= 4) break;
           }
         }
       }
     }
 
-    final searchTerms = <String>[
-      match.league.toLowerCase(),
-      match.homeTeam.toLowerCase(),
-      match.awayTeam.toLowerCase(),
-    ].where((t) => t.length >= 4).toList();
-
-    for (final term in searchTerms) {
-      for (final c in all) {
-        final text = '${c.name} ${c.group}'.toLowerCase();
-        if (text.contains(term)) {
-          if (seenIds.add(c.id)) {
-            result.add(c);
-            if (result.length >= 6) return result;
-          }
-        }
-      }
+    // ثانيًا: إذا لم نضف شيئًا، أضف أول 6
+    if (result.isEmpty) {
+      result.addAll(allowed.take(6));
     }
 
     return result;
+  }
+
+  /// ✅ فحص: هل هذه قناة مسموحة لعرض المباريات؟
+  bool _isAllowedMatchChannel(String text, String name) {
+    // 🔍 beIN AR فقط
+    final isBein = text.contains('bein') || text.contains('بين');
+    if (isBein) {
+      final hasAr = RegExp(
+        r'[\s\-_]ar[\s\-_]|^ar[\s\-_]|[\s\-_]ar\d|^ar\d|^bein\s+ar\b|^ar[\s\-_]*bein',
+        caseSensitive: false,
+      ).hasMatch(name);
+      return hasAr;
+    }
+
+    // 🔍 ألوان سبور
+    if (text.contains('alwan') ||
+        text.contains('ألوان') ||
+        text.contains('الوان')) {
+      return true;
+    }
+
+    return false;
   }
 
   Widget _buildChannelChip(Channel channel) {
@@ -475,6 +499,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
     );
   }
 }
+
 // ==========================================================
 //  شريحة قناة
 // ==========================================================
