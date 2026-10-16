@@ -385,7 +385,7 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
               spacing: 8,
               runSpacing: 8,
               children: channels
-                  .take(6)
+                  .take(8)
                   .map((ch) => _buildChannelChip(ch))
                   .toList(),
             ),
@@ -414,7 +414,8 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
   }
 
   // ==========================================================
-  //  ✅ إيجاد القنوات الناقلة — فقط beIN AR + ألوان سبور
+  //  ✅ إيجاد القنوات الناقلة
+  //  كل beIN + ألوان (بدون شرط AR)
   // ==========================================================
   List<Channel> _findChannels(SportMatch match) {
     final all = ref.read(playlistProvider).filteredChannels;
@@ -443,9 +444,10 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
 
       if (apiChannel.contains('bein')) {
         for (final c in allowed) {
-          if (c.name.toLowerCase().contains('bein')) {
+          if (c.name.toLowerCase().contains('bein') ||
+              c.name.toLowerCase().contains('بين')) {
             result.add(c);
-            if (result.length >= 8) break;
+            if (result.length >= 10) break;
           }
         }
       } else if (apiChannel.contains('alwan') ||
@@ -456,33 +458,29 @@ class _SportsMatchesWidgetState extends ConsumerState<SportsMatchesWidget> {
               c.name.toLowerCase().contains('ألوان') ||
               c.name.toLowerCase().contains('الوان')) {
             result.add(c);
-            if (result.length >= 4) break;
+            if (result.length >= 6) break;
           }
         }
       }
     }
 
-    // ثانيًا: إذا لم نضف شيئًا، أضف أول 6
+    // ثانيًا: إذا لم نضف شيئًا، أضف أول 8
     if (result.isEmpty) {
-      result.addAll(allowed.take(6));
+      result.addAll(allowed.take(8));
     }
 
     return result;
   }
 
   /// ✅ فحص: هل هذه قناة مسموحة لعرض المباريات؟
+  /// الحل A: كل beIN مسموح (بدون شرط AR)
   bool _isAllowedMatchChannel(String text, String name) {
-    // 🔍 beIN AR فقط
-    final isBein = text.contains('bein') || text.contains('بين');
-    if (isBein) {
-      final hasAr = RegExp(
-        r'[\s\-_]ar[\s\-_]|^ar[\s\-_]|[\s\-_]ar\d|^ar\d|^bein\s+ar\b|^ar[\s\-_]*bein',
-        caseSensitive: false,
-      ).hasMatch(name);
-      return hasAr;
+    // ✅ كل beIN (بأي صيغة)
+    if (text.contains('bein') || text.contains('بين')) {
+      return true;
     }
 
-    // 🔍 ألوان سبور
+    // ✅ ألوان سبور
     if (text.contains('alwan') ||
         text.contains('ألوان') ||
         text.contains('الوان')) {
@@ -580,7 +578,6 @@ class _ChannelPlayChipState extends State<_ChannelPlayChip> {
     );
   }
 }
-
 // ==========================================================
 //  زر التحديث
 // ==========================================================
