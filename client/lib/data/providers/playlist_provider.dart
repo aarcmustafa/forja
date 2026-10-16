@@ -295,7 +295,7 @@ Future<void> _refreshInBackground(List<String> urls) async {
   }
 }
   // ==========================================================
-//  ✅ الفحص مُلغى — نستخدم فقط النتائج المحفوظة
+//  الفحص مُلغى — نستخدم فقط النتائج المحفوظة
 // ==========================================================
 Future<void> _runInitialCheckIfNeeded(Map<String, bool> saved) async {
   if (saved.isNotEmpty) {
@@ -306,12 +306,7 @@ Future<void> _runInitialCheckIfNeeded(Map<String, bool> saved) async {
   state = state.copyWith(isInitialChecking: false);
 }
 
-// ✅ الفحص الخلفي مُلغى
 void _startBackgroundCheckIfNeeded() {
-  // لا شيء — الفحص مُلغى
-}
-
-Future<void> _runBackgroundCheck() async {
   // لا شيء — الفحص مُلغى
 }
 
@@ -351,7 +346,7 @@ void _setChannels(
 }
 
 // ==========================================================
-//  ✅ الترتيب: beIN → الكأس → أبوظبي → دبي + الجودة من الأقل للأعلى
+//  الترتيب: beIN العربية أولاً
 // ==========================================================
 List<Channel> _sortChannels(List<Channel> channels) {
   final sorted = List<Channel>.from(channels);
@@ -364,11 +359,10 @@ int _sortPriority(Channel c) {
   final group = c.group.toLowerCase();
   final text = '$group $name';
 
-  // رتبة الجودة: 0=SD, 1=HD, 2=FHD, 3=4K
   final quality = _qualityRank(text);
 
   // ═══════════════════════════════════════════════════════
-  //  1) beIN Sports
+  //  beIN Sports — العربية 1-16 أولاً
   // ═══════════════════════════════════════════════════════
   final isBein = text.contains('bein') ||
       text.contains('بين سبورت') ||
@@ -376,22 +370,33 @@ int _sortPriority(Channel c) {
 
   if (isBein) {
     final n = _num(name);
-    return (n * 10) + quality;
+
+    // MAX آخر شيء
+    if (name.contains('max') || name.contains('ماكس')) {
+      return 300 + n;
+    }
+    // Premium قبل MAX
+    if (name.contains('premium') || name.contains('بريميوم')) {
+      return 200 + n;
+    }
+    // English قبل Premium
+    if (name.contains('english') || name.contains('إنجليزي')) {
+      return 100 + n;
+    }
+    // ✅ العربية beIN Sports 1-16 → القمة المطلقة
+    return 10 + n;
   }
 
-  // ═══════════════════════════════════════════════════════
-  //  2) Al Kass
-  // ═══════════════════════════════════════════════════════
+  // Al Kass
   if (text.contains('alkass') ||
       text.contains('al kass') ||
-      text.contains('الكأس')) {
+      text.contains('الكأس') ||
+      text.contains('الكاس')) {
     final n = _num(name);
     return 500 + (n * 10) + quality;
   }
 
-  // ═══════════════════════════════════════════════════════
-  //  3) Abu Dhabi Sports
-  // ═══════════════════════════════════════════════════════
+  // Abu Dhabi Sports
   if (text.contains('abu dhabi') ||
       text.contains('ad sport') ||
       text.contains('أبوظبي')) {
@@ -399,18 +404,13 @@ int _sortPriority(Channel c) {
     return 1000 + (n * 10) + quality;
   }
 
-  // ═══════════════════════════════════════════════════════
-  //  4) Dubai Sports
-  // ═══════════════════════════════════════════════════════
-  if (text.contains('dubai sport') ||
-      text.contains('دبي الرياضية')) {
+  // Dubai Sports
+  if (text.contains('dubai sport') || text.contains('دبي الرياضية')) {
     final n = _num(name);
     return 1500 + (n * 10) + quality;
   }
 
-  // ═══════════════════════════════════════════════════════
-  //  الباقي
-  // ═══════════════════════════════════════════════════════
+  // الباقي
   return 9000 + (name.hashCode.abs() % 900);
 }
 
@@ -481,9 +481,6 @@ void _applyFilters() {
         .toList();
   }
 
-  // ✅ إلغاء إخفاء الميتة (لأنه لا يوجد فحص)
-  // if (state.workingStatus.isNotEmpty) { ... }
-
   if (state.selectedSubCategorySlug != null) {
     final slug = state.selectedSubCategorySlug!.toLowerCase();
     final selectedCat = state.categories.firstWhere(
@@ -521,27 +518,69 @@ void _applyFilters() {
   state = state.copyWith(filteredChannels: filtered);
 }
     // ==========================================================
-  //  مساعدات
+  //  الفلترة الصارمة: رياضية فقط
   // ==========================================================
   bool _isSportChannel(Channel c) {
-    if (c.category == 'sport') return true;
-
     final name = c.name.toLowerCase();
     final group = c.group.toLowerCase();
     final text = '$name $group';
 
-    const sportKeywords = [
-      'bein', 'sport', 'ssc', 'رياض', 'كورة', 'alkass',
-      'dubai sport', 'ad sport', 'ksa sport', 'alwan',
-      'sky sport', 'espn', 'dazn', 'nba', 'nfl',
-      'shahid sport', 'shasha', '1001', 'sportv',
-      'فورمولا', 'moto', 'ufc', 'wwe', 'fight',
-      'fifa', 'uefa', 'caf', 'afc',
+    // ═══════════════════════════════════════════════════════
+    //  🚫 قائمة سوداء: أي قناة تحتوي هذه → ليست رياضية
+    // ═══════════════════════════════════════════════════════
+    const blacklist = [
+      'kids', 'أطفال', 'اطفال', 'cartoon', 'كرتون', 'سبيستون',
+      'movie', 'أفلام', 'افلام', 'cinema', 'سينما',
+      'music', 'موسيقى', 'موسيقية', 'طرب',
+      'news', 'أخبار', 'اخبار',
+      'religion', 'ديني', 'قرآن', 'quran', 'قرآن كريم',
+      'cooking', 'طبخ', 'food', 'أكل',
+      'shopping', 'تسوق', 'بيع',
+      'documentary', 'وثائقي', 'ناشيونال',
+      'series', 'مسلسل', 'مسلسلات', 'دراما', 'drama',
+      'entertainment', 'ترفيه',
+      'fashion', 'أزياء', 'موضة',
+      'travel', 'سفر', 'سياحة',
+      'education', 'تعليم', 'مدارس',
+      'health', 'صحة', 'طب',
     ];
 
-    for (final keyword in sportKeywords) {
-      if (text.contains(keyword)) return true;
+    for (final b in blacklist) {
+      if (name.contains(b) || group.contains(b)) return false;
     }
+
+    // ═══════════════════════════════════════════════════════
+    //  ✅ قائمة بيضاء: كلمات رياضية محددة جدًا
+    // ═══════════════════════════════════════════════════════
+    const sportKeywords = [
+      // باقات عربية معروفة
+      'bein', 'بين سبورت', 'بين سبور',
+      'ssc', 'ssc sport',
+      'alkass', 'al kass', 'الكأس', 'الكاس',
+      'abu dhabi sport', 'ad sport', 'أبوظبي الرياضية',
+      'dubai sport', 'دبي الرياضية',
+      'ksa sport', 'السعودية الرياضية',
+      'alwan sport', 'ألوان الرياضية',
+      'shahid sport',
+      '1001',
+      // عالمية
+      'sky sport', 'espn', 'dazn',
+      'eurosport', 'euro sport',
+      'sportv', 'sport tv',
+      // رياضات محددة
+      'nba', 'nfl', 'ufc', 'wwe',
+      'formula 1', 'f1 ', 'moto gp',
+      // كلمات عربية محددة
+      'رياضية', 'الرياضية',
+      'كورة', 'الكورة',
+      'ملاعب',
+    ];
+
+    for (final k in sportKeywords) {
+      if (text.contains(k)) return true;
+    }
+
+    // القرار النهائي: غير مدرج = غير رياضي
     return false;
   }
 
@@ -568,7 +607,7 @@ void _applyFilters() {
   }
 
   // ==========================================================
-  //  ✅ الباقات: beIN + الكأس + أبوظبي + دبي فقط
+  //  الباقات: beIN + الكأس + أبوظبي + دبي
   // ==========================================================
   List<Category> _buildCategoriesFromChannels(List<Channel> channels) {
     const wantedSubs = [
@@ -580,7 +619,7 @@ void _applyFilters() {
 
     const matchMap = <String, List<String>>{
       'bein': ['bein', 'بين سبورت', 'بين سبور'],
-      'alkass': ['alkass', 'al kass', 'الكأس'],
+      'alkass': ['alkass', 'al kass', 'الكأس', 'الكاس'],
       'ad': ['abu dhabi', 'ad sport', 'أبوظبي'],
       'dubai': ['dubai sport', 'دبي الرياضية'],
     };
