@@ -5,7 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 /// شاشة المشغل — صامتة بدون رسائل خطأ
-/// ✅ تدعم Headers + Cookies مخصصة من channel.extras
+/// ✅ ← → للصوت | ↑ ↓ للتقديم والتأخير
 class PlayerScreen extends StatefulWidget {
   final String streamUrl;
   final String channelName;
@@ -167,7 +167,6 @@ Future<void> _openStream() async {
   });
 }
 
-/// ✅ بناء رؤوس HTTP مع دعم Cookies ورؤوس مخصصة من extras
 Map<String, String> _buildHeaders(String url) {
   final headers = <String, String>{
     'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
@@ -176,7 +175,6 @@ Map<String, String> _buildHeaders(String url) {
     'Icy-MetaData': '1',
   };
 
-  // Referer + Origin تلقائي
   try {
     final uri = Uri.parse(url);
     final origin = '${uri.scheme}://${uri.host}';
@@ -184,12 +182,10 @@ Map<String, String> _buildHeaders(String url) {
     headers['Origin'] = origin;
   } catch (_) {}
 
-  // ✅ إضافة كل الرؤوس من extras (cookie, authorization, x-api-key...)
   final extras = widget.extras;
   if (extras != null) {
     extras.forEach((key, value) {
       if (value.isNotEmpty) {
-        // اكتب المفتاح بصيغة HTTP صحيحة (Title-Case)
         headers[_toHttpHeaderCase(key)] = value;
       }
     });
@@ -327,73 +323,88 @@ String _formatDuration(Duration d) {
 
 @override
 Widget build(BuildContext context) {
-  return Directionality(
-    textDirection: TextDirection.rtl,
-    child: Scaffold(
-      backgroundColor: Colors.black,
-      body: Focus(
-        autofocus: true,
-        onKeyEvent: (node, event) {
-          if (event is KeyDownEvent) {
-            final key = event.logicalKey.keyLabel;
-            if (key == 'Select' ||
-                key == 'Enter' ||
-                key == 'Media Play Pause') {
+  return PopScope(
+    canPop: true,
+    child: Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Focus(
+          autofocus: true,
+          onKeyEvent: (node, event) {
+            if (event is! KeyDownEvent) return KeyEventResult.ignored;
+
+            final key = event.logicalKey;
+
+            // اختيار / تشغيل
+            if (key == LogicalKeyboardKey.select ||
+                key == LogicalKeyboardKey.enter ||
+                key == LogicalKeyboardKey.mediaPlayPause ||
+                key == LogicalKeyboardKey.numpadEnter) {
               _togglePlayPause();
               return KeyEventResult.handled;
             }
-            if (key == 'Escape' || key == 'Go Back') {
-              Navigator.pop(context);
+
+            // رجوع (Escape / Go Back) → اخرج من المشغل
+            if (key == LogicalKeyboardKey.escape ||
+                key == LogicalKeyboardKey.goBack ||
+                key == LogicalKeyboardKey.browserBack) {
+              Navigator.of(context).maybePop();
               return KeyEventResult.handled;
             }
-            if (key == 'Arrow Right') {
-              _seekForward();
-              return KeyEventResult.handled;
-            }
-            if (key == 'Arrow Left') {
-              _seekBackward();
-              return KeyEventResult.handled;
-            }
-            if (key == 'Arrow Up') {
+
+            // ✅ ← → للصوت (رفع / خفض)
+            if (key == LogicalKeyboardKey.arrowRight) {
               _setVolume((_volume + 10).clamp(0, 100));
               return KeyEventResult.handled;
             }
-            if (key == 'Arrow Down') {
+            if (key == LogicalKeyboardKey.arrowLeft) {
               _setVolume((_volume - 10).clamp(0, 100));
               return KeyEventResult.handled;
             }
-          }
-          return KeyEventResult.ignored;
-        },
-        child: GestureDetector(
-          onTap: _toggleControls,
-          child: Stack(
-            children: [
-              Center(
-                child: SizedBox.expand(
-                  child: FittedBox(
-                    fit: _getBoxFit(),
-                    child: SizedBox(
-                      width: (player.state.width ?? 1920).toDouble(),
-                      height: (player.state.height ?? 1080).toDouble(),
-                      child: Video(
-                        controller: controller,
-                        controls: NoVideoControls,
+
+            // ✅ ↑ ↓ للتقديم / التأخير
+            if (key == LogicalKeyboardKey.arrowUp) {
+              _seekForward();
+              return KeyEventResult.handled;
+            }
+            if (key == LogicalKeyboardKey.arrowDown) {
+              _seekBackward();
+              return KeyEventResult.handled;
+            }
+
+            return KeyEventResult.ignored;
+          },
+          child: GestureDetector(
+            onTap: _toggleControls,
+            child: Stack(
+              children: [
+                Center(
+                  child: SizedBox.expand(
+                    child: FittedBox(
+                      fit: _getBoxFit(),
+                      child: SizedBox(
+                        width: (player.state.width ?? 1920).toDouble(),
+                        height: (player.state.height ?? 1080).toDouble(),
+                        child: Video(
+                          controller: controller,
+                          controls: NoVideoControls,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              if (_isLoading && !_fatalError) _buildLoading(),
-              if (_fatalError) _buildFatalError(),
-              if (_isBuffering && !_isLoading && !_fatalError)
-                _buildBuffering(),
-              if (_showVolumeBar) _buildVolumeOverlay(),
-              if (_showControls && !_fatalError) ...[
-                _buildTopBar(context),
-                _buildBottomBar(context),
+                if (_isLoading && !_fatalError) _buildLoading(),
+                if (_fatalError) _buildFatalError(),
+                if (_isBuffering && !_isLoading && !_fatalError)
+                  _buildBuffering(),
+                if (_showVolumeBar) _buildVolumeOverlay(),
+                if (_showControls && !_fatalError) ...[
+                  _buildTopBar(context),
+                  _buildBottomBar(context),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -792,7 +803,8 @@ Widget _buildControlRow() {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF00C8FF).withOpacity(0.15),
+                            color:
+                                const Color(0xFF00C8FF).withOpacity(0.15),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(
@@ -965,7 +977,7 @@ Widget _buildControlRow() {
 }
 
 // ==========================================================
-//  زر دائري
+//  زر دائري قابل للتركيز
 // ==========================================================
 class _CircleButton extends StatefulWidget {
   final IconData icon;
@@ -997,10 +1009,10 @@ class _CircleButtonState extends State<_CircleButton> {
       },
       onKeyEvent: (node, event) {
         if (event is KeyDownEvent) {
-          final key = event.logicalKey.keyLabel;
-          if (key == 'Select' ||
-              key == 'Enter' ||
-              key == 'Media Play Pause') {
+          final key = event.logicalKey;
+          if (key == LogicalKeyboardKey.select ||
+              key == LogicalKeyboardKey.enter ||
+              key == LogicalKeyboardKey.mediaPlayPause) {
             widget.onPressed();
             return KeyEventResult.handled;
           }
@@ -1031,7 +1043,8 @@ class _CircleButtonState extends State<_CircleButton> {
                 boxShadow: _isFocused
                     ? [
                         BoxShadow(
-                          color: const Color(0xFF00C8FF).withOpacity(0.6),
+                          color:
+                              const Color(0xFF00C8FF).withOpacity(0.6),
                           blurRadius: 20,
                           spreadRadius: 2,
                         ),
