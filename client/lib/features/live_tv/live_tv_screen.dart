@@ -83,7 +83,7 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
   }
 
   // ==========================================================
-  //  ✅ شريط الفحص الأولي مع زر تخطي
+  //  شريط الفحص الأولي مع زر تخطي
   // ==========================================================
   Widget _buildInitialCheckBar(PlaylistState state) {
     final total = state.initialCheckTotal;
@@ -116,15 +116,18 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
                 ),
               ),
               const SizedBox(width: 10),
-              const Text(
-                'جارٍ فحص القنوات...',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
+              const Flexible(
+                child: Text(
+                  'جارٍ فحص القنوات...',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               Text(
                 '$done / $total  ($percent%)',
                 style: const TextStyle(
@@ -135,7 +138,6 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              // ✅ زر التخطي
               GestureDetector(
                 onTap: () {
                   setState(() => _checkBarDismissed = true);
@@ -195,9 +197,9 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
         color: const Color(0xFF141A2E),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Row(
+      child: const Row(
         mainAxisSize: MainAxisSize.min,
-        children: const [
+        children: [
           SizedBox(
             width: 14,
             height: 14,
@@ -215,253 +217,265 @@ class _LiveTvScreenState extends ConsumerState<LiveTvScreen> {
       ),
     );
   }
+
+  // ==========================================================
+  //  الشريط العلوي (بدون كتابة عمودية)
+  // ==========================================================
   Widget _buildTopBar(PlaylistState state, PlaylistNotifier notifier) {
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-    child: Row(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: const Color(0xFF4CAF50).withOpacity(0.15),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: const Icon(
-            Icons.sports_soccer_rounded,
-            color: Color(0xFF4CAF50),
-            size: 32,
-          ),
-        ),
-        const SizedBox(width: 12),
-        const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'استيتن فرجة',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-              ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF4CAF50).withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
             ),
-            Text(
-              'الرياضية - بث مباشر',
-              style: TextStyle(color: Colors.white54, fontSize: 12),
+            child: const Icon(
+              Icons.sports_soccer_rounded,
+              color: Color(0xFF4CAF50),
+              size: 32,
             ),
-          ],
-        ),
-        const SizedBox(width: 24),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: const Color(0xFF141A2E),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFF2A3350)),
           ),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.live_tv_rounded,
-                color: Color(0xFF4CAF50),
-                size: 16,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '${state.filteredChannels.length} قناة',
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const Spacer(),
-        if (_showSearch)
-          SizedBox(
-            width: 300,
-            child: TextField(
-              controller: _searchController,
-              autofocus: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'ابحث عن قناة رياضية...',
-                hintStyle: const TextStyle(color: Colors.white38),
-                prefixIcon: const Icon(
-                  Icons.search,
-                  color: Color(0xFF4CAF50),
-                ),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white54),
-                  onPressed: () {
-                    setState(() {
-                      _showSearch = false;
-                      _searchController.clear();
-                      notifier.search('');
-                    });
-                  },
-                ),
-                filled: true,
-                fillColor: const Color(0xFF141A2E),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-              onChanged: (value) => notifier.search(value),
-            ),
-          )
-        else
-          _TopBarIconButton(
-            icon: Icons.search,
-            tooltip: 'بحث',
-            onPressed: () => setState(() => _showSearch = true),
-          ),
-        const SizedBox(width: 12),
-        _TopBarIconButton(
-          icon: Icons.refresh,
-          tooltip: 'تحديث',
-          onPressed: state.isLoading
-              ? null
-              : () {
-                  setState(() => _checkBarDismissed = false);
-                  notifier.refresh(widget.playlistUrls);
-                },
-        ),
-      ],
-    ),
-  );
-}
-
-Widget _buildCategorySection(PlaylistState state) {
-  return CategoryTabs(
-    categories: state.categories,
-    selectedSlug: state.selectedCategorySlug,
-    onSelected: (slug) {
-      ref.read(playlistProvider.notifier).selectCategory(slug);
-    },
-  );
-}
-
-Widget _buildSubCategorySection(PlaylistState state) {
-  if (state.selectedCategorySlug == null) {
-    return const SizedBox.shrink();
-  }
-
-  final currentCat = state.categories.firstWhere(
-    (c) => c.slug == state.selectedCategorySlug,
-    orElse: () => throw StateError('Category not found'),
-  );
-
-  return SubCategoryChips(
-    subCategories: currentCat.subCategories,
-    selectedSlug: state.selectedSubCategorySlug,
-    onSelected: (slug) {
-      ref.read(playlistProvider.notifier).selectSubCategory(slug);
-    },
-  );
-}
-
-// ==========================================================
-//  الجسم
-// ==========================================================
-Widget _buildBody(PlaylistState state, PlaylistNotifier notifier) {
-  if (state.isLoading && state.allChannels.isEmpty) {
-    return _buildLoading();
-  }
-
-  if (state.error != null && state.allChannels.isEmpty) {
-    return _buildError(state.error!);
-  }
-
-  if (state.filteredChannels.isEmpty) {
-    return _buildEmpty();
-  }
-
-  final recentIds = ref.watch(historyProvider).liveIds;
-  final showRecent = state.selectedCategorySlug == null &&
-      state.searchQuery.isEmpty &&
-      recentIds.isNotEmpty;
-
-  if (showRecent) {
-    return _buildBodyWithRecent(state, recentIds);
-  }
-
-  if (state.selectedCategorySlug == 'sport' &&
-      state.selectedSubCategorySlug == null &&
-      state.searchQuery.isEmpty) {
-    return _buildSportsBody(state);
-  }
-
-  return _buildGrid(state);
-}
-
-Widget _buildSportsBody(PlaylistState state) {
-  return CustomScrollView(
-    slivers: [
-      SliverToBoxAdapter(
-        child: FadeInSlide(
-          child: SportsMatchesWidget(
-            onChannelTap: (channel) => widget.onChannelTap?.call(channel),
-          ),
-        ),
-      ),
-      const SliverToBoxAdapter(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 32),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 5,
-                height: 24,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Color(0xFF4CAF50),
-                    borderRadius: BorderRadius.all(Radius.circular(3)),
+          const SizedBox(width: 12),
+          const Flexible(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'استيتن فرجة',
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-              ),
-              SizedBox(width: 12),
-              Text(
-                'كل القنوات الرياضية',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+                Text(
+                  'الرياضية - بث مباشر',
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Colors.white54, fontSize: 12),
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF141A2E),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFF2A3350)),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.live_tv_rounded,
+                  color: Color(0xFF4CAF50),
+                  size: 16,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '${state.filteredChannels.length} قناة',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Spacer(),
+          if (_showSearch)
+            SizedBox(
+              width: 280,
+              child: TextField(
+                controller: _searchController,
+                autofocus: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'ابحث عن قناة رياضية...',
+                  hintStyle: const TextStyle(color: Colors.white38),
+                  prefixIcon: const Icon(
+                    Icons.search,
+                    color: Color(0xFF4CAF50),
+                  ),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white54),
+                    onPressed: () {
+                      setState(() {
+                        _showSearch = false;
+                        _searchController.clear();
+                        notifier.search('');
+                      });
+                    },
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFF141A2E),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                onChanged: (value) => notifier.search(value),
               ),
-            ],
+            )
+          else
+            _TopBarIconButton(
+              icon: Icons.search,
+              tooltip: 'بحث',
+              onPressed: () => setState(() => _showSearch = true),
+            ),
+          const SizedBox(width: 12),
+          _TopBarIconButton(
+            icon: Icons.refresh,
+            tooltip: 'تحديث',
+            onPressed: state.isLoading
+                ? null
+                : () {
+                    setState(() => _checkBarDismissed = false);
+                    notifier.refresh(widget.playlistUrls);
+                  },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategorySection(PlaylistState state) {
+    return CategoryTabs(
+      categories: state.categories,
+      selectedSlug: state.selectedCategorySlug,
+      onSelected: (slug) {
+        ref.read(playlistProvider.notifier).selectCategory(slug);
+      },
+    );
+  }
+
+  Widget _buildSubCategorySection(PlaylistState state) {
+    if (state.selectedCategorySlug == null) {
+      return const SizedBox.shrink();
+    }
+
+    final currentCat = state.categories.firstWhere(
+      (c) => c.slug == state.selectedCategorySlug,
+      orElse: () => throw StateError('Category not found'),
+    );
+
+    return SubCategoryChips(
+      subCategories: currentCat.subCategories,
+      selectedSlug: state.selectedSubCategorySlug,
+      onSelected: (slug) {
+        ref.read(playlistProvider.notifier).selectSubCategory(slug);
+      },
+    );
+  }
+
+  // ==========================================================
+  //  الجسم
+  // ==========================================================
+  Widget _buildBody(PlaylistState state, PlaylistNotifier notifier) {
+    if (state.isLoading && state.allChannels.isEmpty) {
+      return _buildLoading();
+    }
+
+    if (state.error != null && state.allChannels.isEmpty) {
+      return _buildError(state.error!);
+    }
+
+    if (state.filteredChannels.isEmpty) {
+      return _buildEmpty();
+    }
+
+    final recentIds = ref.watch(historyProvider).liveIds;
+    final showRecent = state.selectedCategorySlug == null &&
+        state.searchQuery.isEmpty &&
+        recentIds.isNotEmpty;
+
+    if (showRecent) {
+      return _buildBodyWithRecent(state, recentIds);
+    }
+
+    if (state.selectedCategorySlug == 'sport' &&
+        state.selectedSubCategorySlug == null &&
+        state.searchQuery.isEmpty) {
+      return _buildSportsBody(state);
+    }
+
+    return _buildGrid(state);
+  }
+
+  Widget _buildSportsBody(PlaylistState state) {
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: FadeInSlide(
+            child: SportsMatchesWidget(
+              onChannelTap: (channel) => widget.onChannelTap?.call(channel),
+            ),
           ),
         ),
-      ),
-      const SliverToBoxAdapter(child: SizedBox(height: 16)),
-      SliverPadding(
-        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-        sliver: SliverGrid(
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 200,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            childAspectRatio: 0.95,
-          ),
-          delegate: SliverChildBuilderDelegate(
-            (context, i) {
-              final channel = state.filteredChannels[i];
-              return ChannelCard(
-                channel: channel,
-                width: 200,
-                height: 200,
-                onTap: () => widget.onChannelTap?.call(channel),
-              );
-            },
-            childCount: state.filteredChannels.length,
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 32),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 5,
+                  height: 24,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Color(0xFF4CAF50),
+                      borderRadius: BorderRadius.all(Radius.circular(3)),
+                    ),
+                  ),
+                ),
+                SizedBox(width: 12),
+                Text(
+                  'كل القنوات الرياضية',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
-    ],
-  );
-}
-    Widget _buildBodyWithRecent(PlaylistState state, List<String> recentIds) {
+        const SliverToBoxAdapter(child: SizedBox(height: 16)),
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          sliver: SliverGrid(
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 200,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+              childAspectRatio: 0.95,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, i) {
+                final channel = state.filteredChannels[i];
+                return ChannelCard(
+                  channel: channel,
+                  width: 200,
+                  height: 200,
+                  onTap: () => widget.onChannelTap?.call(channel),
+                );
+              },
+              childCount: state.filteredChannels.length,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildBodyWithRecent(PlaylistState state, List<String> recentIds) {
     final map = {for (final c in state.allChannels) c.id: c};
     final recent = recentIds
         .map((id) => map[id])
@@ -711,7 +725,9 @@ Widget _buildSportsBody(PlaylistState state) {
       onChannelTap: (channel) => widget.onChannelTap?.call(channel),
     );
   }
-}.// ==========================================================
+}
+
+// ==========================================================
 //  زر الشريط العلوي
 // ==========================================================
 class _TopBarIconButton extends StatefulWidget {
