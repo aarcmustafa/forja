@@ -139,17 +139,30 @@ class _MainShellState extends ConsumerState<MainShell> {
     } catch (_) {}
   }
 
+  // ==========================================================
+  //  ✅ PopScope: زر الرجوع لا يخرج من التطبيق
+  // ==========================================================
   @override
   Widget build(BuildContext context) {
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: const Color(0xFF0A0E1A),
-        body: Row(
-          children: [
-            _buildSidebar(),
-            Expanded(child: _buildContent()),
-          ],
+    return PopScope(
+      canPop: _selectedIndex == _idxHome,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        // إذا لم نكن في الرئيسية → اذهب للرئيسية
+        if (_selectedIndex != _idxHome) {
+          setState(() => _selectedIndex = _idxHome);
+        }
+      },
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          backgroundColor: const Color(0xFF0A0E1A),
+          body: Row(
+            children: [
+              _buildSidebar(),
+              Expanded(child: _buildContent()),
+            ],
+          ),
         ),
       ),
     );
@@ -413,9 +426,7 @@ class _FocusableMenuButtonState extends State<_FocusableMenuButton> {
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: _isFocused
-                  ? Colors.white
-                  : Colors.transparent,
+              color: _isFocused ? Colors.white : Colors.transparent,
               width: _isFocused ? 2 : 0,
             ),
           ),
