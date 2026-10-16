@@ -31,6 +31,12 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+          cache-write-only: false
+
       - name: Generate Android platform
         run: |
           cd /tmp
@@ -58,6 +64,8 @@ jobs:
                   google()
                   mavenCentral()
                   gradlePluginPortal()
+                  maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+                  maven { url = uri("https://maven.aliyun.com/repository/public") }
               }
           }
 
@@ -69,19 +77,16 @@ jobs:
 
           include(":app")
           KOTLINEOF
-          echo "Pinned Kotlin 2.2.21 + AGP 8.7.0 in settings.gradle.kts"
+          echo "Pinned Kotlin 2.2.21 + AGP 8.7.0 with mirrors"
 
       - name: Pin Gradle 8.10.2 in wrapper
         run: |
           FILE="$GITHUB_WORKSPACE/client/android/gradle/wrapper/gradle-wrapper.properties"
           if [ -f "$FILE" ]; then
-            # ✅ Gradle 8.10.2 متوافق مع AGP 8.7.0
             sed -i 's|gradle-[0-9.]*-all.zip|gradle-8.10.2-all.zip|' "$FILE"
             sed -i 's|gradle-[0-9.]*-bin.zip|gradle-8.10.2-bin.zip|' "$FILE"
-            echo "Updated Gradle wrapper:"
             cat "$FILE"
           else
-            echo "gradle-wrapper.properties not found - creating"
             mkdir -p "$(dirname "$FILE")"
             cat > "$FILE" <<'EOF'
           distributionBase=GRADLE_USER_HOME
@@ -116,7 +121,6 @@ jobs:
           mkdir -p "$BASE/extracted"
           ARCHIVE=$(find "$BASE" -maxdepth 1 \( -name "*.zip" -o -name "*.rar" -o -name "*.7z" \) 2>/dev/null | head -1)
           if [ -z "$ARCHIVE" ]; then echo "no archive found"; exit 0; fi
-          echo "Archive: $ARCHIVE"
           if [ "${ARCHIVE##*.}" = "zip" ]; then
             unzip -o "$ARCHIVE" -d "$BASE/extracted"
           elif [ "${ARCHIVE##*.}" = "rar" ]; then
@@ -124,7 +128,6 @@ jobs:
           else
             7z x "$ARCHIVE" -o"$BASE/extracted" -y
           fi
-          find "$BASE/extracted" -type f | head -40 || true
 
       - name: Detect res folder
         id: locate_res
@@ -143,21 +146,15 @@ jobs:
           RES_SRC="${{ steps.locate_res.outputs.RES_PATH }}"
           RES_DEST="client/android/app/src/main/res"
           if [ -z "$RES_SRC" ]; then echo "no custom res"; exit 0; fi
-          if [ ! -d "$RES_SRC" ]; then echo "not a directory"; exit 0; fi
           cp -r "$RES_SRC"/* "$RES_DEST/" 2>/dev/null || true
-          echo "=== Merged res folder contents ==="
-          ls -la "$RES_DEST"
 
       - name: Ensure LaunchTheme and NormalTheme exist
         run: |
           RES_DEST="client/android/app/src/main/res"
           VALUES_DIR="$RES_DEST/values"
           mkdir -p "$VALUES_DIR"
-
           STYLES_FILE="$VALUES_DIR/styles.xml"
-
           if [ ! -f "$STYLES_FILE" ]; then
-            echo "Creating styles.xml from scratch"
             cat > "$STYLES_FILE" <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
@@ -171,28 +168,40 @@ jobs:
           EOF
           else
             if ! grep -q 'name="LaunchTheme"' "$STYLES_FILE"; then
-              echo "Adding LaunchTheme to existing styles.xml"
-              sed -i 's|</resources>|    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">\n        <item name="android:windowBackground">@android:color/white</item>\n    </style>\n</resources>|' "$STYLES_FILE"
+              sed -i 's|</resources>|    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar"><item name="android:windowBackground">@android:color/white</item></style>\n</resources>|' "$STYLES_FILE"
             fi
             if ! grep -q 'name="NormalTheme"' "$STYLES_FILE"; then
-              echo "Adding NormalTheme to existing styles.xml"
-              sed -i 's|</resources>|    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">\n        <item name="android:windowBackground">?android:colorBackground</item>\n    </style>\n</resources>|' "$STYLES_FILE"
+              sed -i 's|</resources>|    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar"><item name="android:windowBackground">?android:colorBackground</item></style>\n</resources>|' "$STYLES_FILE"
             fi
           fi
 
-          echo "=== Final styles.xml ==="
-          cat "$STYLES_FILE"
+      - name: Create network security config (HTTP + HTTPS)
+        run: |
+          XML_DIR="client/android/app/src/main/res/xml"
+          mkdir -p "$XML_DIR"
+          cat > "$XML_DIR/network_security_config.xml" <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <network-security-config>
+              <base-config cleartextTrafficPermitted="true">
+                  <trust-anchors>
+                      <certificates src="system" />
+                      <certificates src="user" />
+                  </trust-anchors>
+              </base-config>
+              <domain-config cleartextTrafficPermitted="true">
+                  <domain includeSubdomains="true">localhost</domain>
+                  <domain includeSubdomains="true">10.0.2.2</domain>
+              </domain-config>
+          </network-security-config>
+          EOF
+          echo "Created enhanced network security config"
 
       - name: Patch all splash screen resources
         run: |
           RES_DEST="client/android/app/src/main/res"
-          echo "=== Removing Theme.SplashScreen references ==="
-
           if [ -d "$RES_DEST/values-v31" ]; then
             rm -rf "$RES_DEST/values-v31"
-            echo "Removed values-v31 folder"
           fi
-
           find "$RES_DEST" -type f -name "*.xml" | while read f; do
             sed -i 's|parent="Theme.SplashScreen"|parent="@android:style/Theme.Light.NoTitleBar"|g' "$f"
             sed -i '/windowSplashScreenBackground/d' "$f"
@@ -201,10 +210,6 @@ jobs:
             sed -i '/windowSplashScreenIconBackgroundColor/d' "$f"
             sed -i '/postSplashScreenTheme/d' "$f"
           done
-
-          echo "=== Verify LaunchTheme + NormalTheme still exist ==="
-          grep -r "LaunchTheme" "$RES_DEST" || echo "ERROR: LaunchTheme missing!"
-          grep -r "NormalTheme" "$RES_DEST" || echo "ERROR: NormalTheme missing!"
 
       - name: Generate encrypted config
         env:
@@ -238,8 +243,7 @@ jobs:
           KTS_PACK = "\npackaging {\n    jniLibs { useLegacyPackaging = true }\n    resources { excludes += setOf(\"META-INF/*.kotlin_module\") }\n}\n"
           GR_PACK = "\npackagingOptions {\n    jniLibs { useLegacyPackaging = true }\n    resources { excludes += ['META-INF/*.kotlin_module'] }\n}\n"
           for path in ["android/app/build.gradle.kts", "android/app/build.gradle"]:
-              if not os.path.exists(path):
-                  continue
+              if not os.path.exists(path): continue
               src = open(path, "r", encoding="utf-8").read()
               is_kts = path.endswith(".kts")
               if "abiFilters" not in src and "defaultConfig {" in src:
@@ -249,7 +253,6 @@ jobs:
                   i = src.find("android {") + len("android {")
                   src = src[:i] + (KTS_PACK if is_kts else GR_PACK) + src[i:]
               open(path, "w", encoding="utf-8").write(src)
-              print("[OK] patched " + path)
           PYEOF
 
       - name: Enable Core Library Desugaring
@@ -262,8 +265,7 @@ jobs:
           KTS_CMP = "\n    compileOptions {\n        isCoreLibraryDesugaringEnabled = true\n        sourceCompatibility = JavaVersion.VERSION_17\n        targetCompatibility = JavaVersion.VERSION_17\n    }\n"
           GR_CMP = "\n    compileOptions {\n        coreLibraryDesugaringEnabled true\n        sourceCompatibility JavaVersion.VERSION_17\n        targetCompatibility JavaVersion.VERSION_17\n    }\n"
           for path in ["android/app/build.gradle.kts", "android/app/build.gradle"]:
-              if not os.path.exists(path):
-                  continue
+              if not os.path.exists(path): continue
               src = open(path, "r", encoding="utf-8").read()
               is_kts = path.endswith(".kts")
               dep = KTS_DEP if is_kts else GR_DEP
@@ -272,12 +274,8 @@ jobs:
                   if "dependencies {" in src:
                       i = src.find("dependencies {") + len("dependencies {")
                       src = src[:i] + "\n    " + dep + src[i:]
-                      print("[1] Added dep to " + path)
                   else:
                       src = src.rstrip() + "\n\ndependencies {\n    " + dep + "\n}\n"
-                      print("[1] Created dependencies in " + path)
-              else:
-                  print("[1] dep already present in " + path)
               flag = "isCoreLibraryDesugaringEnabled" if is_kts else "coreLibraryDesugaringEnabled"
               if flag not in src:
                   if "compileOptions {" in src:
@@ -285,15 +283,10 @@ jobs:
                           src = src.replace("compileOptions {", "compileOptions {\n        isCoreLibraryDesugaringEnabled = true", 1)
                       else:
                           src = src.replace("compileOptions {", "compileOptions {\n        coreLibraryDesugaringEnabled true", 1)
-                      print("[2] Patched compileOptions in " + path)
                   elif "android {" in src:
                       i = src.find("android {") + len("android {")
                       src = src[:i] + cmp + src[i:]
-                      print("[2] Created compileOptions in " + path)
-              else:
-                  print("[2] flag already present in " + path)
               open(path, "w", encoding="utf-8").write(src)
-              print("[OK] Saved " + path)
           PYEOF
 
       - name: Override AndroidManifest (Mobile)
@@ -313,7 +306,9 @@ jobs:
               <application
                   android:label="استيتن فرجة"
                   android:name="${applicationName}"
-                  android:icon="@mipmap/ic_launcher">
+                  android:icon="@mipmap/ic_launcher"
+                  android:usesCleartextTraffic="true"
+                  android:networkSecurityConfig="@xml/network_security_config">
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
