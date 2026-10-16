@@ -134,7 +134,7 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
   void pauseBackgroundCheck() => _checker.pause();
   void resumeBackgroundCheck() => _checker.resume();
   // ==========================================================
-//  التحميل الرئيسي (متدرج + فحص أولي)
+//  التحميل الرئيسي
 // ==========================================================
 Future<void> loadPlaylists(
   List<String> urls, {
@@ -153,7 +153,6 @@ Future<void> loadPlaylists(
 
   final saved = await _checker.loadResults();
 
-  // 1) الكاش
   if (!forceRefresh) {
     final cached = await _storage.loadChannels();
     if (cached != null && cached.isNotEmpty) {
@@ -169,7 +168,6 @@ Future<void> loadPlaylists(
     }
   }
 
-  // 2) الشبكة
   state = state.copyWith(isLoading: true, clearError: true);
 
   final channels = await _fetchAllStreaming(
@@ -303,7 +301,7 @@ Future<void> _refreshInBackground(List<String> urls) async {
   }
 }
   // ==========================================================
-//  الفحص الأولي (أول تشغيل فقط)
+//  ✅ الفحص الأولي: beIN أولاً + الباقي بصمت
 // ==========================================================
 Future<void> _runInitialCheckIfNeeded(Map<String, bool> saved) async {
   if (_storage.hasInitialCheckDone()) return;
@@ -321,6 +319,29 @@ Future<void> _runInitialCheckIfNeeded(Map<String, bool> saved) async {
   );
 
   try {
+    // ═══════════════════════════════════════════════════════
+    //  المرحلة 1: فحص الأولويات (beIN و SSC و AD...)
+    // ═══════════════════════════════════════════════════════
+    final priorityResults = await _checker.checkPriority(
+      state.allChannels,
+    );
+
+    if (priorityResults.isNotEmpty) {
+      final merged = <String, bool>{
+        ...saved,
+        ...state.workingStatus,
+        ...priorityResults,
+      };
+      state = state.copyWith(
+        workingStatus: merged,
+        initialCheckDone: priorityResults.length,
+      );
+      _applyFilters();
+    }
+
+    // ═══════════════════════════════════════════════════════
+    //  المرحلة 2: الفحص الكامل بصمت
+    // ═══════════════════════════════════════════════════════
     await _checker.checkInitial(
       state.allChannels,
       batchSize: 20,
@@ -420,9 +441,6 @@ Future<void> markDeadByUrl(String streamUrl) async {
   } catch (_) {}
 }
 
-// ==========================================================
-//  _setChannels
-// ==========================================================
 void _setChannels(
   List<Channel> channels, {
   Map<String, bool>? workingStatus,
@@ -436,7 +454,7 @@ void _setChannels(
   _applyFilters();
 }
   // ==========================================================
-//  الترتيب (beIN أولاً، VOD آخراً)
+//  ✅ الترتيب: beIN أولاً (10-19)، VOD آخراً (9999)
 // ==========================================================
 List<Channel> _sortChannels(List<Channel> channels) {
   final sorted = List<Channel>.from(channels);
@@ -449,38 +467,35 @@ int _sortPriority(Channel c) {
   final group = c.group.toLowerCase();
   final text = '$group $name';
 
-  // 1) VOD — آخر شيء
-  if (text.contains('vod') ||
-      text.contains('في إتش دي') ||
-      text.contains('فيديو حسب الطلب')) {
+  // 1) VOD → آخر شيء
+  if (text.contains('vod') || text.contains('في إتش دي')) {
     if (text.contains('bein') || text.contains('بين')) {
       return 9999;
     }
     return 9500;
   }
 
-  // 2) beIN Sports
+  // 2) beIN Sports → أول شيء
   final isBein = text.contains('bein') ||
       text.contains('بين سبورت') ||
-      text.contains('بين سبور') ||
-      text.contains('بين');
+      text.contains('بين سبور');
 
   if (isBein) {
     final match = RegExp(r'(\d{1,3})').firstMatch(name);
     final num = int.tryParse(match?.group(1) ?? '0') ?? 0;
+
     if (name.contains('max') || name.contains('ماكس')) {
-      return 1100 + num;
+      return 5 + num;
     }
     if (name.contains('premium') || name.contains('بريميوم')) {
-      return 1150 + num;
+      return 8 + num;
     }
-    return 1000 + num;
+    return 10 + num;
   }
 
   // 3) باقات أخرى
   if (text.contains('ssc')) return 2000;
   if (text.contains('ad sport') ||
-      text.contains('abu dhabi sport') ||
       text.contains('أبوظبي الرياضية')) {
     return 2100;
   }
@@ -490,18 +505,16 @@ int _sortPriority(Channel c) {
     return 2300;
   }
   if (text.contains('ksa sport') ||
-      text.contains('السعودية الرياضية') ||
-      text.contains('saudi sport')) {
+      text.contains('السعودية الرياضية')) {
     return 2400;
   }
-  if (text.contains('alwan') || text.contains('ألوان')) return 2500;
+  if (text.contains('alwan')) return 2500;
   if (text.contains('shahid')) return 2600;
   if (text.contains('1001')) return 2700;
   if (text.contains('sky sport')) return 2800;
   if (text.contains('espn')) return 2850;
   if (text.contains('dazn')) return 2900;
 
-  // 4) الباقي
   return 5000 + (name.hashCode.abs() % 4000);
 }
 
