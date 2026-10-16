@@ -39,6 +39,50 @@ jobs:
           cp -r /tmp/temp_app/android "$GITHUB_WORKSPACE/client/android"
           echo "Copied android folder"
 
+      - name: Pin Kotlin version in settings.gradle.kts
+        run: |
+          FILE="$GITHUB_WORKSPACE/client/android/settings.gradle.kts"
+          cat > "$FILE" <<'KOTLINEOF'
+          pluginManagement {
+              val flutterSdkPath = run {
+                  val properties = java.util.Properties()
+                  file("local.properties").inputStream().use { properties.load(it) }
+                  val flutterSdkPath = properties.getProperty("flutter.sdk")
+                  require(flutterSdkPath != null) { "flutter.sdk not set in local.properties" }
+                  flutterSdkPath
+              }
+
+              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          plugins {
+              id("dev.flutter.flutter-plugin-loader") version "1.0.0"
+              id("com.android.application") version "8.7.0" apply false
+              id("org.jetbrains.kotlin.android") version "2.2.21" apply false
+          }
+
+          include(":app")
+          KOTLINEOF
+          echo "Pinned Kotlin 2.2.21 in settings.gradle.kts"
+
+      - name: Pin Gradle 8.7 in wrapper
+        run: |
+          FILE="$GITHUB_WORKSPACE/client/android/gradle/wrapper/gradle-wrapper.properties"
+          if [ -f "$FILE" ]; then
+            sed -i 's|gradle-.*-all.zip|gradle-8.7-all.zip|' "$FILE"
+            sed -i 's|gradle-.*-bin.zip|gradle-8.7-bin.zip|' "$FILE"
+            echo "Updated Gradle wrapper:"
+            cat "$FILE"
+          else
+            echo "gradle-wrapper.properties not found - skipping"
+          fi
+
       - name: Auto-fix Dart files
         run: |
           find client/lib -name "*.dart" | while read f; do
@@ -91,12 +135,9 @@ jobs:
           RES_DEST="client/android/app/src/main/res"
           if [ -z "$RES_SRC" ]; then echo "no custom res"; exit 0; fi
           if [ ! -d "$RES_SRC" ]; then echo "not a directory"; exit 0; fi
-          # ✅ دمج بدل استبدال
           cp -r "$RES_SRC"/* "$RES_DEST/" 2>/dev/null || true
           echo "=== Merged res folder contents ==="
           ls -la "$RES_DEST"
-          echo "=== values folder ==="
-          ls -la "$RES_DEST/values" 2>/dev/null || echo "no values folder"
 
       - name: Ensure LaunchTheme and NormalTheme exist
         run: |
@@ -120,10 +161,8 @@ jobs:
           </resources>
           EOF
           else
-            # إذا كان موجودًا لكن بدون LaunchTheme، نضيفه
             if ! grep -q 'name="LaunchTheme"' "$STYLES_FILE"; then
               echo "Adding LaunchTheme to existing styles.xml"
-              # ابحث عن </resources> وأضف قبله
               sed -i 's|</resources>|    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">\n        <item name="android:windowBackground">@android:color/white</item>\n    </style>\n</resources>|' "$STYLES_FILE"
             fi
             if ! grep -q 'name="NormalTheme"' "$STYLES_FILE"; then
@@ -152,14 +191,7 @@ jobs:
             sed -i '/windowSplashScreenAnimationDuration/d' "$f"
             sed -i '/windowSplashScreenIconBackgroundColor/d' "$f"
             sed -i '/postSplashScreenTheme/d' "$f"
-            echo "Patched: $f"
           done
-
-          if grep -r "Theme.SplashScreen" "$RES_DEST" 2>/dev/null; then
-            echo "WARNING: Some references remain"
-          else
-            echo "All Theme.SplashScreen references removed"
-          fi
 
           echo "=== Verify LaunchTheme + NormalTheme still exist ==="
           grep -r "LaunchTheme" "$RES_DEST" || echo "ERROR: LaunchTheme missing!"
@@ -187,7 +219,7 @@ jobs:
             sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 23/' android/app/build.gradle.kts
           fi
 
-      - name: Patch build.gradle (ABIs + packaging + splashscreen)
+      - name: Patch build.gradle (ABIs + packaging)
         working-directory: client
         run: |
           python3 - <<'PYEOF'
@@ -315,6 +347,7 @@ jobs:
         run: |
           mkdir -p artifacts
           cp client/build/app/outputs/flutter-apk/app-release.apk artifacts/estitn-farja-mobile.apk || true
+          ls -lh artifacts/
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -327,3 +360,4 @@ jobs:
         if: always()
         run: |
           rm -f "$GITHUB_WORKSPACE/client/lib/data/local/secure_config.dart" || true
+          echo "Cleanup done"
