@@ -58,6 +58,7 @@ class EstetnFarjaTvApp extends StatelessWidget {
     );
   }
 }
+
 // ==========================================================
 //  الشاشة الرئيسية
 // ==========================================================
@@ -104,25 +105,12 @@ class _MainShellState extends ConsumerState<MainShell> {
     });
   }
 
-  // ==========================================================
-  //  التحميل: صيانة الكاش + SecureConfig + RemoteConfig
-  // ==========================================================
   Future<void> _loadPlaylistsIfNeeded() async {
-    // 1) صيانة الكاش
-    try {
-      final repo = ref.read(m3uRepositoryProvider);
-      await repo.maintainCache();
-      final storage = ref.read(localStorageProvider);
-      await storage.maintain();
-    } catch (_) {}
-
-    // 2) الإشعارات
     try {
       final settings = ref.read(settingsProvider);
       NotificationService().setEnabled(settings.matchNotifications);
     } catch (_) {}
 
-    // 3) روابط SecureConfig
     if (kPlaylistUrls.isEmpty) {
       try {
         final remote = RemoteConfig();
@@ -133,7 +121,6 @@ class _MainShellState extends ConsumerState<MainShell> {
       } catch (_) {}
     }
 
-    // 4) ابدأ التحميل
     if (kPlaylistUrls.isNotEmpty) {
       final state = ref.read(playlistProvider);
       if (state.allChannels.isEmpty && !state.isLoading) {
@@ -143,7 +130,6 @@ class _MainShellState extends ConsumerState<MainShell> {
       }
     }
 
-    // 5) تحديث من RemoteConfig
     try {
       final remote = RemoteConfig();
       final remoteUrls = await remote.fetchRemote();
@@ -158,6 +144,7 @@ class _MainShellState extends ConsumerState<MainShell> {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
+        backgroundColor: const Color(0xFF0A0E1A),
         body: Row(
           children: [
             _buildSidebar(),
@@ -168,16 +155,20 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
+  // ==========================================================
+  //  الشريط الجانبي
+  // ==========================================================
   Widget _buildSidebar() {
     final favCount = ref.watch(favoritesProvider).length;
 
     return Container(
-      width: 220,
+      width: 240,
       color: const Color(0xFF141A2E),
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // الترويسة
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
             child: Column(
@@ -200,24 +191,44 @@ class _MainShellState extends ConsumerState<MainShell> {
                 Text(
                   'الرياضية',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.white54,
-                  ),
+                  style: TextStyle(fontSize: 13, color: Colors.white54),
                 ),
               ],
             ),
           ),
+
           const Divider(color: Color(0xFF2A3350)),
           const SizedBox(height: 8),
 
-          _buildSearchButton(),
+          // زر البحث
+          _buildMenuButton(
+            index: -1,
+            icon: Icons.search_rounded,
+            label: 'بحث',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const UnifiedSearchScreen(),
+                ),
+              );
+            },
+          ),
+
           const SizedBox(height: 8),
 
+          // عناصر القائمة
           for (int i = 0; i < _menuItems.length; i++)
-            _buildMenuItem(i, badge: i == _idxFavorites ? favCount : 0),
+            _buildMenuButton(
+              index: i,
+              icon: _menuIcons[i],
+              label: _menuItems[i],
+              badge: i == _idxFavorites ? favCount : 0,
+              onTap: () => setState(() => _selectedIndex = i),
+            ),
 
           const Spacer(),
+
           const Divider(color: Color(0xFF2A3350)),
           const SizedBox(height: 12),
           const Padding(
@@ -252,149 +263,33 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
-  Widget _buildSearchButton() {
+  // ==========================================================
+  //  زر قائمة واحد
+  // ==========================================================
+  Widget _buildMenuButton({
+    required int index,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    int badge = 0,
+  }) {
+    final isSelected = index >= 0 && _selectedIndex == index;
+
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Builder(
-        builder: (context) {
-          final hasFocus = Focus.of(context).hasFocus;
-          return GestureDetector(
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const UnifiedSearchScreen(),
-                ),
-              );
-            },
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              padding: const EdgeInsets.symmetric(
-                vertical: 14,
-                horizontal: 16,
-              ),
-              decoration: BoxDecoration(
-                color: hasFocus
-                    ? const Color(0xFFFFB800)
-                    : const Color(0xFF0A0E1A),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: hasFocus
-                      ? Colors.white
-                      : const Color(0xFF2A3350),
-                  width: hasFocus ? 2 : 1,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.search_rounded,
-                    color: hasFocus
-                        ? Colors.black
-                        : const Color(0xFFFFB800),
-                    size: 22,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    'بحث',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight:
-                          hasFocus ? FontWeight.bold : FontWeight.w500,
-                      color: hasFocus
-                          ? Colors.black
-                          : const Color(0xFFFFB800),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: _FocusableMenuButton(
+        isSelected: isSelected,
+        icon: icon,
+        label: label,
+        badge: badge,
+        onTap: onTap,
       ),
     );
   }
 
-  Widget _buildMenuItem(int index, {int badge = 0}) {
-    final isSelected = _selectedIndex == index;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Focus(
-        onFocusChange: (hasFocus) {
-          if (hasFocus && _selectedIndex != index) {
-            setState(() => _selectedIndex = index);
-          }
-        },
-        child: Builder(
-          builder: (context) {
-            final hasFocus = Focus.of(context).hasFocus;
-            final active = hasFocus || isSelected;
-            return GestureDetector(
-              onTap: () => setState(() => _selectedIndex = index),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                padding: const EdgeInsets.symmetric(
-                  vertical: 14,
-                  horizontal: 16,
-                ),
-                decoration: BoxDecoration(
-                  color: active
-                      ? const Color(0xFF00C8FF)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      _menuIcons[index],
-                      color: active ? Colors.black : Colors.white70,
-                      size: 22,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        _menuItems[index],
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight:
-                              active ? FontWeight.bold : FontWeight.normal,
-                          color: active ? Colors.black : Colors.white70,
-                        ),
-                      ),
-                    ),
-                    if (badge > 0)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: active
-                              ? Colors.black
-                              : const Color(0xFFFF1744),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          '$badge',
-                          style: TextStyle(
-                            color: active
-                                ? const Color(0xFF00C8FF)
-                                : Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
+  // ==========================================================
+  //  المحتوى الرئيسي
+  // ==========================================================
   Widget _buildContent() {
     switch (_selectedIndex) {
       case _idxHome:
@@ -445,9 +340,6 @@ class _MainShellState extends ConsumerState<MainShell> {
     );
   }
 
-  // ==========================================================
-  //  ✅ تمرير extras إلى المشغل (Cookies + Headers)
-  // ==========================================================
   void _openChannel(Channel channel) {
     ref.read(historyProvider.notifier).record(channel);
     Navigator.push(
@@ -457,7 +349,120 @@ class _MainShellState extends ConsumerState<MainShell> {
           streamUrl: channel.streamUrl,
           channelName: channel.name,
           channelLogo: channel.logo,
-          extras: channel.extras,  // ✅ جديد
+          extras: channel.extras,
+        ),
+      ),
+    );
+  }
+}
+
+// ==========================================================
+//  زر قائمة قابل للتركيز
+// ==========================================================
+class _FocusableMenuButton extends StatefulWidget {
+  final bool isSelected;
+  final IconData icon;
+  final String label;
+  final int badge;
+  final VoidCallback onTap;
+
+  const _FocusableMenuButton({
+    required this.isSelected,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.badge = 0,
+  });
+
+  @override
+  State<_FocusableMenuButton> createState() => _FocusableMenuButtonState();
+}
+
+class _FocusableMenuButtonState extends State<_FocusableMenuButton> {
+  bool _isFocused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = _isFocused || widget.isSelected;
+
+    return Focus(
+      onFocusChange: (h) {
+        if (mounted) setState(() => _isFocused = h);
+      },
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent) {
+          final key = event.logicalKey.keyLabel;
+          if (key == 'Select' || key == 'Enter' || key == 'Space') {
+            widget.onTap();
+            return KeyEventResult.handled;
+          }
+        }
+        return KeyEventResult.ignored;
+      },
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(
+            vertical: 14,
+            horizontal: 16,
+          ),
+          decoration: BoxDecoration(
+            color: active
+                ? const Color(0xFF00C8FF)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: _isFocused
+                  ? Colors.white
+                  : Colors.transparent,
+              width: _isFocused ? 2 : 0,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                widget.icon,
+                color: active ? Colors.black : Colors.white70,
+                size: 22,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  widget.label,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight:
+                        active ? FontWeight.bold : FontWeight.normal,
+                    color: active ? Colors.black : Colors.white70,
+                  ),
+                ),
+              ),
+              if (widget.badge > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: active
+                        ? Colors.black
+                        : const Color(0xFFFF1744),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${widget.badge}',
+                    style: TextStyle(
+                      color: active
+                          ? const Color(0xFF00C8FF)
+                          : Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
