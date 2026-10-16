@@ -3,7 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/channel.dart';
 
-/// خدمة فحص القنوات — مع Exponential Backoff
+/// خدمة فحص القنوات — مع فحص أولويات + Backoff
 class StreamChecker {
   static const String _boxName = 'stream_checks';
   static const String _kResults = 'results';
@@ -19,6 +19,15 @@ class StreamChecker {
   static const List<int> okStatusCodes = [
     200, 206, 301, 302, 303, 307, 308,
     401, 403,
+  ];
+
+  /// ✅ كلمات مفتاحية للقنوات ذات الأولوية
+  static const List<String> priorityKeywords = [
+    'bein', 'بين سبورت', 'بين سبور',
+    'ssc', 'ad sport', 'أبوظبي الرياضية',
+    'alkass', 'الكأس',
+    'dubai sport', 'دبي الرياضية',
+    'ksa sport', 'السعودية الرياضية',
   ];
 
   final Dio _dio;
@@ -49,25 +58,22 @@ class StreamChecker {
   }
 
   // ==========================================================
-  //  Exponential Backoff Helper
+  //  Backoff
   // ==========================================================
   Duration _backoff(int attempt) {
-    // 500ms, 1s, 2s, 4s, 8s
     final ms = 500 * (1 << attempt.clamp(0, 4));
     return Duration(milliseconds: ms);
   }
 
   // ==========================================================
-  //  فحص قناة واحدة (مع Headers + Cookies من extras)
+  //  فحص قناة واحدة (مع Headers + Cookies)
   // ==========================================================
   Future<bool> checkOne(Channel channel) async {
     for (int attempt = 0; attempt < 2; attempt++) {
       try {
         final result = await _doCheck(channel);
         if (result) return true;
-      } catch (_) {
-        // محاولة ثانية بـ backoff
-      }
+      } catch (_) {}
       if (attempt == 0) {
         await Future.delayed(_backoff(0));
       }
@@ -81,14 +87,12 @@ class StreamChecker {
       'Accept': '*/*',
     };
 
-    // Referer + Origin تلقائي
     try {
       final uri = Uri.parse(channel.streamUrl);
       headers['Referer'] = '${uri.scheme}://${uri.host}/';
       headers['Origin'] = '${uri.scheme}://${uri.host}';
     } catch (_) {}
 
-    // ✅ إضافة كل الرؤوس المخصصة من extras
     channel.extras.forEach((key, value) {
       if (value.isNotEmpty) {
         headers[key] = value;
@@ -108,7 +112,7 @@ class StreamChecker {
           responseType: ResponseType.stream,
           headers: {
             ...headers,
-            'Range': 'bytes=0-2048',  // ✅ قراءة 2KB للتحقق
+            'Range': 'bytes=0-2048',
           },
         ),
       );
@@ -117,75 +121,116 @@ class StreamChecker {
     final code = response.statusCode ?? 0;
     if (!okStatusCodes.contains(code)) return false;
 
-    // ✅ تحقق إضافي: إذا كانت استجابة GET، تأكد من وجود بيانات
     if (response.requestOptions.method == 'GET') {
       final stream = response.data;
       if (stream is ResponseBody) {
-        // نجحت القراءة الأولى
         return true;
       }
     }
 
     return true;
   }
-
   // ==========================================================
-  //  الفحص الأولي (مصحح)
-  // ==========================================================
-  Future<Map<String, bool>> checkInitial(
-    List<Channel> channels, {
-    int? limit,
-    int batchSize = 20,
-    void Function(int done, int total)? onProgress,
-    void Function(Map<String, bool> batchResults)? onBatch,
-  }) async {
-    final result = <String, bool>{};
-    if (channels.isEmpty) return result;
+//  ✅ فحص الأولويات (سريع — للقنوات المهمة فقط)
+// ==========================================================
+Future<Map<String, bool>> checkPriority(
+  List<Channel> channels, {
+  int batchSize = 20,
+}) async {
+  final priorityChannels = channels.where(_isPriorityChannel).toList();
+  if (priorityChannels.isEmpty) return {};
 
-    final toCheck = limit != null && limit > 0 && limit < channels.length
-        ? channels.take(limit).toList()
-        : channels;
-    final total = toCheck.length;
+  final result = <String, bool>{};
+  final total = priorityChannels.length;
 
-    for (int i = 0; i < total; i += batchSize) {
-      while (_isPaused) {
-        await Future.delayed(const Duration(milliseconds: 500));
+  for (int i = 0; i < total; i += batchSize) {
+    final batch = priorityChannels
+        .skip(i)
+        .take(batchSize)
+        .toList();
+
+    try {
+      final batchResults = await Future.wait(batch.map(checkOne));
+      for (int j = 0; j < batch.length; j++) {
+        result[batch[j].id] = batchResults[j];
       }
-
-      final batch = toCheck.skip(i).take(batchSize).toList();
-
-      try {
-        final batchResults = await Future.wait(batch.map(checkOne));
-        final batchMap = <String, bool>{};
-        for (int j = 0; j < batch.length; j++) {
-          batchMap[batch[j].id] = batchResults[j];
-          result[batch[j].id] = batchResults[j];
-        }
-        onBatch?.call(batchMap);
-      } catch (_) {
-        final batchMap = <String, bool>{};
-        for (final c in batch) {
-          batchMap[c.id] = false;
-          result[c.id] = false;
-        }
-        onBatch?.call(batchMap);
-      }
-
-      onProgress?.call(
-        (i + batch.length).clamp(0, total),
-        total,
-      );
-
-      if (i > 0 && (i ~/ batchSize) % 5 == 0) {
-        await _saveBatchResults(result);
+    } catch (_) {
+      for (final c in batch) {
+        result[c.id] = false;
       }
     }
-
-    await _saveBatchResults(result);
-    return result;
   }
-  // ==========================================================
-//  الفحص الخلفي التلقائي
+
+  await _saveBatchResults(result);
+  return result;
+}
+
+bool _isPriorityChannel(Channel c) {
+  final text = '${c.name} ${c.group}'.toLowerCase();
+  for (final k in priorityKeywords) {
+    if (text.contains(k)) return true;
+  }
+  return false;
+}
+
+// ==========================================================
+//  الفحص الأولي الكامل
+// ==========================================================
+Future<Map<String, bool>> checkInitial(
+  List<Channel> channels, {
+  int? limit,
+  int batchSize = 20,
+  void Function(int done, int total)? onProgress,
+  void Function(Map<String, bool> batchResults)? onBatch,
+}) async {
+  final result = <String, bool>{};
+  if (channels.isEmpty) return result;
+
+  final toCheck = limit != null && limit > 0 && limit < channels.length
+      ? channels.take(limit).toList()
+      : channels;
+  final total = toCheck.length;
+
+  for (int i = 0; i < total; i += batchSize) {
+    while (_isPaused) {
+      await Future.delayed(const Duration(milliseconds: 500));
+    }
+
+    final batch = toCheck.skip(i).take(batchSize).toList();
+
+    try {
+      final batchResults = await Future.wait(batch.map(checkOne));
+      final batchMap = <String, bool>{};
+      for (int j = 0; j < batch.length; j++) {
+        batchMap[batch[j].id] = batchResults[j];
+        result[batch[j].id] = batchResults[j];
+      }
+      onBatch?.call(batchMap);
+    } catch (_) {
+      final batchMap = <String, bool>{};
+      for (final c in batch) {
+        batchMap[c.id] = false;
+        result[c.id] = false;
+      }
+      onBatch?.call(batchMap);
+    }
+
+    onProgress?.call(
+      (i + batch.length).clamp(0, total),
+      total,
+    );
+
+    if (i > 0 && (i ~/ batchSize) % 5 == 0) {
+      await _saveBatchResults(result);
+    }
+  }
+
+  await _saveBatchResults(result);
+  return result;
+}
+
+// ==========================================================
+//  الفحص الخلفي
 // ==========================================================
 Future<void> startBackgroundCheck(
   List<Channel> channels, {
@@ -227,9 +272,8 @@ Future<void> startBackgroundCheck(
 
   _isRunning = false;
 }
-
-// ==========================================================
-//  Mark dead/working
+  // ==========================================================
+//  Mark
 // ==========================================================
 Future<void> markDead(String channelId) async {
   await _saveBatchResults({channelId: false});
@@ -252,7 +296,7 @@ Future<void> markWorkingMultiple(List<String> channelIds) async {
 }
 
 // ==========================================================
-//  حفظ دفعة نتائج
+//  حفظ دفعة
 // ==========================================================
 Future<void> _saveBatchResults(Map<String, bool> results) async {
   if (results.isEmpty) return;
@@ -324,20 +368,20 @@ Future<int> getDeadCount() async {
   final results = await loadResults();
   return results.values.where((v) => v == false).length;
 }
+
+// ==========================================================
+//  التحكم
+// ==========================================================
+void pause() => _isPaused = true;
+void resume() => _isPaused = false;
+void stop() {
+  _isRunning = false;
+  _backgroundTimer?.cancel();
+}
+
+bool get isRunning => _isRunning;
+bool get isPaused => _isPaused;
     // ==========================================================
-  //  التحكم
-  // ==========================================================
-  void pause() => _isPaused = true;
-  void resume() => _isPaused = false;
-  void stop() {
-    _isRunning = false;
-    _backgroundTimer?.cancel();
-  }
-
-  bool get isRunning => _isRunning;
-  bool get isPaused => _isPaused;
-
-  // ==========================================================
   //  صيانة
   // ==========================================================
   Future<void> maintainCache() async {
