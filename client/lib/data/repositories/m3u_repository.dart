@@ -398,11 +398,10 @@ Future<String?> _tryFetch(String url, String ua) async {
   // ==========================================================
   //  فحص رياضي (static)
   // ==========================================================
-  static bool isSportChannel(Channel c) {
+    static bool isSportChannel(Channel c) {
     if (c.category == 'sport') return true;
-
     final text = '${c.name.toLowerCase()} ${c.group.toLowerCase()}';
-
+    
     const sportKeywords = [
       'bein', 'sport', 'ssc', 'رياض', 'كورة', 'alkass',
       'dubai sport', 'ad sport', 'ksa sport', 'alwan',
@@ -411,8 +410,15 @@ Future<String?> _tryFetch(String url, String ua) async {
       'فورمولا', 'moto', 'ufc', 'wwe', 'fight',
       'fifa', 'uefa', 'caf', 'afc',
     ];
+    const algeriaKeywords = [
+      'algeria', 'dz', 'الجزائر', 'جزائر', 'الشروق', 'النهار', 
+      'الجزائرية', 'أفريكا', 'africa', 'echorouk', 'ennahar'
+    ];
 
     for (final keyword in sportKeywords) {
+      if (text.contains(keyword)) return true;
+    }
+    for (final keyword in algeriaKeywords) {
       if (text.contains(keyword)) return true;
     }
     return false;
@@ -421,8 +427,15 @@ Future<String?> _tryFetch(String url, String ua) async {
   // ==========================================================
   //  التصنيف — رياضة فقط
   // ==========================================================
-  static String _inferCategory(String name, String group) {
-    return 'sport';
+    static String _inferCategory(String name, String group) {
+    final text = '$name $group'.toLowerCase();
+    if (text.contains('sport') || text.contains('رياض') || text.contains('bein')) {
+      return 'sport';
+    }
+    if (text.contains('algeria') || text.contains('dz') || text.contains('جزائر')) {
+      return 'algeria';
+    }
+    return 'general';
   }
 
   static String _inferCountry(String name, String group) {
